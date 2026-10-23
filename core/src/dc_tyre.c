@@ -4,7 +4,8 @@
  *   Polar penetration area of a strip  A = Σ ½ (R² - t_j²)⁺ Δβ   (exact for the region between circle and road)
  *   Equivalent flat penetration δ from the circular-segment area  A(δ) = R² acos(1-δ/R) - (R-δ)√(2Rδ-δ²)
  *   → kerb edges grow the area continuously: no load spike when an edge enters the circle.
- *   Effective point/normal: penetration-weighted averages of ray hits / road normals.
+ *   Effective point/normal: penetration-weighted averages of ray hits / radial directions (−ray dir);
+ *   on a plane this equals the plane normal, on a step face it tilts back (longitudinal impact force).
  *   Radial force  Fz = k(p)/n · δ (1 + prog (δ/δ_rim)²) + c/n · δ̇,   δ̇ = -(v_point · n)  (no finite differences)
  *   Rim:  same rays against radius R_rim + pinch, stiffness k_rim (bottoming), adds to friction normal load.
  * Brush (Fiala, parabolic pressure), per strip, combined slip:
@@ -94,7 +95,7 @@ void dc_tyre_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc
     for (int r = 0; r < nrows; r++) {
         double yoff = ((r + 0.5) / nrows - 0.5) * w;
         v3 o = vmad(cw, a, yoff);
-        double A = 0, Ar = 0, sw = 0; v3 P = V3(0, 0, 0), Nn = V3(0, 0, 0);
+        double A = 0, Ar = 0, sw = 0; v3 P = V3(0, 0, 0), Nn = V3(0, 0, 0), Nr = V3(0, 0, 0);
         for (int j = 0; j < nr; j++) {
             double b = -span + dB * j, wt = (j == 0 || j == nr - 1) ? 0.5 : 1.0;
             v3 d = vadd(vscl(dn, cos(b)), vscl(fw, sin(b)));
@@ -103,7 +104,10 @@ void dc_tyre_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc
             if (th < R) {
                 double ww = R * R - th * th;
                 A += 0.5 * ww * dB * wt; sw += ww * wt;
-                P = vadd(P, vscl(vmad(o, d, th), ww * wt)); Nn = vadd(Nn, vscl(nh, ww * wt));
+                P = vadd(P, vscl(vmad(o, d, th), ww * wt));
+                /* reaction of a rigid circle on a penetrating obstacle is radial: the weighted mean radial
+                   direction equals the road normal on any plane and tilts back on step/kerb faces */
+                Nr = vadd(Nr, vscl(d, -ww * wt)); Nn = vadd(Nn, vscl(nh, ww * wt));
                 gsum += g * ww; gw += ww;
                 if (th < Rr) Ar += 0.5 * (Rr * Rr - th * th) * dB * wt;
             }
@@ -112,6 +116,11 @@ void dc_tyre_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc
         if (A <= 0 || sw <= 0) continue;
         double dl = invert_area(A, R);
         v3 pr = vscl(P, 1.0 / sw), nrm = vnorm(Nn);
+        {   /* longitudinal tilt from the radial mean (step faces), lateral/vertical from road normals */
+            v3 fw = vcross(a, nrm); double fl = vlen(fw);
+            if (fl > 1e-6) { fw = vscl(fw, 1 / fl); v3 nr = vnorm(Nr);
+                nrm = vnorm(vadd(vsub(nrm, vscl(fw, vdot(nrm, fw))), vscl(fw, vdot(nr, fw)))); }
+        }
         v3 vp = vadd(vc, vcross(wperp, vsub(pr, cw)));
         double dd = -vdot(vp, nrm);
         double fz = kz / nrows * dl * (1 + prog * (dl / dlim) * (dl / dlim)) + (nodamp ? 0 : T->cz / nrows * dd);
@@ -219,7 +228,7 @@ void dc_tyre_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc
     double kt = T->twist_k * t->Ntot / T->fz0;
     if (kt * fabs(t->phi_new) > Mmax) t->phi_new = sgn(t->phi_new) * Mmax / fmax(kt, 1e-9);
     t->Mt = kt * t->phi_new;
-    t->rr_e = T->rr_factor * fmin(t->delta_eff, dlim) * tanh(Om * t->Re / 0.5);
+    t->rr_e = nodamp ? 0 : T->rr_factor * fmin(t->delta_eff, dlim) * tanh(Om * t->Re / 0.5);
     /* torques about the wheel centre, except the Fx term */
     v3 tau = V3(0, 0, 0);
     for (int r = 0; r < nrows; r++) if (t->N[r] > 0) tau = vadd(tau, vcross(vsub(t->pr[r], cw), vscl(t->nr[r], t->N[r])));

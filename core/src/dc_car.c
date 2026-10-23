@@ -149,7 +149,7 @@ DC_API void dc_reset(dc_car* c, const double pos[3], double yaw, double speed) {
     c->q = qexp(V3(0, 0, yaw));
     m3 R = qtom(c->q);
     c->v = mv(&R, V3(speed, 0, 0)); c->w = V3(0, 0, 0);
-    c->we = c->P.idle_rpm * M_PI / 30; c->wg = 0;
+    c->we = c->P.idle_rpm * M_PI / 30; c->wg = 0; c->engine_on = 1;
     memset(c->lam, 0, sizeof c->lam);
     c->t = 0; c->tick = 0; c->dissipated = 0; c->acc_dt = 0;
     memset(&c->tel, 0, sizeof c->tel);
@@ -535,10 +535,17 @@ DC_API void dc_substep(dc_car* c) {
     double rpm = c->we * 30 / M_PI;
     double thr = clampd(c->in.throttle, 0, 1);
     if (rpm > P->limiter_rpm) thr = 0;
+    /* combustion only while running; stalls below 250 rpm; starter cranks with clutch in or neutral */
+    int crank = (c->in.clutch > 0.5 || c->in.gear == 0) && rpm < 0.6 * P->idle_rpm;
+    if (c->engine_on && rpm < 250 && !crank) c->engine_on = 0;
+    if (!c->engine_on && rpm > 350) c->engine_on = 1;
+    if (c->dbg & DC_DBG_ENGINE_OFF) { c->engine_on = 0; crank = 0; }
     double thr_idle = clampd((P->idle_rpm + 50 - rpm) / 200, 0, 1) * 0.6;
     if (thr_idle > thr) thr = thr_idle;
+    if (!c->engine_on) thr = 0;
     double Te = lut_eval(P, fmax(rpm, 0)) * thr - P->coast_torque * clampd(rpm / P->coast_rpm, -1, 2) * (1 - thr);
-    if (rpm < 300 && (c->in.clutch > 0.5 || c->in.gear == 0)) Te += 80;   /* starter */
+    if (c->dbg & DC_DBG_ENGINE_OFF) Te = 0;
+    if (crank) Te += 90;   /* starter motor (reaction on the block = chassis, like combustion torque) */
     /* 4. wheel spin: implicit tyre linearisation + driveline/brake PGS */
     double Ieff[4], Wfree[4], imp[6];
     v3 Tch_drive, Tup_brake[4];
@@ -656,7 +663,7 @@ DC_API void dc_substep(dc_car* c) {
     /* 7. integrate (symplectic Euler) */
     for (int i = 0; i < NQ; i++) u[i] += h * ud[i];
     if (c->dbg & DC_DBG_FREEZE_STEER) { u[IR] = 0; u[ISW] = 0; }
-    v3 vold = c->v;
+    v3 vold = c->v, vold_w = c->w;
     c->v = V3(u[0], u[1], u[2]); c->w = V3(u[3], u[4], u[5]);
     for (int i = 0; i < 4; i++) c->sd[i] = u[IS + i];
     c->rd = u[IR]; c->thd = u[ISW];
@@ -664,8 +671,36 @@ DC_API void dc_substep(dc_car* c) {
     c->q = qnorm(qmul(qexp(vscl(c->w, h)), c->q));
     for (int i = 0; i < 4; i++) c->s[i] += h * c->sd[i];
     c->r += h * c->rd; c->th += h * c->thd;
+    c->dissipated += pdiss * h;
+    /* Newton-3 / momentum audit: sum of all body inertial terms minus external loads */
+    {
+        v3 rf = vneg(Fext), rt = vneg(Text);
+        for (int k = 0; k < S.nb; k++) {
+            body* b = &S.b[k];
+            v3 al = vadd(Jmul(b->Ja, ud), b->al0);
+            v3 Iw = mv(&b->I, b->wb);
+            rt = vadd(rt, vadd(mv(&b->I, al), vcross(b->wb, Iw)));
+            if (b->has_lin) {
+                v3 ab = vscl(vadd(Jmul(b->Jl, ud), b->a0), b->m);
+                rf = vadd(rf, ab); rt = vadd(rt, vcross(b->xb, ab));
+            }
+        }
+        for (int i = 0; i < 4; i++) {
+            double Is = P->axle[i / 2].tyre.spin_inertia;
+            double Wold = c->ty[i].omega;   /* not yet updated */
+            rt = vadd(rt, vscl(S.a[i], Is * (Wnew[i] - Wold) / h));
+            rt = vadd(rt, vscl(vcross(S.wc[i], S.a[i]), Is * Wold));
+        }
+        double Lr = P->engine_inertia * c->we + P->gearbox_inertia * c->wg;
+        double we_n = c->we + h * Te / P->engine_inertia + imp[0] / P->engine_inertia;
+        double wg_n = c->wg + imp[1] / fmax(P->gearbox_inertia, 1e-4);
+        rt = vadd(rt, vscl(xw, (P->engine_inertia * (we_n - c->we) + fmax(P->gearbox_inertia, 1e-4) * (wg_n - c->wg)) / h));
+        rt = vadd(rt, vscl(vcross(vold_w, xw), Lr));
+        c->tel.resid_force[0] = rf.x; c->tel.resid_force[1] = rf.y; c->tel.resid_force[2] = rf.z;
+        c->tel.resid_torque[0] = rt.x; c->tel.resid_torque[1] = rt.y; c->tel.resid_torque[2] = rt.z;
+    }
     /* rotors */
-    double we_old = c->we;
+    double we_old = c->we, wg_old = c->wg;
     c->we = c->we + h * Te / P->engine_inertia + imp[0] / P->engine_inertia;
     c->wg = c->wg + imp[1] / fmax(P->gearbox_inertia, 1e-4);
     for (int i = 0; i < 4; i++) {
@@ -675,7 +710,6 @@ DC_API void dc_substep(dc_car* c) {
         ts->omega = Wnew[i];
         if (ts->leak_tau > 0) ts->pressure *= exp(-h / ts->leak_tau);
     }
-    c->dissipated += pdiss * h;
     /* 8. telemetry for this substep */
     dc_telemetry* T = &c->tel;
     memcpy(c->tel_udot, ud, sizeof ud);
@@ -690,7 +724,7 @@ DC_API void dc_substep(dc_car* c) {
     T->column_torque = S.tau_tb; T->driver_torque = S.T_hands; T->assist_force = S.F_assist;
     T->rack_force = S.Qint[IR];
     T->engine_rpm = c->we * 30 / M_PI; T->clutch_slip = (c->we - c->wg) * 30 / M_PI; T->gear = c->in.gear;
-    T->dissipated = c->dissipated;
+    T->dissipated = c->dissipated; T->engine_running = c->engine_on;
     (void)we_old;
     for (int i = 0; i < 4; i++) {
         dc_wheel_telem* W = &T->w[i]; dc_tc* t = &S.tc[i]; const dc_kin* k = &c->K[i]; dc_pose* p = &c->pose[i];

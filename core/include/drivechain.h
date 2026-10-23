@@ -184,6 +184,8 @@ typedef struct {
     double momentum[3], ang_momentum[3];      /* total system, world, about world origin */
     double ext_force[3], ext_torque[3];       /* sum of external forces (road, gravity, aero) */
     double dissipated;                        /* cumulative J */
+    double resid_force[3], resid_torque[3];   /* Σ m a - ΣF_ext, ΣdL/dt - ΣT_ext over ALL bodies+rotors (Newton-3 audit) */
+    int engine_running, pad2;
     dc_wheel_telem w[4];
 } dc_telemetry;
 
@@ -207,7 +209,7 @@ DC_API void   dc_set_pressure(dc_car* c, int wheel, double pa);
 DC_API double dc_ffb_torque(const dc_car* c);       /* column torque N m (same as telemetry) */
 DC_API const dc_car_params* dc_params(const dc_car* c);
 DC_API void   dc_debug_flags(dc_car* c, int flags);
-enum { DC_DBG_NO_DAMPING = 1, DC_DBG_NO_FRICTION = 2, DC_DBG_NO_AERO = 4, DC_DBG_FREEZE_STEER = 8 };
+enum { DC_DBG_NO_DAMPING = 1, DC_DBG_NO_FRICTION = 2, DC_DBG_NO_AERO = 4, DC_DBG_FREEZE_STEER = 8, DC_DBG_ENGINE_OFF = 16 };
 #ifdef __cplusplus
 }
 #endif
