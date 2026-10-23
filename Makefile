@@ -21,6 +21,13 @@ build/drive: tests/drive.c build/libdrivechain.a
 	$(CC) $(CFLAGS) -o $@ $< build/libdrivechain.a $(LDLIBS)
 build/smoke: tests/smoke.c build/libdrivechain.a
 	$(CC) $(CFLAGS) -o $@ $< build/libdrivechain.a $(LDLIBS)
+test: build/dc_tests
+	./build/dc_tests | tee results/summary.txt
+	python3 tests/plot.py results
+
+cars: build/libdrivechain.a
+	$(CC) $(CFLAGS) -o build/gen_cars tools/gen_cars.c build/libdrivechain.a $(LDLIBS) && ./build/gen_cars
+
 clean:
 	rm -rf build
-.PHONY: all clean
+.PHONY: all clean test cars
