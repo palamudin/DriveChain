@@ -236,3 +236,25 @@ int dc_save_params(const char* path, const dc_car_params* p) {
     for (int i = 0; i < p->nbodypts; i++) fprintf(f, "point%d = %.10g, %.10g, %.10g\n", i, p->bodypt[i][0], p->bodypt[i][1], p->bodypt[i][2]);
     fclose(f); return 1;
 }
+
+/* ------------------------------------------------------------------ engine-friendly helpers (Unity/C#) */
+int dc_set_param(dc_car_params* p, const char* section, const char* key, const char* value) {
+    char k[128], v[1024]; snprintf(k, sizeof k, "%s", key); snprintf(v, sizeof v, "%s", value);
+    if (section && (!strcmp(section, "front") || !strcmp(section, "rear"))) {
+        dc_axle_params* A = &p->axle[section[0] == 'r'];
+        if (!strncmp(k, "link", 4) && isdigit((unsigned char)k[4]) && k[5] == '_') {
+            int li = k[4] - '0'; double tmp[3];
+            if (li >= DC_MAX_LINKS || parse_vals(v, tmp, 3) != 3) return 0;
+            memcpy(k[6] == 'c' ? A->link_c[li] : A->link_u[li], tmp, sizeof tmp); return 1;
+        }
+        return apply(axle_f, (char*)A, k, v) > 0;
+    }
+    return apply(car_f, (char*)p, k, v) > 0;
+}
+int dc_abi_size(int which) {
+    switch (which) {
+    case 0: return (int)sizeof(dc_car_params); case 1: return (int)sizeof(dc_input); case 2: return (int)sizeof(dc_telemetry);
+    case 3: return (int)sizeof(dc_wheel_telem); case 4: return (int)sizeof(dc_xform); case 5: return (int)sizeof(dc_seg);
+    default: return -1;
+    }
+}
