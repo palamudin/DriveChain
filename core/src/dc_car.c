@@ -149,7 +149,7 @@ DC_API void dc_reset(dc_car* c, const double pos[3], double yaw, double speed) {
     c->q = qexp(V3(0, 0, yaw));
     m3 R = qtom(c->q);
     c->v = mv(&R, V3(speed, 0, 0)); c->w = V3(0, 0, 0);
-    c->we = c->P.idle_rpm * M_PI / 30; c->wg = 0; c->engine_on = 1;
+    c->we = c->P.idle_rpm * M_PI / 30; c->wg = 0; c->engine_on = 1; c->have_mt = 0; c->proj_work = 0;
     memset(c->lam, 0, sizeof c->lam);
     c->t = 0; c->tick = 0; c->dissipated = 0; c->acc_dt = 0;
     memset(&c->tel, 0, sizeof c->tel);
@@ -455,6 +455,17 @@ static void driveline(dc_car* c, step_scratch* S, double* Ieff, double* Wfree, d
             if (d != 0) for (int j = 0; j < 6; j++) v[j] += cn->coef[j] * inv[j] * d;
         }
     }
+    /* friction work of slipping clutch / LSD / brakes (dissipation bookkeeping) */
+    {
+        double dsum = 0;
+        for (int n = 0; n < CL_N; n++) {
+            if (!C[n].active || n == CL_DIFF) continue;
+            double err = 0;
+            for (int j = 0; j < 6; j++) if (C[n].coef[j] != 0) err += C[n].coef[j] * (v[j] - ((n >= CL_BRAKE0) ? brake_house[j - 2] : bh[j]));
+            dsum += -lam[n] * err / h;
+        }
+        c->dissipated += fmax(dsum, 0) * h;
+    }
     for (int j = 0; j < 6; j++) imp[j] = 0;
     *Tch = V3(0, 0, 0);
     for (int i = 0; i < 4; i++) Tup[i] = V3(0, 0, 0);
@@ -582,6 +593,7 @@ DC_API void dc_substep(dc_car* c) {
         ch->T = vadd(ch->T, vadd(vcross(pd, Fd), vadd(vcross(pf, Ff), vcross(pr, Fr))));
     }
     /* body/ground sliding contacts */
+    double pe_body = 0;
     for (int k = 0; k < P->nbodypts; k++) {
         v3 rp = mv(&R, V3(P->bodypt[k][0] - P->sprung_cg[0], P->bodypt[k][1] - P->sprung_cg[1], P->bodypt[k][2] - P->sprung_cg[2]));
         v3 X = vadd(c->x, rp); v3 n; double gr;
@@ -590,10 +602,11 @@ DC_API void dc_substep(dc_car* c) {
         if (pen <= 0) continue;
         v3 vp = vadd(c->v, vcross(c->w, rp));
         double vn = vdot(vp, n);
-        double N = P->body_k * pen - P->body_c * vn; if (N < 0) N = 0;
+        double N = P->body_k * pen - ((c->dbg & DC_DBG_NO_DAMPING) ? 0 : P->body_c * vn); if (N < 0) N = 0;
+        pe_body += 0.5 * P->body_k * pen * pen / fmax(n.z, 0.1);
         v3 vt = vsub(vp, vscl(n, vn)); double vtl = vlen(vt);
         v3 F = vscl(n, N);
-        if (vtl > 1e-9) F = vsub(F, vscl(vt, P->body_mu * gr * N * tanh(vtl / 0.05) / vtl));
+        if (vtl > 1e-9 && !(c->dbg & DC_DBG_NO_FRICTION)) F = vsub(F, vscl(vt, P->body_mu * gr * N * tanh(vtl / 0.05) / vtl));
         ch->F = vadd(ch->F, F); ch->T = vadd(ch->T, vcross(rp, F));
     }
     Fext = ch->F; Text = vadd(vcross(c->x, ch->F), ch->T);
@@ -633,7 +646,8 @@ DC_API void dc_substep(dc_car* c) {
     {
         double ke = 0;
         for (int i = 0; i < NQ; i++) for (int j = 0; j < NQ; j++) ke += 0.5 * u[i] * M[i * NQ + j] * u[j];
-        double pe = pe_int;
+        double ke_b0 = ke;
+        double pe = pe_int + pe_body;
         pe += c->m_s * g * c->x.z + c->m_rack * g * S.b[5].xb.z;
         v3 Pm = V3(0, 0, 0), Lm = V3(0, 0, 0);
         for (int k = 0; k < S.nb; k++) {
@@ -649,6 +663,40 @@ DC_API void dc_substep(dc_car* c) {
         }
         ke += 0.5 * P->engine_inertia * c->we * c->we + 0.5 * P->gearbox_inertia * c->wg * c->wg;
         Lm = vadd(Lm, vscl(xw, P->engine_inertia * c->we + P->gearbox_inertia * c->wg));
+        /* momentum projection: the generalized-coordinate integrator conserves the momentum balance only to
+           O(h) (J(q) changes over the step). Every force is applied with its exact reaction (see audit), so the
+           true discrete momentum is P_prev + h F_ext, L_prev + h T_ext; restore it with the minimum 6-DOF
+           chassis velocity correction (solve the 6x6 momentum map of the base coordinates). */
+        if (c->have_mt && !(c->dbg & DC_DBG_NO_PROJECTION)) {
+            double A6[36], b6[6];
+            memset(A6, 0, sizeof A6);
+            for (int k = 0; k < S.nb; k++) {
+                body* b = &S.b[k];
+                for (int j = 0; j < 6; j++) {
+                    v3 jl = V3(b->Jl[0][j], b->Jl[1][j], b->Jl[2][j]), ja = V3(b->Ja[0][j], b->Ja[1][j], b->Ja[2][j]);
+                    v3 dp = b->has_lin ? vscl(jl, b->m) : V3(0, 0, 0);
+                    v3 dl = vadd(b->has_lin ? vcross(b->xb, dp) : V3(0, 0, 0), mv(&b->I, ja));
+                    A6[0 * 6 + j] += dp.x; A6[1 * 6 + j] += dp.y; A6[2 * 6 + j] += dp.z;
+                    A6[3 * 6 + j] += dl.x; A6[4 * 6 + j] += dl.y; A6[5 * 6 + j] += dl.z;
+                }
+            }
+            b6[0] = c->Pt[0] - Pm.x; b6[1] = c->Pt[1] - Pm.y; b6[2] = c->Pt[2] - Pm.z;
+            b6[3] = c->Lt[0] - Lm.x; b6[4] = c->Lt[1] - Lm.y; b6[5] = c->Lt[2] - Lm.z;
+            double Ac[36]; memcpy(Ac, A6, sizeof A6);
+            if (dc_solve(6, Ac, b6)) {
+                double dv = sqrt(b6[0] * b6[0] + b6[1] * b6[1] + b6[2] * b6[2]), dw = sqrt(b6[3] * b6[3] + b6[4] * b6[4] + b6[5] * b6[5]);
+                if (dv < 2e-3 && dw < 2e-3) {   /* larger = impact step or external edit: re-seed instead */
+                    for (int j = 0; j < 6; j++) u[j] += b6[j];
+                    double ke1 = 0;
+                    for (int ii = 0; ii < NQ; ii++) for (int jj = 0; jj < NQ; jj++) ke1 += 0.5 * u[ii] * M[ii * NQ + jj] * u[jj];
+                    c->proj_work += ke1 - ke_b0; ke += ke1 - ke_b0;
+                    Pm = V3(c->Pt[0], c->Pt[1], c->Pt[2]); Lm = V3(c->Lt[0], c->Lt[1], c->Lt[2]);
+                }
+            }
+        }
+        c->have_mt = 1;
+        c->Pt[0] = Pm.x + h * Fext.x; c->Pt[1] = Pm.y + h * Fext.y; c->Pt[2] = Pm.z + h * Fext.z;
+        c->Lt[0] = Lm.x + h * Text.x; c->Lt[1] = Lm.y + h * Text.y; c->Lt[2] = Lm.z + h * Text.z;
         c->tel.kinetic = ke; c->tel.potential = pe;
         c->tel.momentum[0] = Pm.x; c->tel.momentum[1] = Pm.y; c->tel.momentum[2] = Pm.z;
         c->tel.ang_momentum[0] = Lm.x; c->tel.ang_momentum[1] = Lm.y; c->tel.ang_momentum[2] = Lm.z;
@@ -700,7 +748,7 @@ DC_API void dc_substep(dc_car* c) {
         c->tel.resid_torque[0] = rt.x; c->tel.resid_torque[1] = rt.y; c->tel.resid_torque[2] = rt.z;
     }
     /* rotors */
-    double we_old = c->we, wg_old = c->wg;
+    double we_old = c->we;
     c->we = c->we + h * Te / P->engine_inertia + imp[0] / P->engine_inertia;
     c->wg = c->wg + imp[1] / fmax(P->gearbox_inertia, 1e-4);
     for (int i = 0; i < 4; i++) {
@@ -724,7 +772,7 @@ DC_API void dc_substep(dc_car* c) {
     T->column_torque = S.tau_tb; T->driver_torque = S.T_hands; T->assist_force = S.F_assist;
     T->rack_force = S.Qint[IR];
     T->engine_rpm = c->we * 30 / M_PI; T->clutch_slip = (c->we - c->wg) * 30 / M_PI; T->gear = c->in.gear;
-    T->dissipated = c->dissipated; T->engine_running = c->engine_on;
+    T->dissipated = c->dissipated; T->engine_running = c->engine_on; T->proj_work = c->proj_work;
     (void)we_old;
     for (int i = 0; i < 4; i++) {
         dc_wheel_telem* W = &T->w[i]; dc_tc* t = &S.tc[i]; const dc_kin* k = &c->K[i]; dc_pose* p = &c->pose[i];

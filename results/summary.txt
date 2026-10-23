@@ -1,0 +1,11 @@
+--- conserve
+[PASS] conserve: horizontal momentum      max |dP| = 0.00e+00 kg m/s (0.0e+00 rel)
+[PASS] conserve: yaw ang. momentum Lz     max |dLz| = 2.540e-08 (L0 = 1053.0, 2.4e-11 rel)
+[PASS] conserve: energy drift (flat)      max |dE|/E0 = 2.30e-04 over 10 s (E0 = 130417 J)
+[PASS] newton3: residuals (flat)          max |sum m a - F_ext| = 1.08e-11 N, |sum dL/dt - T_ext| = 1.34e-09 N m
+[PASS] conserve: energy (rough, 6 s)      max |dE|/E0 = 1.90e-03 over 6 s on +-2 cm rough terrain, undamped & frictionless
+       conserve: rough 20 s (undamped resonance builds to wheel-lift/droop-stop/bump-stop slams): max |dE|/E0 = 6.08e-02, projection work 596.8 J
+[PASS] newton3: residuals (rough)         max |sum m a - F_ext| = 4.70e-11 N, |sum dL/dt - T_ext| = 1.19e-08 N m
+--- audit
+[PASS] newton3: worst residual all tests  |sum m a - F_ext|/mg = 0.00e+00, |sum dL/dt - T_ext| = 0.00e+00 N m
+FAILURES: 0

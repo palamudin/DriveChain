@@ -5,7 +5,7 @@
 typedef struct {
     int contact, nrows;
     v3 n, xc, yc, p;                 /* effective normal, contact frame, effective point (world) */
-    v3 pr[DC_MAX_ROWS], nr[DC_MAX_ROWS];
+    v3 pr[DC_MAX_ROWS], nr[DC_MAX_ROWS], orow[DC_MAX_ROWS];
     double N[DC_MAX_ROWS], Fz_t[DC_MAX_ROWS], Frim[DC_MAX_ROWS], a_r[DC_MAX_ROWS], dl[DC_MAX_ROWS], dlr[DC_MAX_ROWS];
     double Ntot, Fz, Fr, delta_eff, a_eff;
     double Re, arm_x, Vcx, Vsy, Vr, sig_x, sig_y, Ctot, Cxtot;

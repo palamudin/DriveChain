@@ -56,6 +56,7 @@ struct dc_car {
     /* state */
     v3 x; qt q; v3 v, w; double s[4], sd[4], r, rd, th, thd;
     int engine_on;
+    int have_mt; double Pt[3], Lt[3], proj_work;   /* momentum projection targets */
     double we, wg;                   /* engine & gearbox spin (rad/s about chassis x) */
     double lam[10];                  /* driveline warm start */
     dc_tyre_state ty[4];

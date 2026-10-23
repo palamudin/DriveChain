@@ -17,6 +17,17 @@
  */
 #include "dc_tyre.h"
 
+/* per-ray polar area with a C1 entry window: phi'(u) = (R-u) min(u/eps,1), u = R - t (ray penetration).
+   A ray that just touches contributes zero area AND zero gradient, so normal forces stay continuous as rays
+   enter (no load spikes from the discretisation itself). */
+#define RAY_EPS 0.006
+static double ray_phi(double u, double R, double* dphi) {
+    if (u <= 0) { *dphi = 0; return 0; }
+    const double e = RAY_EPS;
+    if (u < e) { *dphi = (R - u) * u / e; return R * u * u / (2 * e) - u * u * u / (3 * e); }
+    *dphi = R - u;
+    return R * e / 2 - e * e / 3 + R * (u - e) - 0.5 * (u * u - e * e);
+}
 static double seg_area(double d, double R) {
     if (d <= 0) return 0; if (d >= 2 * R) return M_PI * R * R;
     return R * R * acos(1 - d / R) - (R - d) * sqrt(2 * R * d - d * d);
@@ -50,6 +61,20 @@ static double ray_hit(const dc_car* c, v3 o, v3 d, double R, v3* n, double* grip
         else { a = t; fa = ft; if (side == 1) fb *= 0.5; side = 1; }
     }
     *grip = g;
+    /* jump discontinuity in the heightfield (kerb/plank step): the bisection lands on the jump with the
+       top/bottom normal. Detect it from the along-ray slope and use the step-face normal instead. */
+    {
+        double e = 2e-3, ta = fmax(t - e, 0), tb = fmin(t + e, R);
+        if (tb - ta > 1e-4) {
+            v3 nn; double gg;
+            v3 pa = vmad(o, d, ta), pb = vmad(o, d, tb);
+            double fa2 = pa.z - dc_road_eval(c, pa.x, pa.y, &nn, &gg);
+            double fb2 = pb.z - dc_road_eval(c, pb.x, pb.y, &nn, &gg);
+            double sm = (fb2 - fa2) / (tb - ta), sp = vdot(*n, d) / fmax(n->z, 1e-3);
+            double hl = sqrt(d.x * d.x + d.y * d.y);
+            if (fabs(sm) > 3 * fabs(sp) + 0.5 && hl > 1e-3) *n = V3(-d.x / hl, -d.y / hl, 0);
+        }
+    }
     return t;
 }
 
@@ -95,40 +120,44 @@ void dc_tyre_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc
     for (int r = 0; r < nrows; r++) {
         double yoff = ((r + 0.5) / nrows - 0.5) * w;
         v3 o = vmad(cw, a, yoff);
-        double A = 0, Ar = 0, sw = 0; v3 P = V3(0, 0, 0), Nn = V3(0, 0, 0), Nr = V3(0, 0, 0);
+        double A = 0, Ar = 0, sw = 0; v3 P = V3(0, 0, 0), G = V3(0, 0, 0), Gr = V3(0, 0, 0);
         for (int j = 0; j < nr; j++) {
             double b = -span + dB * j, wt = (j == 0 || j == nr - 1) ? 0.5 : 1.0;
             v3 d = vadd(vscl(dn, cos(b)), vscl(fw, sin(b)));
             v3 nh; double g;
             double th = ray_hit(c, o, d, R, &nh, &g);
             if (th < R) {
-                double ww = R * R - th * th;
+                double dphi, ww = 2 * ray_phi(R - th, R, &dphi);
                 A += 0.5 * ww * dB * wt; sw += ww * wt;
                 P = vadd(P, vscl(vmad(o, d, th), ww * wt));
-                /* reaction of a rigid circle on a penetrating obstacle is radial: the weighted mean radial
-                   direction equals the road normal on any plane and tilts back on step/kerb faces */
-                Nr = vadd(Nr, vscl(d, -ww * wt)); Nn = vadd(Nn, vscl(nh, ww * wt));
+                /* -dA/dc: du/dc = n/(n.d) for the hit p = c + t d on a surface with normal n */
+                double nd = fmax(-vdot(nh, d), 0.15);
+                G = vadd(G, vscl(nh, dphi / nd * dB * wt));
                 gsum += g * ww; gw += ww;
-                if (th < Rr) Ar += 0.5 * (Rr * Rr - th * th) * dB * wt;
+                if (th < Rr) {
+                    double dpr, wr = ray_phi(Rr - th, Rr, &dpr);
+                    Ar += wr * dB * wt; Gr = vadd(Gr, vscl(nh, dpr / nd * dB * wt));
+                }
             }
         }
         t->N[r] = 0;
         if (A <= 0 || sw <= 0) continue;
         double dl = invert_area(A, R);
-        v3 pr = vscl(P, 1.0 / sw), nrm = vnorm(Nn);
-        {   /* longitudinal tilt from the radial mean (step faces), lateral/vertical from road normals */
-            v3 fw = vcross(a, nrm); double fl = vlen(fw);
-            if (fl > 1e-6) { fw = vscl(fw, 1 / fl); v3 nr = vnorm(Nr);
-                nrm = vnorm(vadd(vsub(nrm, vscl(fw, vdot(nrm, fw))), vscl(fw, vdot(nr, fw)))); }
-        }
+        double chord = 2 * sqrt(fmax(2 * R * dl - dl * dl, 1e-10));
+        double gl = vlen(G);
+        v3 pr = vscl(P, 1.0 / sw), nrm = gl > 1e-12 ? vscl(G, 1 / gl) : up;
+        double gain = fmin(gl / chord, 4.0);     /* =1 on a plane; >1 against step faces (exact gradient) */
+        t->orow[r] = o;
         v3 vp = vadd(vc, vcross(wperp, vsub(pr, cw)));
         double dd = -vdot(vp, nrm);
-        double fz = kz / nrows * dl * (1 + prog * (dl / dlim) * (dl / dlim)) + (nodamp ? 0 : T->cz / nrows * dd);
+        double fz = gain * kz / nrows * dl * (1 + prog * (dl / dlim) * (dl / dlim)) + (nodamp ? 0 : T->cz / nrows * dd);
         if (fz < 0) fz = 0;
         double fr = 0, dlr = 0;
         if (Ar > 0) {
             dlr = invert_area(Ar, Rr);
-            fr = T->k_rim / nrows * dlr + (nodamp ? 0 : T->c_rim / nrows * dd);
+            double chr = 2 * sqrt(fmax(2 * Rr * dlr - dlr * dlr, 1e-10));
+            double gr2 = fmin(vdot(Gr, nrm) / chr, 4.0); if (gr2 < 0) gr2 = 0;
+            fr = gr2 * T->k_rim / nrows * dlr + (nodamp ? 0 : T->c_rim / nrows * dd);
             if (fr < 0) fr = 0;
             t->pe += 0.5 * T->k_rim / nrows * dlr * dlr;
         }
@@ -231,7 +260,9 @@ void dc_tyre_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc
     t->rr_e = nodamp ? 0 : T->rr_factor * fmin(t->delta_eff, dlim) * tanh(Om * t->Re / 0.5);
     /* torques about the wheel centre, except the Fx term */
     v3 tau = V3(0, 0, 0);
-    for (int r = 0; r < nrows; r++) if (t->N[r] > 0) tau = vadd(tau, vcross(vsub(t->pr[r], cw), vscl(t->nr[r], t->N[r])));
+    /* normal forces are the exact gradient of the strip potential: they act on the strip centre on the axle
+       (moment arm yoff along a), so they never torque the spin axis and do no spurious work */
+    for (int r = 0; r < nrows; r++) if (t->N[r] > 0) tau = vadd(tau, vcross(vsub(t->orow[r], cw), vscl(t->nr[r], t->N[r])));
     tau = vadd(tau, vcross(vsub(t->p, cw), vscl(t->yc, t->Fy)));
     tau = vadd(tau, vscl(t->n, t->Mz_brush + t->Mt));
     tau = vadd(tau, vscl(t->yc, -t->rr_e * t->Ntot));
