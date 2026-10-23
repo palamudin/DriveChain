@@ -23,7 +23,7 @@ static void default_tyre(dc_tyre_params* t) {
 void dc_default_params(dc_car_params* p) {
     memset(p, 0, sizeof *p);
     p->mass = 1050; set3(p->sprung_inertia, 300, 1000, 1100);
-    p->gravity = 9.81; p->substep_hz = 2000;
+    p->gravity = 9.81; p->substep_hz = 2000; p->road_resolve = 0.025;
     const double xf = 1.087, xr = -1.178, hz = -0.16;
     for (int a = 0; a < 2; a++) {
         dc_axle_params* A = &p->axle[a];
@@ -99,7 +99,7 @@ typedef struct { const char* key; int type; size_t off; int n; } fld;
 #define TI(k, f) {k, T_I, offsetof(dc_axle_params, tyre) + offsetof(dc_tyre_params, f), 1}
 
 static const fld car_f[] = {
-    CF("mass", mass, 1), CF("sprung_inertia", sprung_inertia, 3), CF("gravity", gravity, 1), CF("substep_hz", substep_hz, 1),
+    CF("mass", mass, 1), CF("sprung_inertia", sprung_inertia, 3), CF("gravity", gravity, 1), CF("substep_hz", substep_hz, 1), CF("road_resolve", road_resolve, 1),
     CF("steer_ratio", steer_ratio, 1), CF("steer_lock_deg", steer_lock_deg, 1), CF("rack_mass", rack_mass, 1),
     CF("sw_inertia", sw_inertia, 1), CF("column_inertia", column_inertia, 1), CF("torsion_k", torsion_k, 1),
     CF("torsion_c", torsion_c, 1), CF("rack_friction", rack_friction, 1), CF("column_friction", column_friction, 1),

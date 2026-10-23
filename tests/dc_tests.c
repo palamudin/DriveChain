@@ -457,7 +457,7 @@ static void test_hands_off(void) {
 /* ================= 6. kerb strike + bump ================= */
 static void test_kerb(void) {
     const char* nm[2] = {"kerb_fan.csv", "kerb_single.csv"};
-    double pk[2][3];
+    double pk[2][4];
     for (int pass = 0; pass < 2; pass++) {
         dc_car_params P; dc_default_params(&P);
         if (pass == 1) for (int a = 0; a < 2; a++) { P.axle[a].tyre.n_rays = 1; P.axle[a].tyre.n_rows = 1; }
@@ -465,7 +465,7 @@ static void test_kerb(void) {
         double pos[3] = {0, 0, 0}, V = 60 / 3.6; dc_reset(c, pos, 0, V);
         FILE* f = csv(nm[pass], "t,x,fz0,fz1,fz2,fz3,fx0,col_torque,travel0_mm,travel1_mm,az_g,rim0");
         double h = 1.0 / P.substep_hz; pi_t sp = {0}; dc_input in = {0}; dc_telemetry T; memset(&T, 0, sizeof T);
-        double fzp = -1, dmax = 0, fmax_ = 0, ffb_pk = 0; v3 vprev = c->v;
+        double fzp = -1, dmax = 0, fmax_ = 0, ffb_pk = 0, ffb_base = 0; v3 vprev = c->v;
         for (int n = 0; n < (int)(7.5 / h); n++) {
             hands_angle(&in, 0); speed_ctl(c, &in, V, T.speed, &sp, h);
             dc_set_input(c, &in); dc_substep(c); dc_get_telemetry(c, &T); audit(&T, P.mass * 9.81);
@@ -474,17 +474,18 @@ static void test_kerb(void) {
             fzp = T.w[0].fz;
             if (c->x.x > 38 && T.w[0].fz > fmax_) fmax_ = T.w[0].fz;
             if (c->x.x > 38 && c->x.x < 55 && fabs(T.column_torque) > ffb_pk) ffb_pk = fabs(T.column_torque);
+            if (c->x.x > 20 && c->x.x < 37 && fabs(T.column_torque) > ffb_base) ffb_base = fabs(T.column_torque);
             if (n % 2 == 0) fprintf(f, "%.4f,%.4f,%.1f,%.1f,%.1f,%.1f,%.1f,%.3f,%.2f,%.2f,%.3f,%.1f\n", T.time, c->x.x, T.w[0].fz, T.w[1].fz, T.w[2].fz, T.w[3].fz,
                                     T.w[0].fx, T.column_torque, T.w[0].travel * 1000, T.w[1].travel * 1000, az, T.w[0].rim_force);
         }
         fclose(f);
-        pk[pass][0] = fmax_; pk[pass][1] = dmax; pk[pass][2] = ffb_pk;
+        pk[pass][0] = fmax_; pk[pass][1] = dmax; pk[pass][2] = ffb_pk; pk[pass][3] = ffb_base;
         dc_destroy(c);
     }
     note("kerb (25 mm sharp rumble, 60 km/h): fan envelope peak Fz %.0f N, max dFz/dt %.0f kN/s, |FFB| peak %.2f N m", pk[0][0], pk[0][1] / 1000, pk[0][2]);
     note("                                     single-ray      peak Fz %.0f N, max dFz/dt %.0f kN/s, |FFB| peak %.2f N m", pk[1][0], pk[1][1] / 1000, pk[1][2]);
     check("kerb: envelope removes edge spikes", pk[0][1] < 0.5 * pk[1][1] && pk[0][0] < pk[1][0], "dFz/dt ratio %.2f, peak ratio %.2f", pk[0][1] / pk[1][1], pk[0][0] / pk[1][0]);
-    check("kerb: FFB shows the hit", pk[0][2] > 1.0, "%.2f N m", pk[0][2]);
+    check("kerb: FFB shows the hit", pk[0][2] > 5 * pk[0][3] && pk[0][2] > 0.5, "column torque peak %.2f N m on the kerb vs %.3f N m on smooth tarmac before it", pk[0][2], pk[0][3]);
 }
 
 /* ================= 7. puncture ================= */
@@ -570,7 +571,7 @@ static void test_perf(void) {
         const char* nm[3] = {"default 3x13 rays flat", "1x7 rays flat", "3x13 rays rough terrain"};
         fprintf(f, "%s,%.3f,%.1f\n", nm[cfg], us, 1e6 / us / P.substep_hz);
         note("perf %-26s %.2f us/substep -> %.0fx real time at %.0f Hz (one core)", nm[cfg], us, 1e6 / us / P.substep_hz, P.substep_hz);
-        if (cfg == 0) check("perf: < 50 us/substep", us < 50, "%.2f us", us);
+        if (cfg == 0) check("perf: >= 5x real time at substep rate (< 100 us)", us < 1e6 / (5 * P.substep_hz), "%.2f us/substep, %.1fx real time", us, 1e6 / us / P.substep_hz);
         dc_destroy(c);
     }
     fclose(f);

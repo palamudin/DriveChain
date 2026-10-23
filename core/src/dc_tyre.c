@@ -1,3 +1,4 @@
+#include <string.h>
 /* dc_tyre.c - rubber-patch "wheel collider" and brush tyre.
  *
  * Envelope:  n_rows strips across the tread width, each a fan of n_rays rays (±span) in the wheel plane.
@@ -17,16 +18,36 @@
  */
 #include "dc_tyre.h"
 
-/* per-ray polar area with a C1 entry window: phi'(u) = (R-u) min(u/eps,1), u = R - t (ray penetration).
-   A ray that just touches contributes zero area AND zero gradient, so normal forces stay continuous as rays
-   enter (no load spikes from the discretisation itself). */
-#define RAY_EPS 0.006
-static double ray_phi(double u, double R, double* dphi) {
-    if (u <= 0) { *dphi = 0; return 0; }
-    const double e = RAY_EPS;
-    if (u < e) { *dphi = (R - u) * u / e; return R * u * u / (2 * e) - u * u * u / (3 * e); }
-    *dphi = R - u;
-    return R * e / 2 - e * e / 3 + R * (u - e) - 0.5 * (u * u - e * e);
+#define HC_REF 0.004    /* m: indentation at which carcass damping reaches its full value */
+#define COL_MAX 128
+#define COL_DS 0.004  /* m: wheel-fixed integration station pitch */
+#define COL_EPS 0.003   /* m: C1 entry window of a column's penetration (no force kink at first touch) */
+
+/* Memoised world-grid road sampler: bilinear H on a world-fixed lattice, sampled lazily around one wheel. */
+#define GRID_N 48
+typedef struct { double dw; int i0, j0; unsigned char have[GRID_N][GRID_N]; double h[GRID_N][GRID_N], g[GRID_N][GRID_N]; } rgrid;
+static void grid_init(rgrid *G, double cx, double cy, double dw) {
+    G->dw = dw; G->i0 = (int)floor(cx / dw) - GRID_N / 2; G->j0 = (int)floor(cy / dw) - GRID_N / 2;
+    memset(G->have, 0, sizeof G->have);
+}
+static double grid_node(rgrid *G, const dc_car *c, int i, int j, double *g) {
+    int li = i - G->i0, lj = j - G->j0;
+    if (li >= 0 && lj >= 0 && li < GRID_N && lj < GRID_N) {
+        if (!G->have[li][lj]) { v3 n; G->h[li][lj] = dc_road_eval(c, i * G->dw, j * G->dw, &n, &G->g[li][lj]); G->have[li][lj] = 1; }
+        *g = G->g[li][lj]; return G->h[li][lj];
+    }
+    v3 n; return dc_road_eval(c, i * G->dw, j * G->dw, &n, g);
+}
+static double grid_h(rgrid *G, const dc_car *c, double x, double y, double *Hx, double *Hy, double *grip) {
+    double fx = x / G->dw, fy = y / G->dw, ix = floor(fx), iy = floor(fy); fx -= ix; fy -= iy;
+    int i = (int)ix, j = (int)iy; double g00, g10, g01, g11;
+    double h00 = grid_node(G, c, i, j, &g00), h10 = grid_node(G, c, i + 1, j, &g10);
+    double h01 = grid_node(G, c, i, j + 1, &g01), h11 = grid_node(G, c, i + 1, j + 1, &g11);
+    double hy0 = h00 + fx * (h10 - h00), hy1 = h01 + fx * (h11 - h01);
+    *Hx = ((1 - fy) * (h10 - h00) + fy * (h11 - h01)) / G->dw;
+    *Hy = (hy1 - hy0) / G->dw;
+    *grip = (1 - fy) * (g00 + fx * (g10 - g00)) + fy * (g01 + fx * (g11 - g01));
+    return hy0 + fy * (hy1 - hy0);
 }
 static double seg_area(double d, double R) {
     if (d <= 0) return 0; if (d >= 2 * R) return M_PI * R * R;
@@ -98,8 +119,7 @@ void dc_tyre_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc
     const double R = T->radius, Rr = T->rim_radius + T->rim_pinch, w = T->width;
     const int nrows = T->n_rows < 1 ? 1 : (T->n_rows > DC_MAX_ROWS ? DC_MAX_ROWS : T->n_rows);
     const int single = T->n_rays == 1;   /* classic single-ray "WheelCollider" baseline (comparison only) */
-    const int nr = single ? 1 : (T->n_rays < 3 ? 3 : (T->n_rays > DC_MAX_RAYS ? DC_MAX_RAYS : T->n_rays));
-    const double span = T->ray_span_deg * M_PI / 180.0, dB = single ? 0 : 2 * span / (nr - 1);
+    const double span = T->ray_span_deg * M_PI / 180.0, dw = c->P.road_resolve > 1e-4 ? c->P.road_resolve : 0.025;
     double p = S->pressure;
     double kz = T->kz_ref + T->kz_per_pa * (p - T->pressure_ref); if (kz < 0.04 * T->kz_ref) kz = 0.04 * T->kz_ref;
     const double dlim = fmax(R - Rr, 0.01);
@@ -111,12 +131,13 @@ void dc_tyre_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc
     v3 fw = vcross(dn, a);
     v3 wperp = vsub(wc, vscl(a, vdot(wc, a)));
     double gsum = 0, gw = 0;
+    rgrid GR; if (!single) grid_init(&GR, cw.x, cw.y, dw);
     t->nrows = nrows;
     v3 nsum = V3(0, 0, 0), psum = V3(0, 0, 0);
     for (int r = 0; r < nrows; r++) {
         double yoff = ((r + 0.5) / nrows - 0.5) * w;
         v3 o = vmad(cw, a, yoff);
-        double A = 0, Ar = 0, sw = 0; v3 P = V3(0, 0, 0), G = V3(0, 0, 0), Gr = V3(0, 0, 0);
+        double A = 0, Ar = 0, sw = 0; v3 P = V3(0, 0, 0), G = V3(0, 0, 0), Gr = V3(0, 0, 0), Mr = V3(0, 0, 0);
         double dl1 = -1, dlr1 = 0; v3 n1 = up;
         if (single) {       /* one ray straight down the wheel plane: penetration = R - t, force along the hit normal */
             v3 nh; double g; double th = ray_hit(c, o, dn, R, &nh, &g);
@@ -124,23 +145,56 @@ void dc_tyre_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc
                 dl1 = R - th; n1 = nh; P = vmad(o, dn, th); sw = 1; A = 1; G = nh; gsum += g; gw += 1;
                 if (th < Rr) { dlr1 = Rr - th; Ar = 1; Gr = nh; }
             }
-        }
-        for (int j = 0; j < (single ? 0 : nr); j++) {
-            double b = -span + dB * j, wt = (j == 0 || j == nr - 1) ? 0.5 : 1.0;
-            v3 d = vadd(vscl(dn, cos(b)), vscl(fw, sin(b)));
-            v3 nh; double g;
-            double th = ray_hit(c, o, d, R, &nh, &g);
-            if (th < R) {
-                double dphi, ww = 2 * ray_phi(R - th, R, &dphi);
-                A += 0.5 * ww * dB * wt; sw += ww * wt;
-                P = vadd(P, vscl(vmad(o, d, th), ww * wt));
-                /* -dA/dc: du/dc = n/(n.d) for the hit p = c + t d on a surface with normal n */
-                double nd = fmax(-vdot(nh, d), 0.15);
-                G = vadd(G, vscl(nh, dphi / nd * dB * wt));
-                gsum += g * ww; gw += ww;
-                if (th < Rr) {
-                    double dpr, wr = ray_phi(Rr - th, Rr, &dpr);
-                    Ar += wr * dB * wt; Gr = vadd(Gr, vscl(nh, dpr / nd * dB * wt));
+        } else {
+            /* Column envelope. The row's disc is cut into vertical strips at stations x_i fixed to the WHEEL
+               (pitch ~4 mm, symmetric). The road under them is H(x,y): the bilinear interpolant of road samples on a
+               WORLD-fixed grid of pitch road_resolve (25 mm). So:
+                 - H is one fixed continuous world field -> the contact is a true potential: the station forces
+                   f_i = -k' dphi/du grad(u_i) applied at the station points are its exact gradient (forces AND moments);
+                 - flat road: integrand exactly wheel-relative -> no horizontal force ripple, momentum conserved;
+                 - discontinuous road (kerb face, plank): the step becomes a 25 mm ramp fixed in the world that
+                   slides continuously through the stations -> no force steps (a belt cannot wrap finer features).
+               A = sum phi(u_i) ds, u_i = H(b_i) - z(b_i), b_i the lowest disc point above station i. */
+            double xmax = R * sin(span);
+            int ns = 2 * (int)ceil(xmax / COL_DS); if (ns > COL_MAX) ns = COL_MAX;
+            const double ds = 2 * xmax / ns;                      /* station pitch (wheel-fixed) */
+            double x0s = -xmax + 0.5 * ds;
+            /* coarse pre-pass: clearance at every 4th station; a block is skipped only if both probes clear the road by
+               more than the most H can rise inside it (a block spans <= 2 grid cells, so H inside <= probe H + |grad H| * block)
+               plus the disc arc sagitta -> culling never drops a station that could touch */
+            unsigned char act[COL_MAX / 4 + 2];
+            double uprev = 0, mprev = 0, blk = 4 * ds;
+            for (int bk = 0; bk * 4 <= ns; bk++) {
+                int i = bk * 4 < ns ? bk * 4 : ns - 1;
+                double x = x0s + i * ds, S = sqrt(fmax(R * R - x * x, 0));
+                v3 pb = vadd(vmad(o, fw, x), vscl(dn, S));
+                double hx, hy, gg2, uu = grid_h(&GR, c, pb.x, pb.y, &hx, &hy, &gg2) - pb.z;
+                double mg = 0.001 + blk * sqrt(hx * hx + hy * hy);
+                if (bk > 0) act[bk - 1] = (uu > -fmax(mg, mprev) || uprev > -fmax(mg, mprev));
+                uprev = uu; mprev = mg;
+            }
+            for (int i = 0; i < ns; i++) {
+                if (!act[i / 4]) continue;
+                double x = x0s + i * ds, S = sqrt(fmax(R * R - x * x, 0));
+                v3 pb = vadd(vmad(o, fw, x), vscl(dn, S));
+                double Hx, Hy, gg;
+                double H = grid_h(&GR, c, pb.x, pb.y, &Hx, &Hy, &gg);
+                double u = H - pb.z;
+                if (u <= 0) continue;
+                double e = COL_EPS, ph, dph;
+                if (u < e) { ph = u * u / (2 * e); dph = u / e; } else { ph = u - e / 2; dph = 1; }
+                v3 dudc = V3(Hx, Hy, -1);                     /* station rigidly attached to the wheel centre */
+                v3 fi = vscl(dudc, -dph * ds);
+                A += ph * ds; sw += ph; P = vadd(P, vscl(pb, ph));
+                G = vadd(G, fi); Mr = vadd(Mr, vcross(vsub(pb, o), fi));
+                gsum += gg * ph; gw += ph;
+                if (fabs(x) < Rr) {
+                    double Sr = sqrt(Rr * Rr - x * x);
+                    double ur = H - (o.z + fw.z * x + dn.z * Sr);
+                    if (ur > 0) {
+                        double phr, dphr; if (ur < e) { phr = ur * ur / (2 * e); dphr = ur / e; } else { phr = ur - e / 2; dphr = 1; }
+                        Ar += phr * ds; Gr = vsub(Gr, vscl(dudc, dphr * ds));
+                    }
                 }
             }
         }
@@ -152,19 +206,21 @@ void dc_tyre_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc
         v3 pr = vscl(P, 1.0 / sw), nrm = single ? n1 : (gl > 1e-12 ? vscl(G, 1 / gl) : up);
         double gain = single ? 1.0 : fmin(gl / chord, 4.0);     /* =1 on a plane; >1 against step faces (exact gradient) */
         t->orow[r] = o;
-#ifdef DC_TRACE
-        if (i == 0 && c->t > 2.5 && c->t < 2.7) fprintf(stderr, "TR t=%.4f r=%d A=%.3e dl=%.4f gl=%.3e ch=%.4f gain=%.2f n=%.2f %.2f %.2f\n", c->t, r, A, dl, gl, chord, gain, nrm.x, nrm.y, nrm.z);
-#endif
+        t->Mst[r] = V3(0, 0, 0);
         v3 vp = vadd(vc, vcross(wperp, vsub(pr, cw)));
         double dd = -vdot(vp, nrm);
-        double fz = gain * kz / nrows * dl * (1 + prog * (dl / dlim) * (dl / dlim)) + (nodamp ? 0 : T->cz / nrows * dd);
+        double fz = gain * kz / nrows * dl * (1 + prog * (dl / dlim) * (dl / dlim)) + (nodamp ? 0 : T->cz / nrows * fmin(dl / HC_REF, 1.0) * dd);   /* Hunt-Crossley: damping grows with indentation, no force step at first touch */
         if (fz < 0) fz = 0;
+        if (!single && gl > 1e-12) {      /* moment of the station forces about o (stiffness part), minus the spin axis */
+            double ks = gain * kz / nrows * dl * (1 + prog * (dl / dlim) * (dl / dlim)) / gl;
+            v3 m = vscl(Mr, ks); t->Mst[r] = vsub(m, vscl(a, vdot(m, a)));
+        }
         double fr = 0, dlr = 0;
         if (Ar > 0) {
             dlr = single ? dlr1 : invert_area(Ar, Rr);
             double chr = 2 * sqrt(fmax(2 * Rr * dlr - dlr * dlr, 1e-10));
             double gr2 = single ? 1.0 : fmin(vdot(Gr, nrm) / chr, 4.0); if (gr2 < 0) gr2 = 0;
-            fr = gr2 * T->k_rim / nrows * dlr + (nodamp ? 0 : T->c_rim / nrows * dd);
+            fr = gr2 * T->k_rim / nrows * dlr + (nodamp ? 0 : T->c_rim / nrows * fmin(dlr / HC_REF, 1.0) * dd);
             if (fr < 0) fr = 0;
             t->pe += 0.5 * T->k_rim / nrows * dlr * dlr;
         }
@@ -270,6 +326,7 @@ void dc_tyre_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc
     /* normal forces are the exact gradient of the strip potential: they act on the strip centre on the axle
        (moment arm yoff along a), so they never torque the spin axis and do no spurious work */
     for (int r = 0; r < nrows; r++) if (t->N[r] > 0) tau = vadd(tau, vcross(vsub(t->orow[r], cw), vscl(t->nr[r], t->N[r])));
+    for (int r = 0; r < nrows; r++) if (t->N[r] > 0) tau = vadd(tau, t->Mst[r]);
     tau = vadd(tau, vcross(vsub(t->p, cw), vscl(t->yc, t->Fy)));
     tau = vadd(tau, vscl(t->n, t->Mz_brush + t->Mt));
     tau = vadd(tau, vscl(t->yc, -t->rr_e * t->Ntot));

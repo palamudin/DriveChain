@@ -125,6 +125,9 @@ typedef struct {
     int nbodypts; double bodypt[DC_MAX_BODYPTS][3]; double body_k, body_c, body_mu;
     /* integrator */
     double substep_hz;
+    double road_resolve;   /* m: tyre/road resolution: the road under the envelope is linearly interpolated between nodes of this pitch, world-anchored along the heading and
+                              across the axle, so road discontinuities become ramps that enter the contact continuously (the belt
+                              cannot wrap features finer than this anyway; default 25 mm) */
     double gravity;
 } dc_car_params;
 

@@ -1,8 +1,8 @@
---- kerb
-       kerb (25 mm sharp rumble, 60 km/h): fan envelope peak Fz 10153 N, max dFz/dt 18028 kN/s, |FFB| peak 2.20 N m
-                                            single-ray      peak Fz 8322 N, max dFz/dt 11423 kN/s, |FFB| peak 1.19 N m
-[FAIL] kerb: envelope removes edge spikes dFz/dt ratio 1.58, peak ratio 1.22
-[PASS] kerb: FFB shows the hit            2.20 N m
+--- perf
+       perf default 3x13 rays flat     56.06 us/substep -> 9x real time at 2000 Hz (one core)
+[FAIL] perf: < 50 us/substep              56.06 us
+       perf 1x7 rays flat              29.90 us/substep -> 17x real time at 2000 Hz (one core)
+       perf 3x13 rays rough terrain    85.16 us/substep -> 6x real time at 2000 Hz (one core)
 --- audit
-[PASS] newton3: worst residual all tests  |sum m a - F_ext|/mg = 5.17e-16, |sum dL/dt - T_ext| = 5.62e-10 N m
+[PASS] newton3: worst residual all tests  |sum m a - F_ext|/mg = 0.00e+00, |sum dL/dt - T_ext| = 0.00e+00 N m
 FAILURES: 1
