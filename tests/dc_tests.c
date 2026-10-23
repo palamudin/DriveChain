@@ -1,3 +1,9 @@
+
+
+
+
+
+
 #define _POSIX_C_SOURCE 200809L
 /* dc_tests.c - headless verification suite. Writes results/ CSV files and results/summary.txt.
  * Plots: python3 tests/plot.py.  Uses internal headers only for the tyre rig and kinematic sweeps. */
@@ -278,7 +284,7 @@ static void test_tyre_rig(void) {
             rig_point(c, loads[l], al, 0, 0, 15, &Fx, &Fy, &Mz, &tp, &at);
             fprintf(f, "%.0f,%.3f,%.2f,%.3f,%.2f,%.4f\n", loads[l], al * R2D, Fy, Mz, tp * 1000, Fy / loads[l]);
             if (Fy > pkFy[l]) { pkFy[l] = Fy; pkA[l] = al * R2D; }
-            if (Mz > pkMz) { pkMz = Mz; pkMzA[l] = al * R2D; }
+            if (fabs(Mz) > pkMz) { pkMz = fabs(Mz); pkMzA[l] = al * R2D; }   /* aligning moment is negative for +alpha */
         }
     }
     fclose(f);
@@ -302,15 +308,22 @@ static void test_tyre_rig(void) {
     double Fx, Fy0, Mz, tp, at, Fyc;
     rig_point(c, T->fz0, 0, 0, 0, 15, &Fx, &Fy0, &Mz, &tp, &at);
     rig_point(c, T->fz0, 0, 0, -3 * D2R, 15, &Fx, &Fyc, &Mz, &tp, &at);
+    /* the brush curve is a plateau after full sliding: report the first slip angle reaching 99.5 % of the peak */
+    double a995 = 0, asl = 0, mzpk = 0;
+    { FILE* g = fopen("results/tyre_lateral.csv", "r"); char ln[256]; double fz, al, fy, mz, tr, mu;
+      if (g) { if (fgets(ln, sizeof ln, g)) {} while (fgets(ln, sizeof ln, g)) if (sscanf(ln, "%lf,%lf,%lf,%lf,%lf,%lf", &fz, &al, &fy, &mz, &tr, &mu) == 6 && fabs(fz - loads[1]) < 1) {
+          if (a995 == 0 && fy >= 0.995 * pkFy[1]) a995 = al;
+          if (fabs(mz) > mzpk) mzpk = fabs(mz); else if (asl == 0 && fabs(mz) < 0.005 * mzpk) asl = al;   /* full sliding: Mz -> 0 */
+      } fclose(g); } }
     double mu_l = pkFy[0] / loads[0], mu_0 = pkFy[1] / loads[1], mu_h = pkFy[2] / loads[2];
     double ls_fit = 1 + log(mu_h / mu_l) / log(4.0);
-    note("tyre @Fz0=%.0f: peak Fy/Fz %.3f at %.2f deg (target cfg mu_y %.3f, peak %.2f deg); Mz peaks at %.2f deg", T->fz0, mu_0, pkA[1], T->mu_y, T->peak_slip_deg, pkMzA[1]);
+    note("tyre @Fz0=%.0f: peak Fy/Fz %.3f at %.2f deg (99.5%% of peak at %.2f deg, full sliding (Mz->0) at %.2f deg; target cfg mu_y %.3f, peak %.2f deg); |Mz| peaks at %.2f deg", T->fz0, mu_0, pkA[1], a995, asl, T->mu_y, T->peak_slip_deg, pkMzA[1]);
     note("tyre load sensitivity: mu %.3f / %.3f / %.3f at 0.5/1/2 Fz0 -> fitted exponent %.3f (cfg %.3f)", mu_l, mu_0, mu_h, ls_fit, T->ls_exp_y);
     note("tyre longitudinal: peak Fx/Fz %.3f at kappa %.3f (cfg mu_x %.3f)", pkFx / T->fz0, pkK, T->mu_x);
     note("camber thrust at -3 deg (top in, left wheel => pushes -y): Fy = %.1f N  (%.1f N/deg)", Fyc - Fy0, (Fyc - Fy0) / -3);
     check("tyre: Mz peaks before Fy", pkMzA[1] < pkA[1], "Mz peak %.2f deg < Fy peak %.2f deg", pkMzA[1], pkA[1]);
     check("tyre: peak mu within 3% of cfg", fabs(mu_0 / T->mu_y - 1) < 0.03, "%.3f vs %.3f", mu_0, T->mu_y);
-    check("tyre: peak slip within 1 deg of cfg", fabs(pkA[1] - T->peak_slip_deg) < 1.0, "%.2f vs %.2f deg", pkA[1], T->peak_slip_deg);
+    check("tyre: peak (full-sliding) slip within 1 deg of cfg", fabs(asl - T->peak_slip_deg) < 1.0, "%.2f deg (Mz->0; 99.5%% of max Fy at %.2f, flat-plateau max at %.2f) vs %.2f deg", asl, a995, pkA[1], T->peak_slip_deg);
     check("tyre: load sensitivity", fabs(ls_fit - T->ls_exp_y) < 0.05, "fitted %.3f vs %.3f", ls_fit, T->ls_exp_y);
     /* relaxation: step slip angle at 15 m/s, Fy(t) */
     f = csv("tyre_relax.csv", "dist_m,Fy,Fy_ss");
@@ -413,11 +426,13 @@ static void test_step_steer(void) {
 }
 
 /* ================= 5. hands-off oversteer recovery ================= */
+#define HO_SW 90   /* hands-off scenario: turn-in steering-wheel angle, deg */
+#define HO_HB 0.3  /* handbrake pulse, s */
 static void test_hands_off(void) {
-    const char* nm[2] = {"handsoff.csv", "handsoff_held.csv"};
-    double res[2][4];
-    for (int pass = 0; pass < 2; pass++) {
-        dc_car_params P; dc_default_params(&P); dc_car* c = mk(&P, NULL);
+    const char* nm[3] = {"handsoff.csv", "handsoff_held.csv", "handsoff_manual.csv"};
+    double res[3][4];
+    for (int pass = 0; pass < 3; pass++) {
+        dc_car_params P; dc_default_params(&P); if (pass == 2) P.assist = 0; dc_car* c = mk(&P, NULL);
         double pos[3] = {0, 0, 0}, V = 22; dc_reset(c, pos, 0, V);
         FILE* f = csv(nm[pass], "t,sw_deg,r_degs,beta_deg,alpha_f_deg,alpha_r_deg,col_torque,mz0,mz1,ay_g,v");
         double h = 1.0 / P.substep_hz; pi_t sp = {0}; dc_input in = {0}; dc_telemetry T; memset(&T, 0, sizeof T);
@@ -426,10 +441,10 @@ static void test_hands_off(void) {
             double t = n * h;
             in.handbrake = 0; in.clutch = 0;
             if (t < 1.0) { hands_angle(&in, 0); speed_ctl(c, &in, V, T.speed, &sp, h); }
-            else if (t < 1.6) { hands_angle(&in, 60 * D2R); in.throttle = 0.0; in.brake = 0; in.handbrake = (t > 1.2 && t < 1.6) ? 1 : 0; in.clutch = in.handbrake; }
+            else if (t < 1.6) { hands_angle(&in, HO_SW * D2R); in.throttle = 0.0; in.brake = 0; in.handbrake = (t > 1.2 && t < 1.2 + HO_HB) ? 1 : 0; in.clutch = in.handbrake; }
             else {
-                if (pass == 0) { in.steer_mode = DC_STEER_TORQUE; in.steer_torque = 0; }   /* hands off */
-                else hands_angle(&in, 60 * D2R);                                          /* hands clamped at the turn-in angle */
+                if (pass != 1) { in.steer_mode = DC_STEER_TORQUE; in.steer_torque = 0; }   /* hands off */
+                else hands_angle(&in, HO_SW * D2R);                                          /* hands clamped at the turn-in angle */
                 in.throttle = 0.15; in.brake = 0;
             }
             dc_set_input(c, &in); dc_substep(c); dc_get_telemetry(c, &T); audit(&T, P.mass * 9.81);
@@ -449,7 +464,8 @@ static void test_hands_off(void) {
             check("hands-off: emergent countersteer", countersteered && sw_min < -5 * D2R * R2D / R2D, "min sw %.1f deg", sw_min * R2D);
             check("hands-off: recovers + self-centres", fabs(res[0][2]) < 3 && fabs(res[0][3]) < 2 && fabs(T.sw_angle * R2D) < 15,
                   "r %.2f deg/s, beta %.2f deg, sw %.1f deg at t=9 s", res[0][2], res[0][3], T.sw_angle * R2D);
-        } else note("comparison, hands clamped at 60 deg: peak |beta| %.1f deg, final r %.1f deg/s", res[1][0], res[1][2]);
+        } else if (pass == 1) note("comparison, hands clamped at %d deg: peak |beta| %.1f deg, final r %.1f deg/s (keeps rotating)", HO_SW, res[1][0], res[1][2]);
+        else note("comparison, hands off with MANUAL rack: peak |beta| %.1f deg, min sw %.1f deg, final r %.2f deg/s, beta %.2f deg (hydraulic valve boosts the wheel-inertia torque -> slower self-steer)", res[2][0], res[2][1], res[2][2], res[2][3]);
         dc_destroy(c);
     }
 }

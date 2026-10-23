@@ -343,7 +343,8 @@ static void internal_forces(dc_car* c, step_scratch* S, double* pe_out, double* 
     S->F_assist = 0;
     if (P->assist) {
         double x = tau / P->assist_tref;
-        double dP = P->assist_pmax * sgn(x) * x * x / (1 + x * x);
+        double x4 = x * x * x * x;         /* rotary-valve boost curve: ~flat on centre (<1 bar at 1 N m), steep beyond ~2 N m */
+        double dP = P->assist_pmax * sgn(x) * x4 / (1 + x4);
         double F = P->assist_area * dP * sgn(c->r_p);
         double rpm = c->we * 30 / M_PI;
         double flow = P->assist_flow * clampd(rpm / P->assist_rpm_full, 0, 1);

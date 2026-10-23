@@ -45,7 +45,7 @@ void dc_default_params(dc_car_params* p) {
     F->static_camber_deg = -0.5; F->static_toe_deg = 0.0;
     F->wheel_rate = 19000; F->damp_bump = 2200; F->damp_fast_bump = 1300; F->damp_bump_thr = 0.03;
     F->damp_reb = 6000; F->damp_fast_reb = 1300; F->damp_reb_thr = 0.06;
-    F->bumpstop_up = 0.060; F->bumpstop_dn = 0.100; F->arb = 9000;
+    F->bumpstop_up = 0.060; F->bumpstop_dn = 0.100; F->arb = 9500;
     F->brake_torque = 950; F->handbrake_torque = 0;
 
     dc_axle_params* R = &p->axle[1];
@@ -55,7 +55,7 @@ void dc_default_params(dc_car_params* p) {
     set3(R->link_c[1], xr - 0.050, 0.350, -0.047); set3(R->link_u[1], xr + 0.037, 0.563, -0.040);
     set3(R->link_c[2], xr + 0.160, 0.215, -0.228); set3(R->link_u[2], xr + 0.000, 0.578, -0.259);
     set3(R->link_c[3], xr - 0.160, 0.215, -0.228); set3(R->link_u[3], xr + 0.000, 0.578, -0.259);
-    set3(R->link_c[4], xr - 0.150, 0.225, -0.235); set3(R->link_u[4], xr - 0.150, 0.578, -0.250); /* toe link */
+    set3(R->link_c[4], xr - 0.150, 0.225, -0.221); set3(R->link_u[4], xr - 0.150, 0.578, -0.250); /* toe link */
     set3(R->spring_lo, xr, 0.500, -0.250); set3(R->spring_hi, xr - 0.02, 0.470, 0.170);
     R->static_camber_deg = -1.2; R->static_toe_deg = 0.1;
     R->wheel_rate = 17500; R->damp_bump = 1700; R->damp_fast_bump = 1150; R->damp_bump_thr = 0.03;
@@ -67,7 +67,7 @@ void dc_default_params(dc_car_params* p) {
     p->rack_mass = 3.0; p->sw_inertia = 0.035; p->column_inertia = 0.010;
     p->torsion_k = 1500; p->torsion_c = 0.15; p->rack_friction = 60; p->column_friction = 0.15;
     p->rack_stop_k = 2e6; p->rack_stop_c = 3e3;
-    p->assist = 1; p->assist_area = 8.8e-4; p->assist_pmax = 7e6; p->assist_tref = 2.5;
+    p->assist = 1; p->assist_area = 8.8e-4; p->assist_pmax = 7e6; p->assist_tref = 3.5;
     p->assist_flow = 1.0e-4; p->assist_rpm_full = 1500; p->assist_damping = 1500; p->assist_torsion_k = 115;
 
     p->drive = DC_DRIVE_RWD; p->ngears = 5;
