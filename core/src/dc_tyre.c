@@ -51,29 +51,22 @@ static double ray_hit(const dc_car* c, v3 o, v3 d, double R, v3* n, double* grip
     v3 pe = vmad(o, d, R);
     double f1 = pe.z - dc_road_eval(c, pe.x, pe.y, n, &g);
     if (f1 >= 0) { *grip = g; return R; }
-    double a = 0, b = R, fa = f0, fb = f1; int side = 0; double t = R;
-    for (int it = 0; it < 14; it++) {
+    double a = 0, b = R, fa = f0, fb = f1; int side = 0; double t = R, ft = 0;
+    for (int it = 0; it < 40; it++) {
         t = (a * fb - b * fa) / (fb - fa);
         v3 p = vmad(o, d, t);
-        double ft = p.z - dc_road_eval(c, p.x, p.y, n, &g);
-        if (fabs(ft) < 1e-7) break;
+        ft = p.z - dc_road_eval(c, p.x, p.y, n, &g);
+        if (fabs(ft) < 1e-7 || b - a < 2e-6) break;
         if (ft * fb > 0) { b = t; fb = ft; if (side == -1) fa *= 0.5; side = -1; }
         else { a = t; fa = ft; if (side == 1) fb *= 0.5; side = 1; }
     }
     *grip = g;
-    /* jump discontinuity in the heightfield (kerb/plank step): the bisection lands on the jump with the
-       top/bottom normal. Detect it from the along-ray slope and use the step-face normal instead. */
-    {
-        double e = 2e-3, ta = fmax(t - e, 0), tb = fmin(t + e, R);
-        if (tb - ta > 1e-4) {
-            v3 nn; double gg;
-            v3 pa = vmad(o, d, ta), pb = vmad(o, d, tb);
-            double fa2 = pa.z - dc_road_eval(c, pa.x, pa.y, &nn, &gg);
-            double fb2 = pb.z - dc_road_eval(c, pb.x, pb.y, &nn, &gg);
-            double sm = (fb2 - fa2) / (tb - ta), sp = vdot(*n, d) / fmax(n->z, 1e-3);
-            double hl = sqrt(d.x * d.x + d.y * d.y);
-            if (fabs(sm) > 3 * fabs(sp) + 0.5 && hl > 1e-3) *n = V3(-d.x / hl, -d.y / hl, 0);
-        }
+    /* jump discontinuity in the heightfield (kerb/plank step face): the bracket collapses onto the jump
+       while the residual stays finite (a genuine surface root drives it to ~0). There the surface is the
+       vertical step face: use its normal, facing the ray. */
+    if (fabs(ft) > 2e-4 && fmin(fabs(fa), fabs(fb)) > 1e-4) {
+        double hl = sqrt(d.x * d.x + d.y * d.y);
+        if (hl > 1e-3) *n = V3(-d.x / hl, -d.y / hl, 0);
     }
     return t;
 }
@@ -104,11 +97,14 @@ void dc_tyre_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc
     memset(t, 0, sizeof *t);
     const double R = T->radius, Rr = T->rim_radius + T->rim_pinch, w = T->width;
     const int nrows = T->n_rows < 1 ? 1 : (T->n_rows > DC_MAX_ROWS ? DC_MAX_ROWS : T->n_rows);
-    const int nr = T->n_rays < 3 ? 3 : (T->n_rays > DC_MAX_RAYS ? DC_MAX_RAYS : T->n_rays);
-    const double span = T->ray_span_deg * M_PI / 180.0, dB = 2 * span / (nr - 1);
+    const int single = T->n_rays == 1;   /* classic single-ray "WheelCollider" baseline (comparison only) */
+    const int nr = single ? 1 : (T->n_rays < 3 ? 3 : (T->n_rays > DC_MAX_RAYS ? DC_MAX_RAYS : T->n_rays));
+    const double span = T->ray_span_deg * M_PI / 180.0, dB = single ? 0 : 2 * span / (nr - 1);
     double p = S->pressure;
     double kz = T->kz_ref + T->kz_per_pa * (p - T->pressure_ref); if (kz < 0.04 * T->kz_ref) kz = 0.04 * T->kz_ref;
-    const double dlim = fmax(R - Rr, 0.01), prog = 0.5;
+    const double dlim = fmax(R - Rr, 0.01);
+    /* sidewall progression is pressure-borne: a flat tyre folds onto the rim instead of stiffening */
+    const double prog = 0.5 * fmin(fmax(p / T->pressure_ref, 0.0), 1.5);
     const int nodamp = c->dbg & DC_DBG_NO_DAMPING;
     v3 up = V3(0, 0, 1);
     v3 dn = vnorm(vadd(vneg(up), vscl(a, vdot(up, a))));
@@ -121,7 +117,15 @@ void dc_tyre_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc
         double yoff = ((r + 0.5) / nrows - 0.5) * w;
         v3 o = vmad(cw, a, yoff);
         double A = 0, Ar = 0, sw = 0; v3 P = V3(0, 0, 0), G = V3(0, 0, 0), Gr = V3(0, 0, 0);
-        for (int j = 0; j < nr; j++) {
+        double dl1 = -1, dlr1 = 0; v3 n1 = up;
+        if (single) {       /* one ray straight down the wheel plane: penetration = R - t, force along the hit normal */
+            v3 nh; double g; double th = ray_hit(c, o, dn, R, &nh, &g);
+            if (th < R) {
+                dl1 = R - th; n1 = nh; P = vmad(o, dn, th); sw = 1; A = 1; G = nh; gsum += g; gw += 1;
+                if (th < Rr) { dlr1 = Rr - th; Ar = 1; Gr = nh; }
+            }
+        }
+        for (int j = 0; j < (single ? 0 : nr); j++) {
             double b = -span + dB * j, wt = (j == 0 || j == nr - 1) ? 0.5 : 1.0;
             v3 d = vadd(vscl(dn, cos(b)), vscl(fw, sin(b)));
             v3 nh; double g;
@@ -142,21 +146,24 @@ void dc_tyre_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc
         }
         t->N[r] = 0;
         if (A <= 0 || sw <= 0) continue;
-        double dl = invert_area(A, R);
+        double dl = single ? dl1 : invert_area(A, R);
         double chord = 2 * sqrt(fmax(2 * R * dl - dl * dl, 1e-10));
         double gl = vlen(G);
-        v3 pr = vscl(P, 1.0 / sw), nrm = gl > 1e-12 ? vscl(G, 1 / gl) : up;
-        double gain = fmin(gl / chord, 4.0);     /* =1 on a plane; >1 against step faces (exact gradient) */
+        v3 pr = vscl(P, 1.0 / sw), nrm = single ? n1 : (gl > 1e-12 ? vscl(G, 1 / gl) : up);
+        double gain = single ? 1.0 : fmin(gl / chord, 4.0);     /* =1 on a plane; >1 against step faces (exact gradient) */
         t->orow[r] = o;
+#ifdef DC_TRACE
+        if (i == 0 && c->t > 2.5 && c->t < 2.7) fprintf(stderr, "TR t=%.4f r=%d A=%.3e dl=%.4f gl=%.3e ch=%.4f gain=%.2f n=%.2f %.2f %.2f\n", c->t, r, A, dl, gl, chord, gain, nrm.x, nrm.y, nrm.z);
+#endif
         v3 vp = vadd(vc, vcross(wperp, vsub(pr, cw)));
         double dd = -vdot(vp, nrm);
         double fz = gain * kz / nrows * dl * (1 + prog * (dl / dlim) * (dl / dlim)) + (nodamp ? 0 : T->cz / nrows * dd);
         if (fz < 0) fz = 0;
         double fr = 0, dlr = 0;
         if (Ar > 0) {
-            dlr = invert_area(Ar, Rr);
+            dlr = single ? dlr1 : invert_area(Ar, Rr);
             double chr = 2 * sqrt(fmax(2 * Rr * dlr - dlr * dlr, 1e-10));
-            double gr2 = fmin(vdot(Gr, nrm) / chr, 4.0); if (gr2 < 0) gr2 = 0;
+            double gr2 = single ? 1.0 : fmin(vdot(Gr, nrm) / chr, 4.0); if (gr2 < 0) gr2 = 0;
             fr = gr2 * T->k_rim / nrows * dlr + (nodamp ? 0 : T->c_rim / nrows * dd);
             if (fr < 0) fr = 0;
             t->pe += 0.5 * T->k_rim / nrows * dlr * dlr;

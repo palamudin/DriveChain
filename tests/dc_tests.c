@@ -460,7 +460,7 @@ static void test_kerb(void) {
     double pk[2][3];
     for (int pass = 0; pass < 2; pass++) {
         dc_car_params P; dc_default_params(&P);
-        if (pass == 1) for (int a = 0; a < 2; a++) { P.axle[a].tyre.n_rays = 3; P.axle[a].tyre.ray_span_deg = 0.05; P.axle[a].tyre.n_rows = 1; }
+        if (pass == 1) for (int a = 0; a < 2; a++) { P.axle[a].tyre.n_rays = 1; P.axle[a].tyre.n_rows = 1; }
         road_t rd = {1}; dc_car* c = mk(&P, &rd);
         double pos[3] = {0, 0, 0}, V = 60 / 3.6; dc_reset(c, pos, 0, V);
         FILE* f = csv(nm[pass], "t,x,fz0,fz1,fz2,fz3,fx0,col_torque,travel0_mm,travel1_mm,az_g,rim0");
