@@ -197,6 +197,7 @@ typedef struct dc_car dc_car;
 
 DC_API void   dc_default_params(dc_car_params* p);
 DC_API int    dc_load_params(const char* path, dc_car_params* p, char* err, int errlen); /* 1 ok */
+DC_API int    dc_save_params(const char* path, const dc_car_params* p);  /* writes every parameter as INI, 1 ok */
 DC_API dc_car* dc_create(const dc_car_params* p);
 DC_API void   dc_destroy(dc_car* c);
 DC_API void   dc_set_road(dc_car* c, dc_road_fn fn, void* user);

@@ -205,3 +205,34 @@ int dc_load_params(const char* path, dc_car_params* p, char* err, int errlen) {
     fclose(f);
     return ok;
 }
+
+/* ------------------------------------------------------------------ INI writer (round-trips with the loader) */
+static void put_tab(FILE* f, const fld* tab, const char* base) {
+    for (const fld* q = tab; q->key; q++) {
+        if (!strcmp(q->key, "gears")) continue;
+        fprintf(f, "%s = ", q->key);
+        if (q->type == T_I) fprintf(f, "%d", *(const int*)(base + q->off));
+        else for (int i = 0; i < q->n; i++) fprintf(f, "%s%.10g", i ? ", " : "", ((const double*)(base + q->off))[i]);
+        fputc('\n', f);
+    }
+}
+int dc_save_params(const char* path, const dc_car_params* p) {
+    FILE* f = fopen(path, "w"); if (!f) return 0;
+    fprintf(f, "; DriveChain car file. Units SI. Vehicle frame x fwd, y left, z up, origin = CG at design ride height.\n"
+               "; Hardpoints are for the LEFT corner; the right corner is mirrored.\n[car]\n");
+    put_tab(f, car_f, (const char*)p);
+    fprintf(f, "gears = "); for (int i = 0; i < p->ngears; i++) fprintf(f, "%s%.10g", i ? ", " : "", p->gear[i]); fputc('\n', f);
+    for (int a = 0; a < 2; a++) {
+        const dc_axle_params* A = &p->axle[a];
+        fprintf(f, "\n[%s]\n", a ? "rear" : "front");
+        put_tab(f, axle_f, (const char*)A);
+        for (int l = 0; l < A->nlinks; l++)
+            fprintf(f, "link%d_c = %.10g, %.10g, %.10g\nlink%d_u = %.10g, %.10g, %.10g\n", l, A->link_c[l][0], A->link_c[l][1], A->link_c[l][2],
+                    l, A->link_u[l][0], A->link_u[l][1], A->link_u[l][2]);
+    }
+    fprintf(f, "\n[engine_lut]\n; rpm = torque N m (full load)\n");
+    for (int i = 0; i < p->nlut; i++) fprintf(f, "%.10g = %.10g\n", p->lut_rpm[i], p->lut_torque[i]);
+    fprintf(f, "\n[body]\n; sliding chassis contact points\n");
+    for (int i = 0; i < p->nbodypts; i++) fprintf(f, "point%d = %.10g, %.10g, %.10g\n", i, p->bodypt[i][0], p->bodypt[i][1], p->bodypt[i][2]);
+    fclose(f); return 1;
+}
