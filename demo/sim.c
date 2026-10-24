@@ -62,8 +62,8 @@ int sim_init(sim_t* S, cfg_t* cfg, track_t* trk, audio_t* audio, char* err, int 
     S->gear = 1;
     if (cfg_str(cfg, "start.x", NULL))
         sim_reset_at(S, cfg_num(cfg, "start.x", 0), cfg_num(cfg, "start.y", 0), cfg_num(cfg, "start.yaw_deg", 0) * M_PI / 180, cfg_num(cfg, "start.speed", 0));
-    else if (track_spot_by_name(trk, cfg_str(cfg, "start.spot", cfg_str(cfg, "start.s", NULL) ? "" : "hub")) >= 0) {   /* default: proving-ground start hub */
-        double x, y, yaw; track_spot(trk, track_spot_by_name(trk, cfg_str(cfg, "start.spot", cfg_str(cfg, "start.s", NULL) ? "" : "hub")), &x, &y, &yaw);
+    else if (track_spot_by_name(trk, cfg_str(cfg, "start.spot", cfg_str(cfg, "start.s", NULL) ? "" : (trk->layout == TRACK_MESH ? "start" : "hub"))) >= 0) {   /* default: proving-ground start hub */
+        double x, y, yaw; track_spot(trk, track_spot_by_name(trk, cfg_str(cfg, "start.spot", cfg_str(cfg, "start.s", NULL) ? "" : (trk->layout == TRACK_MESH ? "start" : "hub"))), &x, &y, &yaw);
         sim_reset_at(S, x, y, yaw, cfg_num(cfg, "start.speed", 0));
     }
     else sim_reset_on_track(S, cfg_num(cfg, "start.s", 30), cfg_num(cfg, "start.d", 0), cfg_num(cfg, "start.speed", 0));
@@ -111,7 +111,7 @@ static void autopilot(sim_t* S, const dc_telemetry* t, const dc_xform* ch, dc_in
     /* line: towards the inside of upcoming curvature (puts the inside wheels onto the apex kerbs) */
     int k = (int)(fmod(s + L, T->length) / T->ds) % T->n;
     double cv = 0; for (int m = -6; m <= 6; m++) cv += T->curv[(k + m + T->n) % T->n]; cv /= 13;
-    double dline = clampd(cv * 400, -1, 1) * S->auto_line;
+    double dline = T->layout == TRACK_MESH ? 0 : clampd(cv * 400, -1, 1) * S->auto_line;   /* a mesh map's line is already a racing line */
     double tx, ty; track_point(T, s + L, dline, &tx, &ty, NULL);
     double ex = tx - px, ey = ty - py;
     double lx = cos(yaw) * ex + sin(yaw) * ey, ly = -sin(yaw) * ex + cos(yaw) * ey;
@@ -123,7 +123,9 @@ static void autopilot(sim_t* S, const dc_telemetry* t, const dc_xform* ch, dc_in
     double vt = S->auto_speed_cap;
     for (double a = 0; a < 160; a += 2) {
         int kk = (int)(fmod(s + a, T->length) / T->ds) % T->n;
-        double c = fabs(T->curv[kk]) + 1e-4, vc = sqrt(S->auto_ay / c);
+        double c = fabs(T->curv[kk]);
+        if (T->layout == TRACK_MESH) { c = 0; for (int m = -16; m <= 16; m++) c += T->curv[(kk + m + T->n) % T->n]; c = fabs(c) / 33; }   /* recorded line: curvature over +-8 m of arc */
+        c += 1e-4; double vc = sqrt(S->auto_ay / c);
         double vb = sqrt(vc * vc + 2 * 4.5 * fmax(a - 0.4 * v, 0));
         if (vb < vt) vt = vb;
     }
