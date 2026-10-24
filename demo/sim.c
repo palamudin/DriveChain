@@ -13,7 +13,7 @@ static int make_car(sim_t* S) {
     if (S->car) dc_destroy(S->car);
     S->car = dc_create(&S->P);
     if (!S->car) return 0;
-    dc_set_road(S->car, track_road_fn, S->trk);
+    dc_set_road(S->car, track_road_fn, S->trk); dc_set_road_flags(S->car, DC_ROAD_HEIGHT_ONLY);
     return 1;
 }
 
@@ -25,6 +25,7 @@ int sim_init(sim_t* S, cfg_t* cfg, track_t* trk, audio_t* audio, char* err, int 
     if (*carini && !dc_load_params(carini, &S->P, err, errlen)) return 0;
     S->P.substep_hz = cfg_num(cfg, "physics.substep_hz", S->P.substep_hz);
     int as = cfg_int(cfg, "car.assist", -1); if (as >= 0) S->P.assist = as;
+    int so = cfg_int(cfg, "car.solver", -1); if (so >= 0) S->P.solver = so;   /* --set car.solver=0 -> legacy core */
     if (!make_car(S)) { snprintf(err, errlen, "dc_create failed"); return 0; }
     S->rotation_rad = cfg_num(cfg, "input.rotation_deg", 2 * S->P.steer_lock_deg) * M_PI / 180;
     S->hands_k = cfg_num(cfg, "input.wheel_hands_k", 80); S->hands_d = cfg_num(cfg, "input.wheel_hands_d", 1.2);

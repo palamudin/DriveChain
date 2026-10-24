@@ -20,7 +20,8 @@ The console window prints the joysticks it found, which one it picked, and wheth
   torsion bar, anti-roll bars, engine and brakes are bodies and joints in one solve; every joint only carries
   the forces its design allows. The HUD line `physics MULTIBODY` confirms it is active.
 - `solver = 0`: the previous (legacy) core, for A/B comparison. HUD shows `physics legacy`.
-- To switch, edit the `solver = ` line near the top of `cars/miata_ac.ini` (or `cars/mx5_na.ini`) and restart.
+- To switch, edit the `solver = ` line near the top of `cars/miata_ac.ini` (or `cars/mx5_na.ini`) and restart,
+  or start with `drivechain_demo.exe --set car.solver=0`.
 - The car files now carry stock 1990 NA values: wheel rates 12.5 / 10.1 kN/m, passenger-car damping,
   viscous LSD, final drive 4.3, front toe-in 0.15° per side, lower grip than before.
 - What to try: skidpad, slalom, lift-off mid-corner (from about 55 km/h it steps out; at 60 km/h and above it
