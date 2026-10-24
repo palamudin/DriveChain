@@ -56,10 +56,10 @@
        assist off/on: parking peak driver torque 34.9 / 5.4 N m; 20 m/s 45deg sine peak 7.42 / 2.12 N m
 [PASS] assist: reduces effort             parking ratio 0.15, road ratio 0.29
 --- perf
-       perf default 3x13 rays flat     52.16 us/substep -> 10x real time at 2000 Hz (one core)
-[PASS] perf: >= 5x real time at substep rate (< 100 us) 52.16 us/substep, 9.6x real time
-       perf 1x7 rays flat              28.41 us/substep -> 18x real time at 2000 Hz (one core)
-       perf 3x13 rays rough terrain    79.17 us/substep -> 6x real time at 2000 Hz (one core)
+       perf default 3x13 rays flat     51.74 us/substep -> 10x real time at 2000 Hz (one core)
+[PASS] perf: >= 5x real time at substep rate (< 100 us) 51.74 us/substep, 9.7x real time
+       perf 1x7 rays flat              27.71 us/substep -> 18x real time at 2000 Hz (one core)
+       perf 3x13 rays rough terrain    80.18 us/substep -> 6x real time at 2000 Hz (one core)
 [PASS] newton3: worst residual all tests  |sum m a - F_ext|/mg = 9.49e-16, |sum dL/dt - T_ext| = 7.53e-10 N m
 FAILURES: 0
 ILURES: 0
