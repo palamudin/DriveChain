@@ -12,6 +12,7 @@ typedef struct {            /* render thread -> physics */
     int kb_left, kb_right, kb_up, kb_down, kb_clutch, kb_hand;
     int shift_up, shift_down;   /* edge counts */
     int reset, puncture, toggle_assist, pause, autopilot;
+    int spot, spot_req;         /* teleport to track_spot(spot) when spot_req changes */
 } sim_ctl;
 typedef struct {            /* physics -> render */
     dc_telemetry t;
@@ -36,6 +37,9 @@ typedef struct {
     double auto_line, auto_ay, auto_speed_cap, auto_straight;
     double us_acc; long long steps_acc;
     sim_snap snap;
+    /* external driver (headless harness / tests): when ext_steer / ext_pedals are set, these fields of ext_in replace
+       the device mapping for that channel. The demo never sets them. */
+    int ext_steer, ext_pedals; dc_input ext_in;
 } sim_t;
 int  sim_init(sim_t* S, cfg_t* cfg, track_t* trk, audio_t* audio, char* err, int errlen);
 void sim_tick(sim_t* S, double dt);         /* one physics tick (dt = 1 ms) incl. input + FFB + audio */

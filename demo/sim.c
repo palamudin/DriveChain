@@ -41,6 +41,10 @@ int sim_init(sim_t* S, cfg_t* cfg, track_t* trk, audio_t* audio, char* err, int 
     S->gear = 1;
     if (cfg_str(cfg, "start.x", NULL))
         sim_reset_at(S, cfg_num(cfg, "start.x", 0), cfg_num(cfg, "start.y", 0), cfg_num(cfg, "start.yaw_deg", 0) * M_PI / 180, cfg_num(cfg, "start.speed", 0));
+    else if (cfg_str(cfg, "start.spot", NULL) && track_spot_by_name(trk, cfg_str(cfg, "start.spot", "")) >= 0) {
+        double x, y, yaw; track_spot(trk, track_spot_by_name(trk, cfg_str(cfg, "start.spot", "")), &x, &y, &yaw);
+        sim_reset_at(S, x, y, yaw, cfg_num(cfg, "start.speed", 0));
+    }
     else sim_reset_on_track(S, cfg_num(cfg, "start.s", 30), cfg_num(cfg, "start.d", 0), cfg_num(cfg, "start.speed", 0));
     return 1;
 }
@@ -116,6 +120,14 @@ void sim_tick(sim_t* S, double dt) {
         for (int i = 0; i < 4; i++) dc_set_pressure(S->car, i, S->P.axle[i / 2].tyre.pressure);
         sim_reset_on_track(S, s, 0, 0); S->gear = 1;
     }
+    if (C->spot_req != S->ctl_seen.spot_req) {
+        S->ctl_seen.spot_req = C->spot_req;
+        double x, y, yaw;
+        if (track_spot(S->trk, C->spot, &x, &y, &yaw)) {
+            for (int i = 0; i < 4; i++) dc_set_pressure(S->car, i, S->P.axle[i / 2].tyre.pressure);
+            sim_reset_at(S, x, y, yaw, 0); S->gear = 1;
+        }
+    }
     if (C->puncture != S->ctl_seen.puncture) { S->ctl_seen.puncture = C->puncture; dc_puncture(S->car, (C->puncture - 1) & 3, 2.0); }
     if (C->autopilot != S->ctl_seen.autopilot) { S->ctl_seen.autopilot = C->autopilot; S->autopilot = !S->autopilot; }
     if (C->pause) { S->snap.paused = 1; return; }
@@ -153,6 +165,9 @@ void sim_tick(sim_t* S, double dt) {
     if (D->kind) { thr = fmax(thr, D->throttle); brk = fmax(brk, D->brake); clu = fmax(clu, D->clutch); hb = fmax(hb, D->handbrake); }
     in.throttle = thr; in.brake = brk; in.handbrake = hb;
     if (S->autopilot) { autopilot(S, &t, &parts[0], &in); }
+    if (S->ext_steer) { in.steer_mode = S->ext_in.steer_mode; in.steer_torque = S->ext_in.steer_torque; in.steer_target = S->ext_in.steer_target;
+                        in.hands_k = S->ext_in.hands_k; in.hands_d = S->ext_in.hands_d; in.hands_tmax = S->ext_in.hands_tmax; }
+    if (S->ext_pedals) { in.throttle = S->ext_in.throttle; in.brake = S->ext_in.brake; in.handbrake = S->ext_in.handbrake; }
     /* ---- gearbox ---- */
     int up = C->shift_up - S->ctl_seen.shift_up + D->shift_up, dn = C->shift_down - S->ctl_seen.shift_down + D->shift_down;
     S->ctl_seen.shift_up = C->shift_up; S->ctl_seen.shift_down = C->shift_down; S->dev.shift_up = S->dev.shift_down = 0;

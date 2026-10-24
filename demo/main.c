@@ -82,13 +82,15 @@ static const char* FS =
 static Shader LIT; static int LOC_VIEW, LOC_SUN, LOC_FOG;
 
 /* ---------------- world meshes ---------------- */
-#define MAXCH 1024
+#define MAXCH 2048
 static Model CH[MAXCH]; static Vector3 CHC[MAXCH]; static int NCH;
 static Color surf_col(int sf, double x, double y, double s, double h) {
     double n = 0.5 + 0.5 * sin(x * 12.9898 + y * 78.233) * sin(x * 3.1 - y * 1.7);
     switch (sf) {
     case SURF_TARMAC: { int g = (int)(58 + 10 * n); return (Color){g, g, (unsigned char)(g + 4), 255}; }
     case SURF_LINE: return (Color){225, 225, 220, 255};
+    case SURF_PAD: { int g = (int)(72 + 8 * n); return (Color){g, g, (unsigned char)(g + 3), 255}; }
+    case SURF_PAVE: { int g = (int)(70 + 900 * h); g = g < 25 ? 25 : (g > 140 ? 140 : g); return (Color){(unsigned char)(g + 8), (unsigned char)(g + 4), g, 255}; }
     case SURF_KERB: return ((int)floor(s / 1.5)) & 1 ? (Color){205, 30, 25, 255} : (Color){235, 235, 230, 255};
     case SURF_SAUSAGE: return ((int)floor(s / 0.6)) & 1 ? (Color){230, 190, 20, 255} : (Color){25, 25, 25, 255};
     case SURF_ROUGH: { int g = (int)(90 + 30 * n); return (Color){(unsigned char)(g + 25), (unsigned char)g, (unsigned char)(g - 30), 255}; }
@@ -137,12 +139,13 @@ typedef struct { double x0, y0, step; } terr_u;
 static void terr_fn(void* u, int i, int j, double* x, double* y, double* z, Color* c) {
     terr_u* T = (terr_u*)u; *x = T->x0 + i * T->step; *y = T->y0 + j * T->step;
     int sf; double d, s; double h = track_height(&TRK, *x, *y, &sf, NULL, &d, &s);
-    if (fabs(d) < TRK.half_w + TRK.kerb_w + 1.6) h -= 0.06;   /* the ribbon mesh covers the road band */
-    *z = h; *c = surf_col(sf == SURF_TARMAC || sf == SURF_LINE || sf == SURF_KERB || sf == SURF_SAUSAGE ? SURF_GRASS : sf, *x, *y, s, h);
+    int band = fabs(d) < TRK.half_w + TRK.kerb_w + 1.6;
+    if (band) h -= 0.06;   /* the ribbon mesh covers the road band */
+    *z = h; *c = surf_col(band && (sf == SURF_TARMAC || sf == SURF_LINE || sf == SURF_KERB || sf == SURF_SAUSAGE || sf == SURF_PAVE) ? SURF_GRASS : sf, *x, *y, s, h);
 }
-typedef struct { int k0; double wmax, dd; } rib_u;
+typedef struct { int k0, sub; double wmax, dd; } rib_u;
 static void rib_fn(void* u, int i, int j, double* x, double* y, double* z, Color* c) {
-    rib_u* R = (rib_u*)u; double s = (R->k0 + j) * TRK.ds, d = -R->wmax + i * R->dd;
+    rib_u* R = (rib_u*)u; double s = (R->k0 + (double)j / R->sub) * TRK.ds, d = -R->wmax + i * R->dd;
     track_point(&TRK, s, d, x, y, NULL);
     int sf; double dd, ss; double h = track_height(&TRK, *x, *y, &sf, NULL, &dd, &ss);
     *z = h + 0.004; *c = surf_col(sf, *x, *y, ss, h);
@@ -156,8 +159,14 @@ static void build_world(void) {
     /* track ribbon chunks: 40 samples (20 m) x across 0.125 m */
     double wmax = TRK.half_w + TRK.kerb_w + 1.5; int nu = (int)(2 * wmax / 0.125) + 1;
     for (int k0 = 0; k0 < TRK.n && NCH < MAXCH; k0 += 40) {
-        rib_u R = {k0, wmax, 2 * wmax / (nu - 1)};
-        int nv = (k0 + 40 < TRK.n ? 40 : TRK.n - k0) + 1;
+        /* finer along-track rows where the surface has short features (proving-ground pave / single-wheel events) */
+        double sa = k0 * TRK.ds, sb = (k0 + 40) * TRK.ds; int sub = 1;
+        if (TRK.layout == TRACK_PROVING) {
+            if (sb > 100 && sa < 300) sub = 8;
+            else if ((sb > 340 && sa < 560) || (sb > TRK.s_str2 + 40 && sa < TRK.s_str2 + 520) || (sb > TRK.s_arc2 + 30 && sa < TRK.s_arc2 + 410)) sub = 4;
+        }
+        rib_u R = {k0, sub, wmax, 2 * wmax / (nu - 1)};
+        int nv = (k0 + 40 < TRK.n ? 40 : TRK.n - k0) * sub + 1;
         Mesh m = grid_mesh(nu, nv, rib_fn, &R);
         CH[NCH] = LoadModelFromMesh(m); CH[NCH].materials[0].shader = LIT;
         double x, y; track_point(&TRK, (k0 + 20) * TRK.ds, 0, &x, &y, NULL); CHC[NCH] = R3(x, y, 0); NCH++;
@@ -170,7 +179,13 @@ static void build_world(void) {
         for (double x0 = TRK.xmin; x0 < TRK.xmax && NCH < MAXCH; x0 += 32) {
             double cx = x0 + 16, cy = y0 + 16, d, s; track_height(&TRK, cx, cy, NULL, NULL, &d, &s);
             int fine = fabs(d) < 45 || hypot(cx - TRK.rough_cx, cy - TRK.rough_cy) < TRK.rough_r + 25;
-            double st = fine ? 0.5 : 2.0; int n = (int)(32 / st) + 1;
+            double st = fine ? 0.5 : 2.0;
+            if (TRK.layout == TRACK_PROVING) {   /* painted skidpad rings / slalom line need a fine grid; the rest of the pad is flat */
+                double rr = hypot(cx - TRK.skid_cx, cy - TRK.skid_cy);
+                if (fabs(rr - TRK.skid_r) < 26 || (fabs(cy - TRK.cone_y[0]) < 24 && cx > TRK.cone_x[0] - 50 && cx < TRK.cone_x[TRK.ncone - 1] + 50)) st = 0.25;
+                else if (cx > TRK.pad_x0 + 20 && cx < TRK.pad_x1 - 20 && cy > TRK.pad_y0 + 20 && cy < TRK.pad_y1 - 20) st = 2.0;
+            }
+            int n = (int)(32 / st) + 1;
             terr_u T = {x0, y0, st};
             Mesh m = grid_mesh(n, n, terr_fn, &T);
             CH[NCH] = LoadModelFromMesh(m); CH[NCH].materials[0].shader = LIT; CHC[NCH] = R3(cx, cy, 0); NCH++;
@@ -437,6 +452,12 @@ static void draw_scene(Camera3D cam, const sim_snap* V, const dc_car_params* P, 
         if (i != FAR_CH && dx * dx + dz * dz > 420.0f * 420.0f) continue;
         DrawMesh(CH[i].meshes[0], CH[i].materials[0], MatrixIdentity());
     }
+    for (int i = 0; i < TRK.ncone; i++) {   /* slalom cones (visual only: 0.7 m traffic cones) */
+        double z = track_height(&TRK, TRK.cone_x[i], TRK.cone_y[i], NULL, NULL, NULL, NULL);
+        DrawCube(R3(TRK.cone_x[i], TRK.cone_y[i], z + 0.015), 0.38f, 0.03f, 0.38f, (Color){30, 30, 30, 255});
+        DrawCylinder(R3(TRK.cone_x[i], TRK.cone_y[i], z + 0.03), 0.025f, 0.17f, 0.68f, 10, (Color){245, 110, 20, 255});
+        DrawCylinder(R3(TRK.cone_x[i], TRK.cone_y[i], z + 0.36), 0.09f, 0.11f, 0.12f, 10, (Color){240, 240, 240, 255});
+    }
     draw_car(V, P, xray);
     if (xray || !CM.ok || camode == CAM_WHEEL) { if (xray) rlDisableDepthTest(); draw_links(V); rlEnableDepthTest(); }
     if (forces) { rlDisableDepthTest(); draw_forces(V, P); rlEnableDepthTest(); }
@@ -455,7 +476,8 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--time") && i + 1 < argc) max_time = atof(argv[++i]);
     }
     int headless = shots != NULL || (wav && max_time > 0);
-    track_build(&TRK, cfg_num(&CFG, "track.rough_scale", 1.0));
+    { const char* lay = cfg_str(&CFG, "track.layout", "proving");
+      track_build(&TRK, cfg_num(&CFG, "track.rough_scale", 1.0), !strcmp(lay, "circuit") ? TRACK_CIRCUIT : TRACK_PROVING); }
     char err[256] = "";
     audio_init(&AUD, 44100, 1000);
     AUD.master = (float)cfg_num(&CFG, "audio.master", 0.8); AUD.engine_gain = (float)cfg_num(&CFG, "audio.engine", 1.0);
@@ -525,6 +547,7 @@ int main(int argc, char** argv) {
         if (IsKeyPressed(KEY_E) || IsKeyPressed(KEY_PAGE_UP)) C->shift_up++;
         if (IsKeyPressed(KEY_Q) || IsKeyPressed(KEY_PAGE_DOWN) || IsKeyPressed(KEY_Z)) C->shift_down++;
         if (IsKeyPressed(KEY_R)) C->reset++;
+        for (int k = 0; k < TRK_NSPOT; k++) if (IsKeyPressed(KEY_ONE + k)) { C->spot = k; C->spot_req++; }
         if (IsKeyPressed(KEY_P)) C->puncture++;
         if (IsKeyPressed(KEY_H)) C->toggle_assist++;
         if (IsKeyPressed(KEY_O)) C->autopilot++;
