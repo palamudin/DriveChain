@@ -332,6 +332,12 @@ static void draw_hud(const sim_snap* V, const dc_car_params* P, int sw_, int sh_
     snprintf(b, sizeof b, "KE %.0f J  PE %.0f J  dissipated %.0f J  N3 resid %.1e N", t->kinetic, t->potential, t->dissipated,
              sqrt(t->resid_force[0] * t->resid_force[0] + t->resid_force[1] * t->resid_force[1] + t->resid_force[2] * t->resid_force[2])); DrawText(b, x, y, 13, RAYWHITE); y += 18;
     snprintf(b, sizeof b, "input: %s%s%s", V->device_kind == 1 ? "wheel " : (V->device_kind == 2 ? "gamepad " : "keyboard"), V->device, V->has_ffb ? " [FFB]" : ""); DrawText(b, x, y, 13, RAYWHITE); y += 18;
+    if (V->device_kind == 1) {   /* raw device state, for mapping axes / H-shifter buttons in demo.ini */
+        int n = snprintf(b, sizeof b, "axes"); for (int a = 0; a < V->raw_naxes && a < 8; a++) n += snprintf(b + n, sizeof b - n, " %d:%+.2f", a, V->raw_axis[a]);
+        n += snprintf(b + n, sizeof b - n, "  buttons"); for (int k = 0; k < 32; k++) if (V->raw_buttons & (1 << k)) n += snprintf(b + n, sizeof b - n, " %d", k);
+        snprintf(b + n, sizeof b - n, "  H %s  ffb %+.2f", V->hgear == -99 ? "off" : (V->hgear == -1 ? "R" : (V->hgear == 0 ? "N" : TextFormat("%d", V->hgear))), V->ffb_level);
+        DrawText(b, x, y, 12, (Color){200, 220, 255, 255}); y += 16;
+    }
     /* pedals */
     bar(x, y, 16, 60, V->in.throttle, GREEN, "T"); bar(x + 24, y, 16, 60, V->in.brake, RED, "B"); bar(x + 48, y, 16, 60, V->in.clutch, SKYBLUE, "C"); bar(x + 72, y, 16, 60, V->in.handbrake, ORANGE, "H");
     /* friction circles */

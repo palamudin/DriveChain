@@ -210,6 +210,8 @@ void sim_tick(sim_t* S, double dt) {
     N->beta = fabs(t.vx) > 1 ? atan2(t.vy, fabs(t.vx)) : 0;
     N->gear_req = S->gear; N->assist = S->P.assist; N->autopilot = S->autopilot;
     N->device_kind = S->dev.kind; N->has_ffb = S->dev.has_ffb; snprintf(N->device, sizeof N->device, "%s", S->dev.name);
+    for (int a = 0; a < 8; a++) N->raw_axis[a] = S->dev.axis[a];
+    N->raw_buttons = S->dev.buttons_raw; N->raw_naxes = S->dev.naxes; N->hgear = S->dev.hgear;
     if (S->steps_acc >= 2000) { N->us_per_substep = S->us_acc / S->steps_acc; N->rt_factor = 1e6 / (N->us_per_substep * S->P.substep_hz); S->us_acc = 0; S->steps_acc = 0; }
 }
 void sim_shutdown(sim_t* S) { input_close(); if (S->car) dc_destroy(S->car); S->car = NULL; }

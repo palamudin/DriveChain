@@ -22,6 +22,7 @@ typedef struct {            /* physics -> render */
     double ffb_level, us_per_substep, rt_factor, sim_time, beta;
     int gear_req, assist, autopilot, paused, device_kind, has_ffb;
     char device[128];
+    double raw_axis[8]; int raw_buttons, raw_naxes, hgear;   /* input diagnostics for mapping */
 } sim_snap;
 typedef struct {
     cfg_t* cfg; track_t* trk; audio_t* audio;
