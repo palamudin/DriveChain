@@ -31,3 +31,14 @@ cars: build/libdrivechain.a
 clean:
 	rm -rf build
 .PHONY: all clean test cars
+
+# ---- raylib test drive (Linux). raylib is compiled from source by tools/build_raylib.sh into build-deps/linux
+RAYLIB_SRC ?= /workspace/deps/raylib-5.5/src
+DEMO_SRC = demo/main.c demo/sim.c demo/track.c demo/audio.c demo/input.c demo/cfg.c demo/objload.c
+build-deps/linux/libraylib.a:
+	tools/build_raylib.sh $(RAYLIB_SRC) build-deps/linux gcc ar linux
+build/drivechain_demo: $(DEMO_SRC) demo/*.h build/libdrivechain.a build-deps/linux/libraylib.a
+	$(CC) -O2 -std=gnu11 -Wall -Wno-misleading-indentation -Wno-unused-parameter -Icore/include -Ibuild-deps/linux $$(sdl2-config --cflags) -o $@ $(DEMO_SRC) \
+	  build/libdrivechain.a build-deps/linux/libraylib.a $$(sdl2-config --libs) -lGL -lm -lpthread -ldl -lrt -lX11
+demo: build/drivechain_demo
+.PHONY: demo
