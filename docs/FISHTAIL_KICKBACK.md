@@ -111,7 +111,7 @@ The car is the public NA Miata reference (cars/mx5_na.ini) unless stated otherwi
 
 **Why the heading changes even though the wheel re-centres.** During the 50–100 ms the front wheels are toed by the kick, the car yaws. The integral of that yaw (0.2–0.4°) stays when the wheel returns. Even a *locked* wheel shows it (0.2–0.4°), because the source is compliance steer, bump steer and Fx asymmetry at the contact patch, not the rim. A driver corrects it within ~0.1–0.2 s. With the arms model the lateral offset stays below 2 cm.
 
-### NA Miata sanity check (manual rack: `assist = 0`; the NA base car is unassisted)
+### NA Miata sanity check (manual rack, `assist = 0`: many NAs were sold without power steering)
 | event | column pk (arms20 / locked) | arms20 rim | hands-off rim | heading |
 |---|---|---|---|---|
 | bump L 60 | 9.6 / 11.5 N·m | 1.9° | 8.5° | 0.23° |
