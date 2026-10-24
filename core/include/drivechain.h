@@ -76,7 +76,7 @@ typedef struct {
     int lower_arm_a, lower_arm_b;   /* the two links forming the lower A-arm (spring/ARB carrier), -1 if none */
     double strut_top[3];            /* STRUT: chassis top mount */
     double strut_low[3];            /* STRUT: a point on the strut axis fixed to the upright (design position) */
-    double toe_rod_delta;           /* m added to the rack-link length (AC TOE_OUT) */
+    double toe_rod_delta;           /* m added to the rack-link length (static toe adjustment) */
     double static_camber_deg;       /* rotation of the spindle about the hub (negative = top in) */
     double static_toe_deg;          /* extra spindle toe (positive = toe-in) */
     /* spring / damper unit */

@@ -22,7 +22,7 @@ static double AUD_F = 0, AUD_T = 0;   /* worst Newton-3 residuals seen in any dy
 #define R2D (180.0 / M_PI)
 
 static const char* RDIR(void) { const char* r = getenv("DC_RESULTS"); return r && *r ? r : "results"; }
-/* car under test: defaults, or the car file named by $DC_CAR (e.g. DC_CAR=private/miata_ac.ini) */
+/* car under test: defaults, or the car file named by $DC_CAR (e.g. DC_CAR=private/my_car.ini) */
 static void car_params(dc_car_params* P) {
     dc_default_params(P);
     const char* f = getenv("DC_CAR");
@@ -261,7 +261,7 @@ static void test_conservation(void) {
     }
 }
 
-/* ================= 3a. tyre rig (calibration vs AC targets) ================= */
+/* ================= 3a. tyre rig (brush calibration vs peak-slip targets) ================= */
 static void rig_point(dc_car* c, double Fz, double alpha, double kappa, double gamma, double V, double* Fx, double* Fy, double* Mz, double* tp, double* al_tr) {
     double h = 1.0 / c->P.substep_hz; const dc_tyre_params* T = &c->P.axle[0].tyre;
     dc_tyre_state* S = &c->ty[0];

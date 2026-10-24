@@ -1,6 +1,6 @@
 # Fishtail, relaxation length and kickback
 
-The car is the public NA Miata reference (cars/mx5_na.ini) unless stated otherwise. "AC car" means the private, AC-calibrated Miata. Its numbers are quoted here, but its files stay in private/.
+The car is the public NA Miata reference (cars/mx5_na.ini) unless stated otherwise. Results for the privately calibrated car stay in private/.
 
 ## 1. Fishtail ("erratic oversteer correction, throws left-right even at low speed")
 **Harness:** `drivetest fishtail|fishcheck`.
@@ -50,7 +50,6 @@ The car is the public NA Miata reference (cars/mx5_na.ini) unless stated otherwi
 | power 60 km/h R40 | 2 / 0.22 / 0.92 s | **0 / 1.00 / 0.26 s** |
 
 - **At 1.2× speed:** RAW lift at 72 km/h gives 7 swings with ζ −0.10, and at 102 km/h it SPINS. With the arms layer these become 0 swings (settle 0.72 s) and 1 swing (ζ 0.37, settle 0.87 s).
-- **AC car:** fishcheck also PASSes.
 - **Known residual:** lift-off at 85 km/h with completely free hands (`hands_off`) still spins (5 swings, β 88°). A free PAS wheel at that speed is genuinely unstable; the test flags it as a known residual rather than hiding it.
 - **Files:**
   - results/fishtail/check/fishcheck.txt (the `make fishtest` regression)
@@ -119,7 +118,6 @@ The car is the public NA Miata reference (cars/mx5_na.ini) unless stated otherwi
 | pothole L 60 | 16.9 / 18.7 N·m | 3.8° | 9.6° | 0.28° |
 | pothole L 100 | 15.1 / 16.4 N·m | 3.0° | 5.6° | 0.21° |
 
-- The AC car (manual) gives bump 60: 11.1 / 13.1 N·m and pothole 60: 17.4 / 19.4 N·m.
 - These sit in the expected 10–20 N·m range for an unassisted NA over a sharp single-wheel edge.
 - The 15–25 N·m arms hold the rim to 2–4°, and recovery is about one reaction delay.
 - With PAS, the torsion bar and valve cap what reaches the column at ~3 N·m. The rack-side kick is absorbed by the assist, which is the real PAS behaviour. The FFB is therefore much calmer with assist on (H toggles it).
@@ -130,7 +128,7 @@ In results/kickback/ (PAS) and results/kickback/default_manual/ (manual rack):
 - `kick_traces_<event>.png`: rim, column torque, heading and lateral offset for each driver
 - `kick_attrib_<event>.png`: the source breakdown
 
-Summaries are in `*/kickback_summary.csv`. The AC car versions are in private/kick_ac{,_manual}/.
+Summaries are in `*/kickback_summary.csv`.
 
 ## 4. Residuals
 - Lift-off at 85 km/h with a *free* PAS wheel spins. The hands-off recovery test (90° step) is chaotic near the limit: peak β varies from 40° to 80° with small parameter changes.

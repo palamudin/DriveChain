@@ -122,7 +122,7 @@ You spawn at the **start hub**: a painted box on the flat dynamics pad inside th
 - `drivechain.dll`: the physics core as a C ABI DLL with an opaque handle, for the Unity P/Invoke binding in the repo.
 - `demo.ini`: all settings above.
 - `cars/`:
-  - `miata_ac.ini`: hardpoints, springs, dampers, tyres, steering and engine, calibrated from the AC data.
+  - `miata_ac.ini`: hardpoints, springs, dampers, tyres, steering and engine, privately calibrated from third-party mod data, then corrected to stock 1990 values.
   - `mx5_na.ini` and `hatch_fwd.ini`: reference cars. Edit `car.ini` to switch.
 - `assets/miata_mesh/`: the car mesh (LOD B), with wheels, calipers/hubs and the steering wheel split out so each is posed from the physics.
 

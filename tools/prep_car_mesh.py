@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""prep_car_mesh.py - split an AC-style car OBJ (e.g. a LOD B export) into the parts the demo animates.
+"""prep_car_mesh.py - split a game-style car OBJ (e.g. a LOD B export) into the parts the demo animates.
 
 usage: prep_car_mesh.py <car.obj> <car.ini (physics, for hub positions)> <out_dir> [--paint r,g,b] [--max-tex 1024]
 
@@ -10,7 +10,7 @@ Writes into out_dir (keep it under private/ for third-party assets - never commi
   steer.obj/.mtl         steering wheel, centred on its hub
   mesh.cfg               placement (physics frame: x fwd, y left, z up, origin = CG) + cross-check numbers
   tex/*.png              DDS -> PNG (Pillow), downscaled to --max-tex
-Frame: AC models are +X left, +Y up, +Z forward  ->  physics (x, y, z) = (ac.z, ac.x, ac.y) + offset,
+Frame: such models are +X left, +Y up, +Z forward  ->  physics (x, y, z) = (ac.z, ac.x, ac.y) + offset,
 with the offset chosen so the mesh wheel centres land on the physics hub points (least squares in x and z).
 """
 import sys, os, re, math, argparse
@@ -187,7 +187,7 @@ def write_part(pname, gnames, origin):
         for m in used:
             M = mats.get(m, {"Kd": (0.6, 0.6, 0.6), "map": None})
             fm.write(f"newmtl {m}\n")
-            if m == "ext_chassis": fm.write("Kd %.3f %.3f %.3f\n\n" % paint); continue      # body paint (AC skins are not part of the model)
+            if m == "ext_chassis": fm.write("Kd %.3f %.3f %.3f\n\n" % paint); continue      # body paint (skins are not part of the model)
             fm.write("Kd %.3f %.3f %.3f\n" % tuple(M["Kd"]))
             t = tex(M["map"])
             if t: fm.write(f"map_Kd {t}\n")

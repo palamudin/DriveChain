@@ -1,6 +1,6 @@
 # DriveChain: physically based steering, suspension and tyre core
 
-DriveChain has a C core with a Unity frontend (P/Invoke) and a raylib test drive. The target feel is BeamNG-style physicality with AC/LFS-style tarmac feel.
+DriveChain has a C core with a Unity frontend (P/Invoke) and a raylib test drive. The target feel is BeamNG-style physicality with the tarmac feel of dedicated circuit simulators.
 
 - **Numerics:** double precision, deterministic, symplectic Euler at 2 kHz with a 12-DOF Cholesky solve. There is no heap use in the step.
 - **Conservation:** Newton-3 and energy accounting are checked every run.
@@ -32,9 +32,8 @@ The tools are:
 - `dcdrive.py` (Python client)
 - `plot_kickback.py`
 - `build_windows.sh` and `package_win64.sh`
-- `ac_import.py`
 
-`private/` (AC-calibrated car, mesh, private results), `dist/` and `results/shots/` are gitignored and are not part of the source.
+`private/` (privately calibrated car, mesh, private results), `dist/` and `results/shots/` are gitignored and are not part of the source.
 
 ## Build and test (Linux)
 ```

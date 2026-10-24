@@ -19,7 +19,7 @@ typedef struct {
 } dc_tc;
 void dc_tyre_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc* t);
 void dc_tyre_phaseB(dc_car* c, int i, v3 cw, v3 a, double omega_new, double h, dc_tc* t, int commit);
-/* vertical rate vs gauge pressure: linear (AC-style RATE + PRESSURE_SPRING_GAIN) around the reference,
+/* vertical rate vs gauge pressure: linear (reference rate + pressure gain) around the reference,
    blended to the carcass-only rate kz_flat below half the reference pressure (a linear law extrapolated
    to 0 psi keeps a deflated tyre unphysically stiff), floored at 4% of kz_ref. */
 static inline double dc_tyre_kz(const dc_tyre_params* T, double p) {
