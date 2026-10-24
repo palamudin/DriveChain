@@ -240,7 +240,8 @@ typedef struct {
     double rim_rate_max;                /* rad/s cap on the commanded rim-angle rate (0 = none) */
     double preview_time, preview_min;   /* PATH: look-ahead distance L = max(preview_min, preview_time * v) */
     double yaw_damp;                    /* PATH: s; road-wheel target -= yaw_damp * (r - v * kappa_path) */
-    double catch_gain;                  /* PATH: 0..1; adds catch_gain * (front-axle sideslip) to the road-wheel target (countersteer) */
+    double catch_gain;                  /* PATH: 0..1; adds catch_gain * (rear-axle sideslip beyond a 0.03 rad deadband,
+                                           continuous) to the road-wheel target (countersteer) */
     double speed_kp, speed_ki, brake_kp;/* SPEED pedals: throttle PI (1/(m/s), 1/m), brake P (1/(m/s)) */
     double lock_frac;                   /* fraction of the steering lock the driver may use */
     double lat_ki;                      /* PATH: slow lateral-error trim, rad road-wheel per (m s); models the driver

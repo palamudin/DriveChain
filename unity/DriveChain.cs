@@ -43,6 +43,17 @@ namespace DriveChain
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] public static extern void dc_set_pressure(IntPtr c, int wheel, double pa);
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] public static extern double dc_ffb_torque(IntPtr c);
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] public static extern void dc_debug_flags(IntPtr c, int flags);
+        // ---- plug-in driver (finite-strength arms + path/angle/torque commands; see docs/DRIVER_INTERFACE.md)
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] public static extern void dc_driver_default_params(ref DriverParams p);
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] public static extern IntPtr dc_driver_create(ref DriverParams p);
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] public static extern void dc_driver_destroy(IntPtr d);
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] public static extern void dc_driver_set_params(IntPtr d, ref DriverParams p);
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] public static extern void dc_driver_get_params(IntPtr d, ref DriverParams p);
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] public static extern void dc_driver_reset(IntPtr d);
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] public static extern void dc_driver_set_path(IntPtr d, IntPtr xy, int n, int closed);
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] public static extern void dc_driver_command(IntPtr d, ref DriverCmd c);
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] public static extern void dc_driver_update(IntPtr d, IntPtr car, double dt, ref Input io);
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] public static extern void dc_driver_get_state(IntPtr d, ref DriverState s);
     }
 
     public enum SteerMode { Torque = 0, Angle = 1 }
@@ -96,6 +107,54 @@ namespace DriveChain
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 4)] public WheelTelemetry[] w;
     }
 
+    public enum DriverSteer { Off = 0, HandsOff = 1, Torque = 2, Angle = 3, Path = 4, Locked = 5 }
+    public enum DriverPedals { Off = 0, Direct = 1, Speed = 2 }
+    /// <summary>Mirror of dc_driver_params (16 doubles; checked against dc_abi_size(6)).</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct DriverParams
+    {
+        public double arm_k, arm_d, arm_tmax;      // arm impedance on the rim: N m/rad, N m s/rad, max hand torque N m
+        public double delay, bandwidth_hz, rim_rate_max;
+        public double preview_time, preview_min, yaw_damp, catch_gain;
+        public double speed_kp, speed_ki, brake_kp, lock_frac, lat_ki, predict;
+    }
+    /// <summary>Mirror of dc_driver_cmd (dc_abi_size(7)).</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct DriverCmd
+    {
+        public int steer_mode, pedal_mode;         // DriverSteer, DriverPedals
+        public double steer_target, steer_torque;  // rad at the rim (+ left) / N m
+        public double wave_amp, wave_freq, wave_t0, path_offset;
+        public double throttle, brake, handbrake, speed;   // DIRECT 0..1 / SPEED target m/s
+    }
+    /// <summary>Mirror of dc_driver_state (dc_abi_size(8)).</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct DriverState
+    {
+        public double time, rim_cmd, rim_cmd_delayed, lat_err, head_err, path_s, kappa_path, beta, preview_dist;
+        public int saturated, path_index;
+    }
+
+    /// <summary>Owning wrapper for dc_driver. Call Update(car, dt, ref input) every tick BEFORE car.Step(ref input, dt).
+    /// The path array is pinned for the lifetime of the driver (the core keeps the pointer).</summary>
+    public sealed class Driver : IDisposable
+    {
+        IntPtr d; GCHandle pathPin; public DriverParams Params; public DriverCmd Cmd; public DriverState State;
+        public Driver() { Native.dc_driver_default_params(ref Params); d = Native.dc_driver_create(ref Params); }
+        public void ApplyParams() => Native.dc_driver_set_params(d, ref Params);
+        public void Command() => Native.dc_driver_command(d, ref Cmd);
+        public void Reset() => Native.dc_driver_reset(d);
+        public void SetPath(double[] xy, bool closed)   // core frame (x fwd, y left, z up) world points, flat x0,y0,x1,y1...
+        {
+            if (pathPin.IsAllocated) pathPin.Free();
+            if (xy == null || xy.Length < 4) { Native.dc_driver_set_path(d, IntPtr.Zero, 0, 0); return; }
+            pathPin = GCHandle.Alloc(xy, GCHandleType.Pinned);
+            Native.dc_driver_set_path(d, pathPin.AddrOfPinnedObject(), xy.Length / 2, closed ? 1 : 0);
+        }
+        public void Update(Car car, double dt, ref Input io) { Native.dc_driver_update(d, car.Handle, dt, ref io); Native.dc_driver_get_state(d, ref State); }
+        public void Dispose() { if (d != IntPtr.Zero) Native.dc_driver_destroy(d); d = IntPtr.Zero; if (pathPin.IsAllocated) pathPin.Free(); }
+    }
+
     /// <summary>Owning wrapper: params blob + car handle. Parameters are opaque on the managed side
     /// (set them with SetParam / a car .ini), so the binding never drifts from the C struct.</summary>
     public sealed class Car : IDisposable
@@ -106,7 +165,8 @@ namespace DriveChain
         public static void CheckAbi()
         {
             int[] expect = { -1, Marshal.SizeOf(typeof(Input)), Marshal.SizeOf(typeof(Telemetry)), Marshal.SizeOf(typeof(WheelTelemetry)),
-                             Marshal.SizeOf(typeof(Xform)), Marshal.SizeOf(typeof(Seg)) };
+                             Marshal.SizeOf(typeof(Xform)), Marshal.SizeOf(typeof(Seg)),
+                             Marshal.SizeOf(typeof(DriverParams)), Marshal.SizeOf(typeof(DriverCmd)), Marshal.SizeOf(typeof(DriverState)) };
             for (int i = 1; i < expect.Length; i++)
                 if (Native.dc_abi_size(i) != expect[i]) throw new Exception($"DriveChain ABI mismatch for struct {i}: native {Native.dc_abi_size(i)} managed {expect[i]}");
         }
@@ -132,6 +192,7 @@ namespace DriveChain
             Native.dc_get_telemetry(car, ref T); Native.dc_get_parts(car, Parts, Parts.Length); return n;
         }
         public double FfbTorque => Native.dc_ffb_torque(car);
+        public IntPtr Handle => car;
         public void Puncture(int wheel, double leakTimeConst) => Native.dc_puncture(car, wheel, leakTimeConst);
         public void Dispose() { if (car != IntPtr.Zero) Native.dc_destroy(car); car = IntPtr.Zero; if (par != IntPtr.Zero) Marshal.FreeHGlobal(par); par = IntPtr.Zero; }
 

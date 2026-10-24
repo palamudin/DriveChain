@@ -5,6 +5,7 @@
 #include "rlgl.h"
 #include "raymath.h"
 #include "sim.h"
+#include "drvproto.h"
 #include "objload.h"
 #include <pthread.h>
 #include <stdio.h>
@@ -347,6 +348,12 @@ static void draw_hud(const sim_snap* V, const dc_car_params* P, int sw_, int sh_
     snprintf(b, sizeof b, "KE %.0f J  PE %.0f J  dissipated %.0f J  N3 resid %.1e N", t->kinetic, t->potential, t->dissipated,
              sqrt(t->resid_force[0] * t->resid_force[0] + t->resid_force[1] * t->resid_force[1] + t->resid_force[2] * t->resid_force[2])); DrawText(b, x, y, 13, RAYWHITE); y += 18;
     snprintf(b, sizeof b, "input: %s%s%s", V->device_kind == 1 ? "wheel " : (V->device_kind == 2 ? "gamepad " : "keyboard"), V->device, V->has_ffb ? " [FFB]" : ""); DrawText(b, x, y, 13, RAYWHITE); y += 18;
+    if (V->drv_on || V->drv_takeover || V->drv_clients) {
+        static const char* MN[] = {"off", "hands-off", "torque", "angle", "path", "locked"};
+        snprintf(b, sizeof b, "DRIVER %s  steer %s  clients %d  lat %+.2f m  aim %+.0f deg%s", V->drv_on ? "ENGAGED" : "released", MN[(V->drv_mode >= 0 && V->drv_mode <= 5) ? V->drv_mode : 0], V->drv_clients,
+                 V->drv_st.lat_err, V->drv_st.rim_cmd * 180 / M_PI, V->drv_takeover ? "   TAKEOVER (human) - G re-engages" : "");
+        DrawText(b, x, y, 14, V->drv_takeover ? ORANGE : (Color){120, 255, 160, 255}); y += 18;
+    }
     if (V->device_kind == 1) {   /* raw device state, for mapping axes / H-shifter buttons in demo.ini */
         int n = snprintf(b, sizeof b, "axes"); for (int a = 0; a < V->raw_naxes && a < 8; a++) n += snprintf(b + n, sizeof b - n, " %d:%+.2f", a, V->raw_axis[a]);
         n += snprintf(b + n, sizeof b - n, "  buttons"); for (int k = 0; k < 32; k++) if (V->raw_buttons & (1 << k)) n += snprintf(b + n, sizeof b - n, " %d", k);
@@ -372,7 +379,7 @@ static void draw_hud(const sim_snap* V, const dc_car_params* P, int sw_, int sh_
         DrawLine(x0, gy + gh / 2 - (int)(H_sw[i0] * gh / 2 / 6.0), x1, gy + gh / 2 - (int)(H_sw[i1] * gh / 2 / 6.0), SKYBLUE);
     }
     DrawText("FFB N m (y) / steer (b)", gx, gy + gh + 2, 10, RAYWHITE);
-    DrawText("keys: arrows/WASD drive  A/Z or Q/E shift  C cam  F2 x-ray  F3 hud  F4 forces  H assist  P puncture  R reset  O autopilot  Space handbrake  LShift clutch",
+    DrawText("keys: arrows/WASD drive  A/Z or Q/E shift  C cam  F2 x-ray  F3 hud  F4 forces  H assist  P puncture  R reset  O autopilot  G plug-in driver  Space handbrake  LShift clutch",
              10, sh_ - 18, 12, (Color){230, 230, 230, 200});
     (void)sw_;
 }
@@ -485,6 +492,13 @@ int main(int argc, char** argv) {
     if (headless) { cfg_set(&CFG, "input.device", "keyboard"); if (!getenv("DEMO_MANUAL")) cfg_set(&CFG, "autopilot.enabled", "1"); }
     if (!sim_init(&SIM, &CFG, &TRK, &AUD, err, sizeof err)) { fprintf(stderr, "car init failed: %s\n", err); return 1; }
     const dc_car_params* P = dc_params(SIM.car);
+    /* plug-in driver control port (JSON lines over TCP, see docs/DRIVER_INTERFACE.md): --drive-port N or driver.port */
+    static proto_t PROTO;
+    { int port = cfg_int(&CFG, "driver.port", 0);
+      for (int i = 1; i < argc; i++) if (!strcmp(argv[i], "--drive-port") && i + 1 < argc) port = atoi(argv[i + 1]);
+      if (port > 0) { proto_init(&PROTO, &SIM, 0);
+          if (proto_listen(&PROTO, cfg_str(&CFG, "driver.bind", "127.0.0.1"), port)) printf("[demo] driver control port %s:%d (JSON lines; tools/dcdrive.py --tcp)\n", cfg_str(&CFG, "driver.bind", "127.0.0.1"), port);
+          else fprintf(stderr, "[demo] could not listen on driver port %d\n", port); } }
     printf("[demo] track %.0f m, car %s (%s, %d substep Hz), mesh %s\n", TRK.length, cfg_str(&CFG, "car.ini", "(built-in default)"), P->assist ? "hydraulic assist" : "manual rack", (int)P->substep_hz, cfg_str(&CFG, "car.mesh_dir", "(placeholder)"));
 
     int W = cfg_int(&CFG, "display.width", 1600), Hh = cfg_int(&CFG, "display.height", 900);
@@ -551,6 +565,7 @@ int main(int argc, char** argv) {
         if (IsKeyPressed(KEY_P)) C->puncture++;
         if (IsKeyPressed(KEY_H)) C->toggle_assist++;
         if (IsKeyPressed(KEY_O)) C->autopilot++;
+        if (IsKeyPressed(KEY_G)) C->drv_toggle++;
         if (IsKeyPressed(KEY_PAUSE) || IsKeyPressed(KEY_F5)) C->pause = !C->pause;
         if (headless) {   /* synchronous fixed-step physics for reproducible shots */
             int n = (int)(shot_dt / 0.001 + 0.5);

@@ -26,7 +26,7 @@ void dc_driver_default_params(dc_driver_params* p) {
     p->arm_k = 10; p->arm_d = 1.0; p->arm_tmax = 20;   /* relaxed-but-firm grip, as the gamepad "arms" layer */
     p->delay = 0.18; p->bandwidth_hz = 3.0; p->rim_rate_max = 0;
     p->preview_time = 0.75; p->preview_min = 6.0; p->yaw_damp = 0.06; p->catch_gain = 0.5;
-    p->speed_kp = 0.5; p->speed_ki = 0.15; p->brake_kp = 0.25; p->lock_frac = 1.0; p->lat_ki = 0.005; p->predict = 1.0;
+    p->speed_kp = 0.5; p->speed_ki = 0.15; p->brake_kp = 0.25; p->lock_frac = 1.0; p->lat_ki = 0.002; p->predict = 1.0;
 }
 dc_driver* dc_driver_create(const dc_driver_params* p) {
     dc_driver* d = (dc_driver*)calloc(1, sizeof *d);
@@ -160,7 +160,8 @@ void dc_driver_update(dc_driver* d, const dc_car* car, double dt, dc_input* io) 
             { double b = clampd(beta_r, -0.6, 0.6), db = fabs(b) - 0.03; delta += p->catch_gain * (db > 0 ? copysign(db, b) : 0.0); }   /* countersteer when the rear steps out (continuous deadband: no switching chatter) */
             (void)beta_f;
             /* slow trim (bounded, frozen while the rear is sliding so it never fights a catch) */
-            if (fabs(beta_r) < 0.05) d->lat_i = clampd(d->lat_i + p->lat_ki * (lat_now - c->path_offset) * dt, -0.015, 0.015);
+            if (fabs(beta_r) < 0.05 && fabs(lat_now - c->path_offset) < 0.5)   /* conditional integration: a trim, not a tracker (no wind-up on big errors) */
+                d->lat_i = clampd(d->lat_i + p->lat_ki * (lat_now - c->path_offset) * dt, -0.008, 0.008);
             delta -= d->lat_i;
             cmd = clampd(delta * ratio, -lock, lock); angle_like = 1;
             d->st.lat_err = lat_now - c->path_offset; d->st.head_err = wrapa(yaw_now - atan2(ty_now, tx_now)); d->st.path_index = idx;
