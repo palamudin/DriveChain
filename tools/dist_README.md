@@ -30,6 +30,24 @@ The console window prints the joysticks it found, which one it picked, and wheth
 | Camera (chase, cockpit, wheel, orbit, tv) | C (orbit: drag with the mouse, wheel to zoom) | | |
 | X-ray suspension / HUD / force arrows | F2 / F3 / F4 | | |
 
+## Gamepad steering (`[gamepad]`)
+- By default the stick does not set the rim angle. It sets where your **hands** want the rim, and finite-strength arms push the rim there.
+  - The arms are a PD of `arms_k` 10 N·m/rad and `arms_d` 1, capped at `arms_tmax` 20 N·m.
+  - Self-aligning torque can therefore still catch a slide, as a real driver's relaxed grip allows. This removes the left-right fishtail.
+- `range_highspeed` / `range_speed` limit how much lock the stick reaches at speed (25 % at high speed, halfway point at 12 m/s). Other keys are `deadzone` 0.04 and `expo` 0.5.
+- `mode = raw` restores the old direct mapping, kept for comparison. FFB is unaffected either way: it is always the physical column torque.
+
+## Letting a bot or script drive (`[driver]`)
+- Set `port = 7878` (or run with `--drive-port 7878`). Press **G** to toggle the plug-in driver; the HUD shows DRIVER ENGAGED and its path.
+- A script then sends JSON lines over TCP, e.g. with `python tools/dcdrive.py run lane_change --tcp 127.0.0.1:7878`.
+- The bot only applies torque to the rim through finite-strength hands, and works the pedals. The physics is never bypassed.
+- Any deliberate input from you (stick > 0.25, wheel > 45° from the bot's rim, pedal > 0.15) takes over instantly.
+- `drvhost.exe` is the headless lockstep host used by `dcdrive.py`'s default spawn mode. The protocol is in `docs/DRIVER_INTERFACE.md`.
+- Keep `bind = 127.0.0.1`.
+
+## Proving ground spots
+Keys **1–9** teleport to: start, skidpad, pave, undulations, oval, slalom, bumps (single-wheel bumps/potholes and camber change), ruts, bumpy_corner.
+
 ## Gearbox and clutch
 - **H-shifter:** set `gear1_button` … `gear7_button` and `reverse_button`. If no gear button is held, the box is in neutral.
   - With an H-shifter configured, `auto_clutch` defaults to off: use the clutch pedal, or the engine stalls or the gears crunch, just like the car.
@@ -83,6 +101,7 @@ The console window prints the joysticks it found, which one it picked, and wheth
 
 ## Files
 - `drivechain_demo.exe`: the test drive. Needs `SDL2.dll` beside it.
+- `drvhost.exe`, `tools/dcdrive.py`, `unity/*.cs` and `docs/`: the driver plug-in host, the Python client, the Unity scripts and the docs.
 - `drivechain.dll`: the physics core as a C ABI DLL with an opaque handle, for the Unity P/Invoke binding in the repo.
 - `demo.ini`: all settings above.
 - `cars/`:
