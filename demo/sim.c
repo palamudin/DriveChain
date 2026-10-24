@@ -31,6 +31,14 @@ int sim_init(sim_t* S, cfg_t* cfg, track_t* trk, audio_t* audio, char* err, int 
     S->hands_tmax = cfg_num(cfg, "input.wheel_hands_tmax", 30);
     S->auto_clutch = cfg_int(cfg, "input.auto_clutch", -1);
     S->kb_hands_off = cfg_int(cfg, "input.keyboard_hands_off", 1);
+    { const char* gm = cfg_str(cfg, "gamepad.mode", "arms"); S->gp_mode = strcmp(gm, "raw") != 0; }
+    S->gp_k = cfg_num(cfg, "gamepad.arms_k", 10);          /* N m/rad at the rim: relaxed grip */
+    S->gp_d = cfg_num(cfg, "gamepad.arms_d", 1.0);         /* N m s/rad: hand/forearm damping */
+    S->gp_tmax = cfg_num(cfg, "gamepad.arms_tmax", 20);    /* N m: strongest the arms will push */
+    S->gp_deadzone = cfg_num(cfg, "gamepad.deadzone", 0.04);
+    S->gp_range_lo = cfg_num(cfg, "gamepad.range_highspeed", 0.25);  /* fraction of lock reachable at high speed */
+    S->gp_range_v = cfg_num(cfg, "gamepad.range_speed", 12);         /* m/s where range is halfway down */
+    S->gp_expo = cfg_num(cfg, "gamepad.expo", 0.5);
     S->auto_line = cfg_num(cfg, "autopilot.inside_offset", 4.8);
     S->auto_ay = cfg_num(cfg, "autopilot.lat_accel", 5.5);
     S->auto_speed_cap = cfg_num(cfg, "autopilot.speed_cap", 33);
@@ -143,7 +151,13 @@ void sim_tick(sim_t* S, double dt) {
     if (D->kind == 1) {          /* wheel: device angle is the steering-wheel angle (1:1), stiff hands; FFB = column torque */
         in.steer_mode = DC_STEER_ANGLE; in.steer_target = D->steer * S->rotation_rad * 0.5;
         in.hands_k = S->hands_k; in.hands_d = S->hands_d; in.hands_tmax = S->hands_tmax;
-    } else if (D->kind == 2 && fabs(D->steer) > 0.04) {
+    } else if (D->kind == 2 && S->gp_mode == 1) {   /* gamepad "arms": hands always on, finite strength */
+        double x = D->steer, dz = S->gp_deadzone;
+        x = fabs(x) <= dz ? 0 : (x - (x > 0 ? dz : -dz)) / (1 - dz);
+        double lim = S->P.steer_lock_deg * M_PI / 180 * (S->gp_range_lo + (1 - S->gp_range_lo) / (1 + v / S->gp_range_v));
+        in.steer_mode = DC_STEER_ANGLE; in.steer_target = ((1 - S->gp_expo) * x + S->gp_expo * x * fabs(x)) * lim;
+        in.hands_k = S->gp_k; in.hands_d = S->gp_d; in.hands_tmax = S->gp_tmax;
+    } else if (D->kind == 2 && fabs(D->steer) > 0.04) {   /* gamepad "raw" (legacy) */
         double x = D->steer, lim = S->P.steer_lock_deg * M_PI / 180 * (0.25 + 0.75 / (1 + v / 12));
         in.steer_mode = DC_STEER_ANGLE; in.steer_target = (0.5 * x + 0.5 * x * fabs(x)) * lim;
         in.hands_k = 25; in.hands_d = 0.8; in.hands_tmax = 15;

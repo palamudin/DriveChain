@@ -68,7 +68,7 @@ void dc_default_params(dc_car_params* p) {
     p->torsion_k = 1500; p->torsion_c = 0.15; p->rack_friction = 60; p->column_friction = 0.15;
     p->rack_stop_k = 2e6; p->rack_stop_c = 3e3;
     p->assist = 1; p->assist_area = 8.8e-4; p->assist_pmax = 7e6; p->assist_tref = 3.5;
-    p->assist_flow = 1.0e-4; p->assist_rpm_full = 1500; p->assist_damping = 1500; p->assist_torsion_k = 115;
+    p->assist_flow = 1.0e-4; p->assist_rpm_full = 1500; p->assist_damping = 1500; p->assist_backdrive = 1.0; p->assist_torsion_k = 115;
 
     p->drive = DC_DRIVE_RWD; p->ngears = 5;
     double g[5] = {3.136, 1.888, 1.330, 1.000, 0.814}; for (int i = 0; i < 5; i++) p->gear[i] = g[i];
@@ -105,7 +105,7 @@ static const fld car_f[] = {
     CF("torsion_c", torsion_c, 1), CF("rack_friction", rack_friction, 1), CF("column_friction", column_friction, 1),
     CF("rack_stop_k", rack_stop_k, 1), CF("rack_stop_c", rack_stop_c, 1),
     CI("assist", assist), CF("assist_area", assist_area, 1), CF("assist_pmax", assist_pmax, 1), CF("assist_tref", assist_tref, 1),
-    CF("assist_flow", assist_flow, 1), CF("assist_rpm_full", assist_rpm_full, 1), CF("assist_damping", assist_damping, 1),
+    CF("assist_flow", assist_flow, 1), CF("assist_rpm_full", assist_rpm_full, 1), CF("assist_damping", assist_damping, 1), CF("assist_backdrive", assist_backdrive, 1),
     CF("assist_torsion_k", assist_torsion_k, 1),
     CI("drive", drive), CI("ngears", ngears), CF("gears", gear, DC_MAX_GEARS), CF("gear_reverse", gear_reverse, 1),
     CF("final_drive", final_drive, 1), CF("engine_inertia", engine_inertia, 1), CF("gearbox_inertia", gearbox_inertia, 1),

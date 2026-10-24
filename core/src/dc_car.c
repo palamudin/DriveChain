@@ -236,6 +236,7 @@ typedef struct {
     double Qint[NQ];
     double Fspring_ax[4], Fdamp_ax[4], Fbump_w[4], Farb_w[4];
     double tau_tb, F_assist, F_rackfric, T_hands;
+    double c_rack_imp;   /* linearly-implicit rack damping coefficient (valve back-drive orifice), N s/m */
 } step_scratch;
 
 static void build_bodies(dc_car* c, step_scratch* S, const m3* R) {
@@ -375,10 +376,28 @@ static void internal_forces(dc_car* c, step_scratch* S, double* pe_out, double* 
         double rpm = c->we * 30 / M_PI;
         double flow = P->assist_flow * clampd(rpm / P->assist_rpm_full, 0, 1);
         double va = c->rd * sgn(F);
+        /* open-centre bridge flow continuity. Rack moving WITH the assist: the cylinder demands load flow
+           A*v that the pump must supply, so chamber pressure collapses as (1 - A v / Q) (pump flow limit).
+           Rack BACK-DRIVEN against the assist (tyre SAT pushing the rack while the hands/inertia keep the
+           torsion bar twisted): the displaced oil is forced through the same, now nearly closed, valve
+           orifices on top of the pump flow, so the pressure RISES as (1 + A|v|/Q)^2 (orifice dP ~ Q^2),
+           capped by the relief valve. Linearised about v = 0 this is a damper c = 2 |F| A / Q acting only
+           while back-driven; it is applied linearly-implicitly in the mass matrix (it reaches ~50 kN s/m,
+           far beyond the explicit limit). assist_backdrive scales it (1 = orifice law, 0 = legacy). */
         if (va > 0) F *= clampd(1 - va * P->assist_area / fmax(flow, 1e-9), 0, 1);
+        double cbd = 0;
+        if (!nodamp && va < 0 && P->assist_backdrive > 0) {
+            double Qe = fmax(flow, 0.1 * P->assist_flow);
+            cbd = P->assist_backdrive * 2 * fabs(F) * P->assist_area / Qe;
+            double Frel = 1.25 * P->assist_pmax * P->assist_area;     /* relief valve */
+            double room = fmax(Frel - fabs(F), 0);
+            if (cbd * fabs(c->rd) > room) cbd = room / fmax(fabs(c->rd), 1e-9);
+        }
         double Fh = nodamp ? 0 : P->assist_damping * c->rd;
         Q[IR] += F - Fh; diss += Fh * c->rd;
-        S->F_assist = F;
+        Q[IR] -= cbd * c->rd;               /* explicit part; implicit h*cbd added to M[IR,IR] at the solve */
+        S->c_rack_imp = cbd;
+        S->F_assist = F - cbd * c->rd;
     }
     /* rack + column Coulomb friction (regularised) */
     if (!nodamp) {
@@ -562,7 +581,7 @@ static void link_forces(dc_car* c, step_scratch* S, const double* ud, const m3* 
 DC_API void dc_substep(dc_car* c) {
     const dc_car_params* P = &c->P;
     const double h = c->h, g = P->gravity;
-    step_scratch S;
+    step_scratch S; S.c_rack_imp = 0;
     m3 R = qtom(c->q);
     /* 1. kinematics (poses, Jacobians, bias) */
     for (int i = 0; i < 4; i++) dc_kin_full(&c->K[i], c->s[i], c->r, c->sd[i], c->K[i].steered ? c->rd : 0, &c->pose[i]);
@@ -731,9 +750,12 @@ DC_API void dc_substep(dc_car* c) {
         c->tel.ext_torque[0] = Text.x; c->tel.ext_torque[1] = Text.y; c->tel.ext_torque[2] = Text.z;
     }
     for (int i = 0; i < NQ; i++) rhs[i] += S.Qint[i];
+    /* linearly-implicit stiff dampers: (M + h C) ud = rhs, rhs already holds -C u, so the applied force is -C u_new */
+    M[IR * NQ + IR] += h * S.c_rack_imp;
     double Mc[NQ * NQ]; memcpy(Mc, M, sizeof M);
     double ud[NQ]; memcpy(ud, rhs, sizeof rhs);
     if (!dc_chol_solve(NQ, Mc, ud)) { memcpy(Mc, M, sizeof M); memcpy(ud, rhs, sizeof rhs); dc_solve(NQ, Mc, ud); }
+    M[IR * NQ + IR] -= h * S.c_rack_imp;
     if (c->dbg & DC_DBG_FREEZE_STEER) { ud[IR] = 0; ud[ISW] = 0; }
     /* 7. integrate (symplectic Euler) */
     for (int i = 0; i < NQ; i++) u[i] += h * ud[i];
@@ -746,7 +768,7 @@ DC_API void dc_substep(dc_car* c) {
     c->q = qnorm(qmul(qexp(vscl(c->w, h)), c->q));
     for (int i = 0; i < 4; i++) c->s[i] += h * c->sd[i];
     c->r += h * c->rd; c->th += h * c->thd;
-    c->dissipated += pdiss * h;
+    c->dissipated += pdiss * h + S.c_rack_imp * u[IR] * u[IR] * h;   /* implicit damper work: F(u_new) . (h u_new) */
     /* Newton-3 / momentum audit: sum of all body inertial terms minus external loads */
     {
         v3 rf = vneg(Fext), rt = vneg(Text);

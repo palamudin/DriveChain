@@ -42,3 +42,10 @@ build/drivechain_demo: $(DEMO_SRC) demo/*.h build/libdrivechain.a build-deps/lin
 	  build/libdrivechain.a build-deps/linux/libraylib.a $$(sdl2-config --libs) -lGL -lm -lpthread -ldl -lrt -lX11
 demo: build/drivechain_demo
 .PHONY: demo
+
+# ---- headless closed-loop driver harness (exact demo tick, no SDL / raylib)
+DT_SRC = tools/drivetest.c demo/sim.c demo/track.c demo/audio.c demo/input.c demo/cfg.c
+build/drivetest: $(DT_SRC) demo/*.h build/libdrivechain.a
+	$(CC) -O2 -std=gnu11 -Wall -Wno-misleading-indentation -Wno-unused-parameter -DDEMO_NO_SDL -Icore/include -o $@ $(DT_SRC) build/libdrivechain.a -lm -lpthread
+drivetest: build/drivetest
+.PHONY: drivetest

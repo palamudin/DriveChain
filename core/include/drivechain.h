@@ -110,6 +110,7 @@ typedef struct {
     int assist;                    /* 0 manual, 1 hydraulic */
     double assist_area, assist_pmax, assist_tref; /* piston area m^2, max pressure Pa, valve torque for half pressure N m */
     double assist_flow, assist_rpm_full, assist_damping; /* pump flow m^3/s at/above rpm_full, hydraulic damping N s/m */
+    double assist_backdrive; /* valve orifice back-drive law gain (1 = physical orifice dP~Q^2, 0 = off) */
     double assist_torsion_k;       /* torsion bar rate when assisted */
     /* driveline */
     int drive;                     /* DC_DRIVE_* */
