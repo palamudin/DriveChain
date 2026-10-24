@@ -2,7 +2,7 @@
    Runs the exact demo tick (demo/sim.c) on the proving ground with no window, no audio and no devices, so an
    agent, CI job or Python script can drive the car and measure it reproducibly. Time only advances on "step".
 
-     ./build/drvhost [--car cars/mx5_na.ini] [--set key=value]... [--layout proving|circuit]
+     ./build/drvhost [--car cars/mx5_na.ini] [--set key=value]... [--layout proving|circuit|<map dir or tracks/ name>]
                      [--tcp PORT [--bind ADDR]] [--script file.jsonl]
    Default transport is stdin/stdout (one JSON object per line each way). --script runs a file of commands,
    then continues with stdin unless the script ends with {"cmd":"quit"}.                                      */
@@ -39,11 +39,11 @@ int main(int argc, char** argv) {
             char kv[256]; snprintf(kv, sizeof kv, "%s", argv[++i]); char* eq = strchr(kv, '=');
             if (eq) { *eq = 0; cfg_set(&cfg, kv, eq + 1); }
         } else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) {
-            fprintf(stderr, "usage: drvhost [--car INI] [--set k=v]... [--layout proving|circuit] [--tcp PORT [--bind ADDR]] [--script FILE]\n");
+            fprintf(stderr, "usage: drvhost [--car INI] [--set k=v]... [--layout proving|circuit|<map dir or tracks/ name>] [--tcp PORT [--bind ADDR]] [--script FILE]\n");
             return 0;
         } else { fprintf(stderr, "drvhost: unknown argument %s\n", argv[i]); return 2; }
     }
-    track_build(&TRK, cfg_num(&cfg, "track.rough_scale", 1.0), !strcmp(layout, "circuit") ? TRACK_CIRCUIT : TRACK_PROVING);
+    { char e[256]; if (!track_select(&TRK, layout, cfg_num(&cfg, "track.rough_scale", 1.0), e, sizeof e)) { fprintf(stderr, "drvhost: %s\n", e); return 1; } }
     char err[256];
     if (!sim_init(&S, &cfg, &TRK, NULL, err, sizeof err)) { fprintf(stderr, "drvhost: sim_init: %s\n", err); return 1; }
     S.drv_takeover_enabled = 0;     /* no human devices on a headless host */

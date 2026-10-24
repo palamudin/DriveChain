@@ -163,9 +163,9 @@ int proto_handle(proto_t* P, const char* L, char* o, int max) {
     if (!strcmp(cmd, "hello") || !strcmp(cmd, "info")) {
         const track_t* T = S->trk;
         int n = snprintf(o, max, "{\"ok\":true,\"protocol\":%d,\"name\":\"drivechain\",\"lockstep\":%d,\"tick_dt\":0.001,\"substep_hz\":%.0f,"
-            "\"layout\":\"%s\",\"track_length\":%.2f,\"half_width\":%.2f,\"s_arc1\":%.2f,\"s_str2\":%.2f,\"s_arc2\":%.2f,"
+            "\"layout\":\"%s\",\"map\":\"%s\",\"track_length\":%.2f,\"half_width\":%.2f,\"s_arc1\":%.2f,\"s_str2\":%.2f,\"s_arc2\":%.2f,"
             "\"skidpad\":[%.3f,%.3f,%.3f],\"steer_ratio\":%.3f,\"steer_lock_deg\":%.2f,\"wheelbase\":%.4f,\"assist\":%d,\"spots\":[",
-            PROTO_VERSION, P->lockstep, S->P.substep_hz, T->layout == TRACK_PROVING ? "proving" : "circuit", T->length, T->half_w,
+            PROTO_VERSION, P->lockstep, S->P.substep_hz, T->layout == TRACK_PROVING ? "proving" : T->layout == TRACK_MESH ? "mesh" : "circuit", track_layout_name(T), T->length, T->half_w,
             T->s_arc1, T->s_str2, T->s_arc2, T->skid_cx, T->skid_cy, T->skid_r, S->P.steer_ratio, S->P.steer_lock_deg,
             S->P.axle[0].hub[0] - S->P.axle[1].hub[0], S->P.assist);
         for (int i = 0; i < TRK_NSPOT; i++) {
@@ -286,7 +286,7 @@ void proto_hook(sim_t* S, int phase) {
     M->dist += fabs(t.speed) * 0.001; M->sat += ds.saturated; M->takeover_ticks += S->drv_takeover;
     dc_xform chp[DC_PART_COUNT]; dc_get_parts(S->car, chp, DC_PART_COUNT); dc_xform ch = chp[DC_PART_CHASSIS];
     double d = 0, s = 0; int surf = 0; track_height(S->trk, ch.pos[0], ch.pos[1], &surf, NULL, &d, &s);
-    if (surf == SURF_GRASS || surf == SURF_ROUGH) M->offtrack++;   /* chassis over grass / rough = off the road */
+    if (surf == SURF_GRASS || surf == SURF_ROUGH || surf == SURF_GRAVEL) M->offtrack++;   /* chassis over grass / rough / gravel = off the road */
     P->tick++;
     if (P->log && P->tick % P->log_every == 0)
         fprintf(P->log, "%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.3f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.3f,%.4f,%.3f,%.3f,%d,"
