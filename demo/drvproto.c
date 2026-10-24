@@ -236,6 +236,8 @@ int proto_handle(proto_t* P, const char* L, char* o, int max) {
     if (!strcmp(cmd, "log")) {
         if (P->log) { fclose(P->log); P->log = NULL; }
         if (jstr(L, "file", b, sizeof b) && *b) {
+            /* a TCP control port can be reached by any local process: only relative paths below the working directory */
+            if (P->use_net && (b[0] == '/' || b[0] == '\\' || strchr(b, ':') || strstr(b, ".."))) { snprintf(o, max, "{\"ok\":false,\"error\":\"log file must be a relative path without '..'\"}"); return 0; }
             P->log = fopen(b, "w");
             if (!P->log) { snprintf(o, max, "{\"ok\":false,\"error\":\"cannot open log file\"}"); return 0; }
             v = 1; jnum(L, "every", &v); P->log_every = v >= 1 ? (int)v : 1;

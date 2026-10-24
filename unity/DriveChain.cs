@@ -210,8 +210,9 @@ namespace DriveChain
         public Transform chassis, steeringWheel, rack;
         public Transform[] uprights = new Transform[4], wheels = new Transform[4];   // FL FR RL RR
         public LayerMask roadMask = ~0;
-        Car car; Input inp;
+        Car car; Input inp; DriveChainDriverBridge bridge;
         static LayerMask sMask;
+        public Car Car => car;
 
         [AOT.MonoPInvokeCallback(typeof(Native.RoadFn))]
         static double Road(IntPtr user, double x, double y, out double nx, out double ny, out double nz, out double grip)
@@ -238,8 +239,12 @@ namespace DriveChain
         }
         void FixedUpdate()
         {
-            inp.steer_target = -Input.GetAxis("Horizontal") * 7.0;   // rad at the steering wheel (+ = left)
-            inp.throttle = Mathf.Max(0, Input.GetAxis("Vertical")); inp.brake = Mathf.Max(0, -Input.GetAxis("Vertical"));
+            float h = UnityEngine.Input.GetAxis("Horizontal"), v = UnityEngine.Input.GetAxis("Vertical");
+            inp.steer_mode = (int)SteerMode.Angle; inp.hands_k = 25; inp.hands_d = 1.2; inp.hands_tmax = 12;
+            inp.steer_target = -h * 7.0;   // rad at the steering wheel (+ = left)
+            inp.throttle = Mathf.Max(0, v); inp.brake = Mathf.Max(0, -v);
+            if (!bridge) bridge = GetComponent<DriveChainDriverBridge>();
+            if (bridge) bridge.Apply(car, Time.fixedDeltaTime, ref inp, h, Mathf.Max(0, v), Mathf.Max(0, -v));   // plug-in driver (overrides inp when engaged)
             car.Step(ref inp, Time.fixedDeltaTime);
             Apply(chassis, car.Parts[(int)Part.Chassis]);
             for (int i = 0; i < 4; i++) { Apply(uprights[i], car.Parts[(int)Part.Upright0 + i]); Apply(wheels[i], car.Parts[(int)Part.Wheel0 + i]); }

@@ -25,6 +25,8 @@ test: build/dc_tests
 	./build/dc_tests | tee results/summary.txt
 	python3 tests/plot.py results
 	$(MAKE) fishtest
+	$(MAKE) drvtest
+	@if command -v mcs >/dev/null && command -v mono >/dev/null; then $(MAKE) unitytest; else echo 'mono/mcs not found: skipping unitytest'; fi
 
 cars: build/libdrivechain.a
 	$(CC) $(CFLAGS) -o build/gen_cars tools/gen_cars.c build/libdrivechain.a $(LDLIBS) && ./build/gen_cars
@@ -63,3 +65,12 @@ drvhost: build/drvhost
 drvtest: build/drvhost
 	python3 tools/dcdrive.py selftest --out results/driver
 .PHONY: drvhost drvtest
+
+# Unity binding: P/Invoke ABI + driver + TCP bridge test (mono), and stub-UnityEngine compile check of the MonoBehaviours
+UNITY_CS = unity/DriveChain.cs unity/DriveChainDriverBridge.cs
+unitytest: build/libdrivechain.so
+	mcs -nowarn:414 -out:build/abitest.exe $(UNITY_CS) unity/AbiTest.cs
+	LD_LIBRARY_PATH=build mono build/abitest.exe
+	mcs -nowarn:414 -define:UNITY_5_3_OR_NEWER -t:library -out:build/unitycheck.dll tools/unity_stub/UnityEngine.cs $(UNITY_CS)
+	@echo "UNITY COMPILE CHECK PASS"
+.PHONY: unitytest
