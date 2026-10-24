@@ -2,7 +2,7 @@
 CC ?= gcc
 CFLAGS ?= -O2 -std=c11 -Wall -Wextra -Wno-unused-parameter -Wno-misleading-indentation -fPIC -Icore/include -Icore/src
 LDLIBS = -lm
-CORE_SRC = core/src/dc_kin.c core/src/dc_params.c core/src/dc_tyre.c core/src/dc_car.c core/src/dc_road.c core/src/dc_out.c core/src/dc_driver.c
+CORE_SRC = core/src/dc_kin.c core/src/dc_params.c core/src/dc_tyre.c core/src/dc_car.c core/src/dc_road.c core/src/dc_out.c core/src/dc_driver.c core/src/dc_mb.c
 CORE_OBJ = $(CORE_SRC:core/src/%.c=build/%.o)
 
 all: build/libdrivechain.a build/libdrivechain.so build/dc_tests
@@ -21,8 +21,15 @@ build/drive: tests/drive.c build/libdrivechain.a
 	$(CC) $(CFLAGS) -o $@ $< build/libdrivechain.a $(LDLIBS)
 build/smoke: tests/smoke.c build/libdrivechain.a
 	$(CC) $(CFLAGS) -o $@ $< build/libdrivechain.a $(LDLIBS)
-test: build/dc_tests
+build/mb_tests: tests/mb_tests.c core/src/dc_mb.c core/src/dc_mb.h core/src/dc_math.h
+	$(CC) $(CFLAGS) -std=gnu11 -o $@ tests/mb_tests.c core/src/dc_mb.c $(LDLIBS)
+mbtest: build/mb_tests
+	./build/mb_tests | tee results/mb/phase0_summary.txt
+.PHONY: mbtest
+
+test: build/dc_tests build/mb_tests
 	./build/dc_tests | tee results/summary.txt
+	mkdir -p results/mb && ./build/mb_tests | tee results/mb/phase0_summary.txt
 	python3 tests/plot.py results
 	$(MAKE) fishtest
 	$(MAKE) drvtest
