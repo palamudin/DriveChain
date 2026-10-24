@@ -383,7 +383,7 @@ static void internal_forces(dc_car* c, step_scratch* S, double* pe_out, double* 
            orifices on top of the pump flow, so the pressure RISES as (1 + A|v|/Q)^2 (orifice dP ~ Q^2),
            capped by the relief valve. Linearised about v = 0 this is a damper c = 2 |F| A / Q acting only
            while back-driven; it is applied linearly-implicitly in the mass matrix (it reaches ~50 kN s/m,
-           far beyond the explicit limit). assist_backdrive scales it (1 = orifice law, 0 = legacy). */
+           far beyond the explicit limit). assist_backdrive scales it (0.5 = orifice law with the back-driven flow split across the two parallel legs of the open-centre bridge, 1 = single orifice, 0 = legacy). */
         if (va > 0) F *= clampd(1 - va * P->assist_area / fmax(flow, 1e-9), 0, 1);
         double cbd = 0;
         if (!nodamp && va < 0 && P->assist_backdrive > 0) {

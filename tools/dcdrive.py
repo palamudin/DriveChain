@@ -33,7 +33,8 @@ class DriveChain:
     # ---- transports ----
     @classmethod
     def spawn(cls, car=None, sets=(), host=None, layout="proving"):
-        exe = host or os.path.join(ROOT, "build", "drvhost.exe" if os.name == "nt" else "drvhost")
+        name = "drvhost.exe" if os.name == "nt" else "drvhost"
+        exe = host or next((c for c in (os.path.join(ROOT, "build", name), os.path.join(ROOT, name)) if os.path.exists(c)), os.path.join(ROOT, "build", name))
         args = [exe, "--layout", layout]
         if car: args += ["--car", car]
         for s in sets: args += ["--set", s]
