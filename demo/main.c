@@ -13,8 +13,9 @@
 #include <math.h>
 #include <time.h>
 #ifdef _WIN32
-#include <windows.h>
-#include <mmsystem.h>
+/* windows.h clashes with raylib (CloseWindow, DrawText, Rectangle...): declare just what we need from winmm */
+__declspec(dllimport) unsigned int __stdcall timeBeginPeriod(unsigned int uPeriod);
+__declspec(dllimport) unsigned int __stdcall timeEndPeriod(unsigned int uPeriod);
 #endif
 
 static cfg_t CFG; static track_t TRK; static audio_t AUD; static sim_t SIM;
