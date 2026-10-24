@@ -58,6 +58,7 @@ static void rig_init(rig_t* R, const char* carini, const char* gp_mode) {
         }
         rig_rebuild(R);
     }
+    if (getenv("DT_VERBOSE")) fprintf(stderr, "rig: solver param %d active %d\n", R->S.P.solver, dc_active_solver(R->S.car));
     R->a_cg = R->S.P.axle[0].hub[0]; R->wb = R->S.P.axle[0].hub[0] - R->S.P.axle[1].hub[0];
     R->ratio = R->S.P.steer_ratio; R->lock = R->S.P.steer_lock_deg / DEG;
 }

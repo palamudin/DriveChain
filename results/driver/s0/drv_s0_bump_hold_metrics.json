@@ -1,0 +1,22 @@
+{
+ "ok": true,
+ "duration": 6.0,
+ "ticks": 6000,
+ "rms_lat_err": 0.0,
+ "max_lat_err": 0.0,
+ "max_head_err_deg": 0.0,
+ "max_column_nm": 2.804,
+ "max_hand_nm": 0.893,
+ "saturated_frac": 0.0,
+ "max_beta_deg": 0.222,
+ "max_yaw_rate_dps": 2.412,
+ "max_sw_deg": 2.047,
+ "max_sw_rate_dps": 42.28,
+ "max_ay": 1.101,
+ "distance": 98.68,
+ "offtrack_frac": 0.0,
+ "spin": 0,
+ "takeover_ticks": 0,
+ "manoeuvre": "bump_hold",
+ "tag": "s0_bump_hold"
+}

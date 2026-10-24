@@ -1,0 +1,13 @@
+countersteer tracking [run] (car cars/mx5_na.ini, gamepad mode ini, PSET -)
+  lift_40kmh_R20   hands_off onset  0.32  track  0.00 s  rms   0.9  max   1.6 deg  lag 0.01 s | beta_f  14.0  delta  14.2  rim   213 deg    905 dps  hand   2.4 Nm | swings 1 zeta  0.16 beta  15.8      ok
+  lift_40kmh_R20   gp_zero   onset  0.32  track  0.00 s  rms   0.9  max   1.6 deg  lag 0.01 s | beta_f  14.0  delta  14.2  rim   213 deg    905 dps  hand   2.4 Nm | swings 1 zeta  0.16 beta  15.8      ok
+  lift_60kmh_R32   hands_off onset  0.01  track  0.70 s  rms   6.3  max  17.2 deg  lag 0.12 s | beta_f  33.4  delta  33.0  rim   472 deg   1333 dps  hand   1.9 Nm | swings 2 zeta  0.11 beta  34.0      --
+  lift_60kmh_R32   gp_zero   onset  0.01  track  0.70 s  rms   6.3  max  17.2 deg  lag 0.12 s | beta_f  33.4  delta  33.0  rim   472 deg   1333 dps  hand   1.9 Nm | swings 2 zeta  0.11 beta  34.0      --
+  lift_85kmh_R65   hands_off onset  0.00  track  0.76 s  rms   5.3  max  18.8 deg  lag 0.07 s | beta_f  35.7  delta  36.3  rim   514 deg   1619 dps  hand   1.9 Nm | swings 5 zeta  0.06 beta  35.8      --
+  lift_85kmh_R65   gp_zero   onset  0.00  track  0.76 s  rms   5.3  max  18.8 deg  lag 0.07 s | beta_f  35.7  delta  36.3  rim   514 deg   1619 dps  hand   1.9 Nm | swings 5 zeta  0.06 beta  35.8      --
+  power_40kmh_R20  hands_off onset  0.00  track  0.41 s  rms   2.3  max   7.8 deg  lag 0.09 s | beta_f  15.1  delta  17.4  rim   257 deg   1125 dps  hand   2.3 Nm | swings 4 zeta  0.14 beta  15.0      --
+  power_40kmh_R20  gp_zero   onset  0.00  track  0.41 s  rms   2.3  max   7.8 deg  lag 0.09 s | beta_f  15.1  delta  17.4  rim   257 deg   1125 dps  hand   2.3 Nm | swings 4 zeta  0.14 beta  15.0      --
+  power_60kmh_R40  hands_off onset  0.00  track  0.37 s  rms   2.3  max   6.2 deg  lag 0.04 s | beta_f  34.4  delta  33.3  rim   478 deg   1557 dps  hand   2.3 Nm | swings 6 zeta -0.08 beta  34.8      --
+  power_60kmh_R40  gp_zero   onset  0.00  track  0.37 s  rms   2.3  max   6.2 deg  lag 0.04 s | beta_f  34.4  delta  33.3  rim   478 deg   1557 dps  hand   2.3 Nm | swings 6 zeta -0.08 beta  34.8      --
+  power_85kmh_R65  hands_off onset  0.41  track  0.49 s  rms   2.4  max   6.4 deg  lag 0.04 s | beta_f  18.5  delta  18.8  rim   278 deg   1292 dps  hand   2.0 Nm | swings 6 zeta -0.10 beta  18.6      --
+  power_85kmh_R65  gp_zero   onset  0.41  track  0.49 s  rms   2.4  max   6.4 deg  lag 0.04 s | beta_f  18.5  delta  18.8  rim   278 deg   1292 dps  hand   2.0 Nm | swings 6 zeta -0.10 beta  18.6      --

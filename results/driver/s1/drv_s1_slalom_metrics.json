@@ -1,0 +1,22 @@
+{
+ "ok": true,
+ "duration": 12.0,
+ "ticks": 12000,
+ "rms_lat_err": 0.761,
+ "max_lat_err": 1.4886,
+ "max_head_err_deg": 13.231,
+ "max_column_nm": 3.686,
+ "max_hand_nm": 6.337,
+ "saturated_frac": 0.0,
+ "max_beta_deg": 2.582,
+ "max_yaw_rate_dps": 38.032,
+ "max_sw_deg": 160.147,
+ "max_sw_rate_dps": 666.77,
+ "max_ay": 8.072,
+ "distance": 164.92,
+ "offtrack_frac": 0.0,
+ "spin": 0,
+ "takeover_ticks": 0,
+ "manoeuvre": "slalom",
+ "tag": "s1_slalom"
+}
