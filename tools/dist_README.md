@@ -41,8 +41,15 @@ The console window prints the joysticks it found, which one it picked, and wheth
 | Hydraulic assist on/off | H | | |
 | Autopilot | O | | |
 | Pause | F5 / Pause | | |
+| Next map (proving ground, circuit, every `tracks/<name>`) | F6 | | |
+| Teleport spots / spot list | 1-9, 0 / F1 | | |
 | Camera (chase, cockpit, wheel, orbit, tv) | C (orbit: drag with the mouse, wheel to zoom) | | |
 | X-ray suspension / HUD / force arrows | F2 / F3 / F4 | | |
+
+## Maps
+- F6 cycles the proving ground, the circuit and every mesh map in `tracks/` (a folder with a `track.cfg`). The HUD shows the current map; F1 lists its teleport spots.
+- Start on a map directly with `drivechain_demo.exe --set track.layout=<name>` (or `track.layout = <name>` in `demo.ini`).
+- Mesh maps drive on the map's own collision triangles. Walls are drawn but not solid yet (no body/wall contact in the core). See `docs/MESH_TRACKS.md`.
 
 ## Gamepad steering (`[gamepad]`)
 - By default the stick does not set the rim angle. It sets where your **hands** want the rim, and finite-strength arms push the rim there.

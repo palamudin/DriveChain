@@ -13,6 +13,9 @@ sed -e 's|^ini = cars/mx5_na.ini .*|ini = cars/miata_ac.ini        ; privately c
     -e 's|^mesh_dir = private/miata_mesh .*|mesh_dir = assets/miata_mesh   ; missing -> placeholder components|' demo/demo.ini | sed 's/$/\r/' > $D/demo.ini
 if [ -f private/miata_ac.ini ]; then cp private/miata_ac.ini $D/cars/; cp -r private/miata_mesh $D/assets/; else
   sed -i 's|cars/miata_ac.ini|cars/mx5_na.ini|' $D/demo.ini; fi
+# private mesh maps (owner's testing only): every private/tracks/<name> with a track.cfg -> tracks/<name> (F6 in the demo)
+for t in private/tracks/*/; do [ -f "$t/track.cfg" ] || continue; n=$(basename "$t"); mkdir -p $D/tracks/$n
+  for f in track.cfg collider.bin scenery.bin line.csv pitline.csv CREDITS.md; do [ -f "$t/$f" ] && cp "$t/$f" $D/tracks/$n/; done; done
 sed 's/$/\r/' tools/dist_README.md > $D/README.md
 (cd dist && zip -qr9 drivechain_win64.zip drivechain_win64)
 ls -la dist/drivechain_win64.zip
