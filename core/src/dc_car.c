@@ -14,6 +14,7 @@
  * Time stepping: symplectic Euler at the fixed substep rate, quaternion attitude, no allocation.
  */
 #include "dc_tyre.h"
+#include "dc_mbcar.h"
 #include <stdlib.h>
 #include <stdio.h>
 
@@ -148,10 +149,16 @@ DC_API dc_car* dc_create(const dc_car_params* pin) {
     }
     double z0[3] = {0, 0, 0};
     dc_reset(c, z0, 0, 0);
+    c->mb = NULL;
+    if (P->solver == DC_SOLVER_MULTIBODY) {
+        c->mb = dc_mbcar_create(c);        /* NULL (unsupported layout, e.g. AWD): reduced core is used */
+        if (c->mb) dc_reset(c, z0, 0, 0);
+    }
     return c;
 }
 
-DC_API void dc_destroy(dc_car* c) { free(c); }
+DC_API void dc_destroy(dc_car* c) { if (c && c->mb) dc_mbcar_destroy(c->mb); free(c); }
+DC_API int dc_active_solver(const dc_car* c) { return c->mb ? DC_SOLVER_MULTIBODY : DC_SOLVER_REDUCED; }
 
 DC_API void dc_reset(dc_car* c, const double pos[3], double yaw, double speed) {
     const dc_car_params* P = &c->P;
@@ -179,6 +186,7 @@ DC_API void dc_reset(dc_car* c, const double pos[3], double yaw, double speed) {
     memset(c->lam, 0, sizeof c->lam);
     c->t = 0; c->tick = 0; c->dissipated = 0; c->acc_dt = 0;
     memset(&c->tel, 0, sizeof c->tel);
+    if (c->mb) dc_mbcar_reset(c);
 }
 
 /* ------------------------------------------------------------------ generalized assembly helpers */
@@ -586,6 +594,7 @@ static void link_forces(dc_car* c, step_scratch* S, const double* ud, const m3* 
 
 /* ------------------------------------------------------------------ one fixed substep */
 DC_API void dc_substep(dc_car* c) {
+    if (c->mb) { dc_mbcar_step(c); return; }
     const dc_car_params* P = &c->P;
     const double h = c->h, g = P->gravity;
     step_scratch S; S.c_rack_imp = 0;

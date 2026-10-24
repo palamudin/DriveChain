@@ -61,6 +61,7 @@ typedef struct {                     /* force element, filled each step */
 
 typedef struct {
     int nb, nj; mb_body B[MB_MAXB]; mb_joint Jt[MB_MAXJ];
+    int elem_uncoupled;              /* count of element body pairs with no declared coupling (bug indicator) */
     int ncpl, cpl[MB_MAXCPL][2];     /* declared body-body couplings (force elements) */
     double h;
     /* elements this step */
@@ -94,11 +95,13 @@ void mb_destroy(mb_world* W);
 int  mb_add_body(mb_world* W, const char* name, double m, m3 Ib, v3 x, qt q);
 int  mb_add_joint(mb_world* W, int type, const char* name, int a, int b);
 void mb_couple(mb_world* W, int a, int b);
+double mb_debug_residual(mb_world* W);
 /* convenience joint constructors from WORLD points/axes at the current (design) pose */
 int  mb_spherical(mb_world* W, const char* nm, int a, int b, v3 p);
 int  mb_revolute(mb_world* W, const char* nm, int a, int b, v3 p, v3 axis);
 int  mb_distance(mb_world* W, const char* nm, int a, v3 pa, int b, v3 pb);
 int  mb_prismatic(mb_world* W, const char* nm, int a, int b, v3 axis);
+int  mb_pointline(mb_world* W, const char* nm, int a, v3 pa, v3 axis, int b, v3 pb);
 int  mb_weld(mb_world* W, const char* nm, int a, int b);
 int  mb_ujoint(mb_world* W, const char* nm, int a, int b, v3 p, v3 shaft_a, v3 shaft_b, int slip);
 int  mb_custom(mb_world* W, const char* nm, int m, int box, int nb, const int* bodies);

@@ -84,6 +84,10 @@ int mb_prismatic(mb_world* W, const char* nm, int a, int b, v3 axis) {   /* a sl
     W->Jt[j].ab = dir_local(W, b, vnorm(axis));
     W->Jt[j].q0 = qmul(qconj(q_of(W, b)), q_of(W, a)); return j;
 }
+int mb_pointline(mb_world* W, const char* nm, int a, v3 pa, v3 axis, int b, v3 pb) {   /* b's point pb stays on a's line (pa, axis) */
+    int j = mb_add_joint(W, MBJ_POINTLINE, nm, a, b); if (j < 0) return j;
+    W->Jt[j].pa = to_local(W, a, pa); W->Jt[j].aa = dir_local(W, a, vnorm(axis)); W->Jt[j].pb = to_local(W, b, pb); return j;
+}
 int mb_weld(mb_world* W, const char* nm, int a, int b) {
     int j = mb_add_joint(W, MBJ_WELD, nm, a, b); if (j < 0) return j;
     v3 pa = a >= 0 ? W->B[a].x : V3(0, 0, 0);
@@ -202,28 +206,54 @@ int mb_finalize(mb_world* W) {
         for (int k = 0; k < W->Jt[j].nb; k++) { int b = W->Jt[j].b[k]; if (b >= 0) { ADJ(nd, b) = ADJ(b, nd) = 1; } }
     }
     for (int c = 0; c < W->ncpl; c++) { int a = W->cpl[c][0], b = W->cpl[c][1]; ADJ(a, b) = ADJ(b, a) = 1; }
-    int* elim = (int*)calloc(n, sizeof(int));
+    int* elim = (int*)calloc((size_t)n, sizeof(int));
     unsigned char* orig = (unsigned char*)malloc((size_t)n * n); memcpy(orig, adj, (size_t)n * n);
-    for (int t = 0; t < n; t++) {
-        int best = -1, bdeg = 1 << 30;
-        for (int pass = 0; pass < 2 && best < 0; pass++)
-        for (int i = 0; i < n; i++) {
-            if (elim[i]) continue;
-            int ok;
-            if (i < nb) ok = pass == 1 || !W->B[i].root;
-            else {   /* a joint is eligible once one of its bodies is eliminated (its pivot is then -J A^-1 J^T) */
-                ok = 0; const mb_joint* J = &W->Jt[W->joint_of_node[i]];
-                for (int k = 0; k < J->nb; k++) if (J->b[k] >= 0 && elim[J->b[k]]) ok = 1;
-                for (int k = 0; k < J->nb; k++) if (J->b[k] < 0 && J->nb == 2) ok = ok || 0;
+    /* Elimination order (Baraff-style): spanning tree of joints rooted at the root bodies; every
+     * non-root body is eliminated after its whole subtree, immediately followed by its tree joint, so
+     * each joint pivot is -J A_art^-1 J^T with the full articulated inertia of the child (never a
+     * rank-deficient remainder). Loop-closure joints follow (pivots with the roots held), roots last. */
+    int par[MB_MAXB], dep[MB_MAXB], que[MB_MAXB];
+    unsigned char tree[MB_MAXJ];
+    for (int i = 0; i < nb; i++) { par[i] = -2; dep[i] = 0; }
+    for (int j = 0; j < W->nj; j++) tree[j] = 0;
+    for (int pass = 0; pass < 3; pass++)
+    for (int r0 = 0; r0 < (pass == 0 ? 1 : nb); r0++) {
+        int qh = 0, qt2 = 0;
+        if (pass == 0) {   /* ground is the first root: bodies jointed to the world hang from it */
+            for (int j = 0; j < W->nj; j++) {
+                const mb_joint* J = &W->Jt[j]; if (J->box) continue;
+                int cnt = 0, bb = -1; for (int k = 0; k < J->nb; k++) if (J->b[k] >= 0) { cnt++; bb = J->b[k]; }
+                if (cnt != 1 || par[bb] != -2) continue;
+                tree[j] = 1; par[bb] = j; dep[bb] = 1; que[qt2++] = bb;
             }
-            if (!ok) continue;
-            int deg = 0; for (int j = 0; j < n; j++) if (!elim[j] && j != i && ADJ(i, j)) deg++;
-            if (deg < bdeg) { bdeg = deg; best = i; }
+            if (!qt2) continue;
+        } else {
+            if (par[r0] != -2 || (pass == 1 && !W->B[r0].root)) continue;
+            par[r0] = -1; que[qt2++] = r0;
         }
-        if (best < 0) {   /* only joints between un-eliminated roots / ground remain */
-            for (int i = 0; i < n; i++) if (!elim[i]) { best = i; break; }
+        while (qh < qt2) {
+            int u = que[qh++];
+            for (int j = 0; j < W->nj; j++) {
+                const mb_joint* J = &W->Jt[j]; if (J->box || tree[j] || J->nb != 2) continue;
+                int o = J->b[0] == u ? J->b[1] : (J->b[1] == u ? J->b[0] : -3);
+                if (o < 0 || par[o] != -2) continue;
+                tree[j] = 1; par[o] = j; dep[o] = dep[u] + 1; que[qt2++] = o;
+            }
         }
-        W->order[t] = best; W->rank[best] = t; elim[best] = 1;
+    }
+    int t = 0, maxd = 0;
+    for (int i = 0; i < nb; i++) if (dep[i] > maxd) maxd = dep[i];
+    for (int d = maxd; d >= 1; d--)
+        for (int i = 0; i < nb; i++) if (dep[i] == d && par[i] >= 0) {
+            int jn = W->node_of_joint[par[i]];
+            W->order[t++] = i; W->order[t++] = jn;
+        }
+    for (int j = 0; j < W->nj; j++) { int nd = W->node_of_joint[j]; if (nd >= 0 && !tree[j]) W->order[t++] = nd; }
+    for (int i = 0; i < nb; i++) if (par[i] == -1) W->order[t++] = i;
+    if (t != n) { free(orig); free(adj); free(elim); return 0; }
+    for (int tt = 0; tt < n; tt++) {
+        int best = W->order[tt];
+        W->rank[best] = tt; elim[best] = 1;
         int nbrs[MB_MAXN], cnt = 0;
         for (int j = 0; j < n; j++) if (!elim[j] && ADJ(best, j)) nbrs[cnt++] = j;
         for (int a = 0; a < cnt; a++) for (int b = a + 1; b < cnt; b++) ADJ(nbrs[a], nbrs[b]) = ADJ(nbrs[b], nbrs[a]) = 1;
@@ -353,6 +383,8 @@ int mb_elem_add(mb_world* W, int nb, const int* b, double j[][6], double f, doub
     E->nb = nb; for (int i = 0; i < nb; i++) { E->b[i] = b[i]; memcpy(E->j[i], j[i], sizeof E->j[i]); }
     E->f = f; E->k = k; E->c = c;
     E->gd = mb_row_vel(W, nb, b, j);
+    if (W->ready) for (int a = 0; a < nb; a++) for (int q = a + 1; q < nb; q++)
+        if (b[a] >= 0 && b[q] >= 0 && b[a] != b[q] && blk_of(W, b[a], b[q]) < 0) W->elem_uncoupled++;
     return W->ne - 1;
 }
 double mb_row_vel(const mb_world* W, int nb, const int* b, double j[][6]) {
@@ -493,6 +525,45 @@ void mb_solve(mb_world* W) {
     }
 }
 
+/* debug: residual of the assembled KKT system at the current solution (re-assembles, so call right after mb_solve) */
+double mb_debug_residual(mb_world* W) {
+    int n = W->n, N = W->N;
+    double* xs = (double*)malloc(sizeof(double) * N); memcpy(xs, W->x, sizeof(double) * N);
+    /* restore body velocities to pre-solve is not possible; caller passes the pre-solve state via v_save */
+    assemble(W);
+    double res = 0, rn = 0;
+    for (int i = 0; i < n; i++) {
+        int di = W->dim[i];
+        for (int a = 0; a < di; a++) {
+            double y = 0;
+            for (int b = 0; b < di; b++) y += W->D[36 * i + a * di + b] * xs[W->off[i] + b];
+            for (int j = 0; j < n; j++) {
+                if (j == i) continue; int pp = blk_of(W, i, j); if (pp < 0) continue;
+                int dj = W->dim[j]; const double* B = W->blk + pp;
+                for (int b = 0; b < dj; b++) {
+                    double kij = W->rank[i] > W->rank[j] ? B[a * dj + b] : B[b * di + a];
+                    y += kij * xs[W->off[j] + b];
+                }
+            }
+            double e = fabs(y - W->r[W->off[i] + a]); if (e > res) res = e;
+            if (fabs(W->r[W->off[i] + a]) > rn) rn = fabs(W->r[W->off[i] + a]);
+        }
+    }
+    /* dense reference solve */
+    double* K = (double*)calloc((size_t)N * N, sizeof(double)); double* xr = (double*)malloc(sizeof(double) * N);
+    for (int i = 0; i < n; i++) { int di = W->dim[i];
+        for (int a = 0; a < di; a++) { xr[W->off[i] + a] = W->r[W->off[i] + a];
+            for (int b = 0; b < di; b++) K[(size_t)(W->off[i] + a) * N + W->off[i] + b] = W->D[36 * i + a * di + b];
+            for (int j = 0; j < n; j++) { if (j == i) continue; int pp = blk_of(W, i, j); if (pp < 0) continue; int dj = W->dim[j]; const double* B = W->blk + pp;
+                for (int b = 0; b < dj; b++) K[(size_t)(W->off[i] + a) * N + W->off[j] + b] = W->rank[i] > W->rank[j] ? B[a * dj + b] : B[b * di + a]; } } }
+    double asym = 0; for (int a = 0; a < N; a++) for (int b = 0; b < N; b++) asym = fmax(asym, fabs(K[(size_t)a * N + b] - K[(size_t)b * N + a]));
+    int ok = dc_solve(N, K, xr);
+    double dx = 0, xm = 0; for (int a = 0; a < N; a++) { dx = fmax(dx, fabs(xr[a] - xs[a])); xm = fmax(xm, fabs(xr[a])); }
+    fprintf(stderr, "dense ok %d asym %.3g |x-xdense|/|x| %.3g\n", ok, asym, dx / (xm + 1e-300));
+    free(K); free(xr);
+    free(xs);
+    return res / (rn + 1e-300);
+}
 void mb_integrate(mb_world* W, int project) {
     double h = W->h;
     for (int i = 0; i < W->nb; i++) {

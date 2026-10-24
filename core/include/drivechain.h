@@ -236,6 +236,7 @@ DC_API void   dc_reset(dc_car* c, const double pos[3], double yaw, double speed)
 DC_API void   dc_set_input(dc_car* c, const dc_input* in);
 DC_API int    dc_step(dc_car* c, double frame_dt);   /* runs fixed substeps; returns count */
 DC_API void   dc_substep(dc_car* c);
+DC_API int    dc_active_solver(const dc_car* c);   /* solver actually running (multibody falls back to reduced for AWD) */
 DC_API void   dc_get_telemetry(const dc_car* c, dc_telemetry* t);
 DC_API int    dc_get_parts(const dc_car* c, dc_xform* out, int max);
 DC_API int    dc_get_segments(const dc_car* c, dc_seg* out, int max);

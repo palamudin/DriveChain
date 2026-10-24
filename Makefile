@@ -2,7 +2,7 @@
 CC ?= gcc
 CFLAGS ?= -O2 -std=c11 -Wall -Wextra -Wno-unused-parameter -Wno-misleading-indentation -fPIC -Icore/include -Icore/src
 LDLIBS = -lm
-CORE_SRC = core/src/dc_kin.c core/src/dc_params.c core/src/dc_tyre.c core/src/dc_car.c core/src/dc_road.c core/src/dc_out.c core/src/dc_driver.c core/src/dc_mb.c
+CORE_SRC = core/src/dc_kin.c core/src/dc_params.c core/src/dc_tyre.c core/src/dc_car.c core/src/dc_road.c core/src/dc_out.c core/src/dc_driver.c core/src/dc_mb.c core/src/dc_mbcar.c
 CORE_OBJ = $(CORE_SRC:core/src/%.c=build/%.o)
 
 all: build/libdrivechain.a build/libdrivechain.so build/dc_tests

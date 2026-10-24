@@ -9,7 +9,7 @@ RAYLIB_SRC=${RAYLIB_SRC:-/workspace/deps/raylib-5.5/src}
 SDL2_DIR=${SDL2_DIR:-/workspace/deps/SDL2-2.30.9/x86_64-w64-mingw32}
 OUT=build/win64; mkdir -p $OUT
 [ -f build-deps/win64/libraylib.a ] || tools/build_raylib.sh "$RAYLIB_SRC" build-deps/win64 $CC x86_64-w64-mingw32-ar windows
-CORE="core/src/dc_kin.c core/src/dc_params.c core/src/dc_tyre.c core/src/dc_car.c core/src/dc_road.c core/src/dc_out.c core/src/dc_driver.c"
+CORE="core/src/dc_kin.c core/src/dc_params.c core/src/dc_tyre.c core/src/dc_car.c core/src/dc_road.c core/src/dc_out.c core/src/dc_driver.c core/src/dc_mb.c core/src/dc_mbcar.c"
 DEMO="demo/main.c demo/sim.c demo/track.c demo/audio.c demo/input.c demo/cfg.c demo/objload.c demo/drvproto.c demo/net.c"
 $CC -O2 -std=gnu11 -Wall -Wno-misleading-indentation -Wno-unused-parameter -DDC_BUILD \
   -Icore/include -Icore/src -Ibuild-deps/win64 -I"$SDL2_DIR/include/SDL2" -Dmain=SDL_main \

@@ -74,6 +74,7 @@ struct dc_car {
     double tel_udot[NQ];
     double link_f[4][DC_MAX_LINKS+1];  /* two-force member loads (+ = tension), last = spring/strut axial share */
     double link_resid[4];
+    struct dc_mbcar* mb;             /* multibody solver state (solver = DC_SOLVER_MULTIBODY), else NULL */
 };
 
 /* kinematics */
