@@ -36,6 +36,7 @@ typedef struct {
 
 static track_t TRK;
 static void rig_rebuild(rig_t* R);
+static int RIG_ROAD = 0;   /* 0 flat plane, 1 proving-ground road */
 static void rig_init(rig_t* R, const char* carini, const char* gp_mode) {
     memset(R, 0, sizeof *R);
     cfg_set(&R->cfg, "autopilot.enabled", "0");
@@ -46,7 +47,7 @@ static void rig_init(rig_t* R, const char* carini, const char* gp_mode) {
           for (char* tok = strtok(buf, ";"); tok; tok = strtok(NULL, ";")) { char* eq = strchr(tok, '='); if (eq) { *eq = 0; cfg_set(&R->cfg, tok, eq + 1); } } } }
     char err[256];
     if (!sim_init(&R->S, &R->cfg, &TRK, NULL, err, sizeof err)) { fprintf(stderr, "sim_init: %s\n", err); exit(1); }
-    dc_set_road(R->S.car, flat_road, NULL);
+    if (!RIG_ROAD) dc_set_road(R->S.car, flat_road, NULL);
     const char* ps = getenv("PSET");   /* "car.key=val;front.key=val" parameter variants for attribution runs */
     if (ps && *ps) {
         char buf[1024]; snprintf(buf, sizeof buf, "%s", ps);
@@ -61,7 +62,8 @@ static void rig_init(rig_t* R, const char* carini, const char* gp_mode) {
     R->ratio = R->S.P.steer_ratio; R->lock = R->S.P.steer_lock_deg / DEG;
 }
 static void rig_rebuild(rig_t* R) {   /* after editing R->S.P */
-    dc_destroy(R->S.car); R->S.car = dc_create(&R->S.P); dc_set_road(R->S.car, flat_road, NULL);
+    dc_destroy(R->S.car); R->S.car = dc_create(&R->S.P);
+    if (!RIG_ROAD) dc_set_road(R->S.car, flat_road, NULL); else dc_set_road(R->S.car, track_road_fn, R->S.trk);
 }
 
 /* the "catch" law: align the front wheels with the front-axle velocity (zero front slip), damp yaw, hold heading */
@@ -214,6 +216,190 @@ static const scen_t SCEN[] = {
 };
 #define NSCEN ((int)(sizeof SCEN / sizeof SCEN[0]))
 
+
+/* ---------------- road-disturbance kickback ---------------- */
+typedef struct { const char* name; int where; double u0, u1, v; int feat; } kev_t;   /* where: 0 straight1 (s), 1 straight2 (u = s - s_str2), 2 west arc (s - s_arc2) */
+static const kev_t KEV[] = {
+    {"bump_left", 1, 119.3, 120.7, 0, PGF_BUMP_L}, {"bump_right", 1, 169.3, 170.7, 0, PGF_BUMP_R},
+    {"pothole_left", 1, 219.1, 220.9, 0, PGF_POT_L}, {"pothole_right", 1, 269.1, 270.9, 0, PGF_POT_R},
+    {"crossfall_change", 1, 320, 400, 0, PGF_CROSSFALL}, {"ruts", 1, 440, 530, 0, PGF_RUTS},
+    {"undul_25m", 0, 340, 440, 0, PGF_UNDUL25}, {"undul_9m", 0, 450, 504, 0, PGF_UNDUL9}, {"undul_3m_twist", 0, 508, 540, 0, PGF_TWIST},
+    {"bumpy_corner", 2, 40, 160, 19.4, PGF_BUMPYARC},
+};
+#define NKEV ((int)(sizeof KEV / sizeof KEV[0]))
+typedef struct { const char* name; int kind; double delay, k, d, tmax; } kdrv_t;
+enum { KD_ARMS, KD_HANDSOFF, KD_LOCKED, KD_GP };
+static const kdrv_t KDRV[] = {
+    {"arms20", KD_ARMS, 0.20, 40, 1.5, 20}, {"arms15_slow", KD_ARMS, 0.25, 30, 1.2, 15}, {"arms25_quick", KD_ARMS, 0.15, 60, 2.0, 25},
+    {"hands_off", KD_HANDSOFF, 0, 0, 0, 0}, {"locked", KD_LOCKED, 0, 3000, 30, 500}, {"gamepad_arms", KD_GP, 0.20, 0, 0, 0},
+};
+#define NKDRV ((int)(sizeof KDRV / sizeof KDRV[0]))
+typedef struct {
+    double col_pk, rim_pk, rim_rate_pk, hand_pk; int hand_sat;
+    double dpsi_recentre, dpsi_pk, dlat_end, t_recover;
+    double imp[5];   /* attribution impulse: integral |dM| dt over entry .. exit + 0.5 s (N m s) */
+    double m_fy, m_fx, m_mz, m_fz, m_gyro, toe_pk;   /* peak |delta| kingpin moments (sum of both fronts) N m, toe deg */
+    double fz_pk;
+} kres_t;
+static double s_from_ev(const track_t* T, const kev_t* e, double u) { return e->where == 0 ? u : (e->where == 1 ? T->s_str2 + u : T->s_arc2 + u); }
+static double lane_wrap_s(const track_t* T, double ds) { while (ds > T->length / 2) ds -= T->length; while (ds < -T->length / 2) ds += T->length; return ds; }
+
+static void run_kick(rig_t* R, const kev_t* E, double v_set, const kdrv_t* D, const char* csv, kres_t* K) {
+    sim_t* S = &R->S; const track_t* T = R->T;
+    const double dt = 0.001;
+    memset(K, 0, sizeof *K); K->t_recover = -1;
+    double s_in = s_from_ev(T, E, E->u0), s_out = s_from_ev(T, E, E->u1);
+    double s_lim = E->where == 0 ? T->s_arc1 - 35 : (E->where == 1 ? T->s_arc2 - 35 : T->s_arc2 + 440);
+    track_isolate_feature = E->feat;   /* only this feature on the road: no neighbouring event inside the 4 s window */
+    double s0 = s_in - 100; double x, y, yaw; track_point(T, s0, 0, &x, &y, &yaw);
+    sim_reset_at(S, x, y, yaw, v_set); S->gear = v_set < 15 ? 2 : (v_set < 23 ? 3 : 4);
+    S->ext_pedals = 1; S->ext_steer = 1; S->dev.kind = 0; R->H.n = 0; R->stick_f = 0;
+    double Is = S->P.axle[0].tyre.spin_inertia;
+    FILE* f = csv ? fopen(csv, "w") : NULL;
+    if (f) fprintf(f, "t,ds_front,sw_deg,sw_rate_dps,column_nm,driver_nm,head_err_deg,lat_m,fzL,fzR,M_Fy,M_Fx,M_Mz,M_Fz,M_gyro,toeL_deg,toeR_deg\n");
+    double ti = 0, t_in = -1, t_out = -1, lock_sw = 0, ax_prev[2] = {0, 0}; int have_ax = 0;
+    /* baseline accumulators (0.5 s before entry) */
+    double b_n = 0, b_sw = 0, b_col = 0, b_hd = 0, b_lat = 0, b_drv = 0, b_m[5] = {0}, b_toe[2] = {0};
+    int have_base = 0; double base_sw = 0, base_col = 0, base_hd = 0, base_lat = 0, base_drv = 0, base_m[5] = {0}, base_toe[2] = {0};
+    double t_rim_pk = -1, ring[600]; int nring = 0; (void)ring; (void)nring;
+    double tmax_run = 0; int capped = 0;
+    for (double tt = 0; tt < 60; tt += dt) {
+        dc_telemetry t; dc_get_telemetry(S->car, &t);
+        dc_xform ch[DC_PART_COUNT]; dc_get_parts(S->car, ch, DC_PART_COUNT);
+        double cyaw = yaw_of(&ch[0]);
+        double fxp = ch[0].pos[0] + R->a_cg * cos(cyaw), fyp = ch[0].pos[1] + R->a_cg * sin(cyaw);
+        double dlat, sc; track_height(T, ch[0].pos[0], ch[0].pos[1], NULL, NULL, &dlat, &sc);
+        double dlf, sf; track_height(T, fxp, fyp, NULL, NULL, &dlf, &sf);
+        double tx, ty, tyaw; track_point(T, sc, 0, &tx, &ty, &tyaw);
+        double hd = wrap(cyaw - tyaw), v = fmax(t.vx, 1);
+        hpush(&R->H, tt, t.yaw_rate, 0, v, hd, dlat);
+        double ds_in = lane_wrap_s(T, sf - s_in), ds_out = lane_wrap_s(T, sc - (R->wb - R->a_cg) - s_out);   /* rear axle past exit */
+        if (t_in < 0 && ds_in >= 0) t_in = tt;
+        if (t_in >= 0 && t_out < 0 && ds_out >= 0) t_out = tt;
+        if (t_out >= 0 && tt > t_out + 4.0) break;
+        if (t_in >= 0 && lane_wrap_s(T, sf - s_lim) >= 0) { capped = 1; break; }   /* stop before the next bend's bank ramp: a straight-line driver cannot be judged in a bend */
+        /* curvature feed-forward from the centreline */
+        double xa, ya, ya1, xb, yb, yb1; track_point(T, sc - 2, 0, &xa, &ya, &ya1); track_point(T, sc + 2, 0, &xb, &yb, &yb1); (void)xa; (void)ya; (void)xb; (void)yb;
+        double kap = wrap(yb1 - ya1) / 4.0;
+        /* speed hold */
+        double e = v_set - t.vx; ti = clampd(ti + e * dt * 0.3, -0.3, 0.6);
+        S->ext_in.throttle = clampd(0.2 + 0.5 * e + ti, 0, 1); S->ext_in.brake = clampd(-0.3 * e, 0, 0.5);
+        /* lane-keeping intent on DELAYED perception (preview / pure-pursuit form) */
+        int k = hget(&R->H, D->delay, dt);
+        double L = 6 + 0.8 * v, hdd = R->H.head[k], ld = R->H.lat[k];
+        double delta = kap * R->wb - 2 * R->wb * (ld + L * sin(hdd)) / (L * L);
+        double sw_cmd = clampd(delta * R->ratio, -R->lock, R->lock);
+        int ev_phase = t_in >= 0;
+        if (!ev_phase) {   /* approach: everybody drives with a good grip so they enter identically */
+            S->ext_steer = 1; S->ext_in.steer_mode = DC_STEER_ANGLE; S->ext_in.steer_target = sw_cmd;
+            S->ext_in.hands_k = 40; S->ext_in.hands_d = 1.5; S->ext_in.hands_tmax = 20;
+            lock_sw = t.sw_angle;
+            if (tt > 0 && sf > s_in - 0.3 * v) {   /* baseline window: last 0.3 s before entry */
+                double mfx = 0, mfy = 0, mmz = 0, mfz = 0, mg = 0;
+                for (int w = 0; w < 2; w++) { const dc_wheel_telem* W = &t.w[w]; double sd = w == 0 ? 1 : -1;
+                    mfy += -W->fy * W->trail; mfx += -sd * W->fx * W->scrub; mmz += W->mz; mfz += -W->fz * (W->scrub * sin(W->kpi) + W->trail * sin(W->caster)) * sin(W->steer); }
+                b_m[0] += mfy; b_m[1] += mfx; b_m[2] += mmz; b_m[3] += mfz; b_m[4] += mg;
+                b_sw += t.sw_angle; b_col += t.column_torque; b_hd += hd; b_lat += dlat; b_drv += t.driver_torque;
+                b_toe[0] += t.w[0].toe; b_toe[1] += t.w[1].toe; b_n++;
+            }
+        } else {
+            if (!have_base) { have_base = 1; double n = fmax(b_n, 1);
+                base_sw = b_sw / n; base_col = b_col / n; base_hd = b_hd / n; base_lat = b_lat / n; base_drv = b_drv / n;
+                for (int q = 0; q < 5; q++) base_m[q] = b_m[q] / n; base_toe[0] = b_toe[0] / n; base_toe[1] = b_toe[1] / n; }
+            switch (D->kind) {
+            case KD_ARMS: S->ext_steer = 1; S->ext_in.steer_mode = DC_STEER_ANGLE; S->ext_in.steer_target = sw_cmd;
+                S->ext_in.hands_k = D->k; S->ext_in.hands_d = D->d; S->ext_in.hands_tmax = D->tmax; break;
+            case KD_HANDSOFF: S->ext_steer = 1; S->ext_in.steer_mode = DC_STEER_TORQUE; S->ext_in.steer_torque = 0; break;
+            case KD_LOCKED: S->ext_steer = 1; S->ext_in.steer_mode = DC_STEER_ANGLE; S->ext_in.steer_target = lock_sw;
+                S->ext_in.hands_k = D->k; S->ext_in.hands_d = D->d; S->ext_in.hands_tmax = D->tmax; break;
+            case KD_GP: { S->ext_steer = 0; S->dev.kind = 2;
+                double want = stick_for(R, sw_cmd, v);
+                R->stick_f += (want - R->stick_f) * (1 - exp(-dt * 2 * M_PI * 6.0));
+                S->dev.steer = clampd(R->stick_f, -1, 1); break; }
+            }
+            /* attribution: moments about each front kingpin (+ = turns the wheel left), minus pre-event equilibrium */
+            double mfx = 0, mfy = 0, mmz = 0, mfz = 0, mg = 0;
+            for (int w = 0; w < 2; w++) { const dc_wheel_telem* W = &t.w[w]; double sd = w == 0 ? 1 : -1;
+                mfy += -W->fy * W->trail; mfx += -sd * W->fx * W->scrub; mmz += W->mz;
+                mfz += -W->fz * (W->scrub * sin(W->kpi) + W->trail * sin(W->caster)) * sin(W->steer);
+                /* gyroscopic: H = Is w a (a = axle unit vector); reaction on the knuckle -dH/dt; its component about the
+                   steer axis (~chassis z) is -Is w (da/dt . z). a is taken in the chassis frame from the wheel's pose. */
+                { const dc_xform* X = &ch[DC_PART_WHEEL0 + w]; double q0 = X->quat[0], q1 = X->quat[1], q2 = X->quat[2], q3 = X->quat[3];
+                  double ay_w[3] = {2 * (q1 * q2 - q0 * q3), 1 - 2 * (q1 * q1 + q3 * q3), 2 * (q2 * q3 + q0 * q1)};   /* R e_y */
+                  const dc_xform* C0 = &ch[0]; double c0 = C0->quat[0], c1 = C0->quat[1], c2 = C0->quat[2], c3 = C0->quat[3];
+                  double zc[3] = {2 * (c1 * c3 + c0 * c2), 2 * (c2 * c3 - c0 * c1), 1 - 2 * (c1 * c1 + c2 * c2)};      /* chassis z */
+                  double az = ay_w[0] * zc[0] + ay_w[1] * zc[1] + ay_w[2] * zc[2];
+                  if (have_ax) mg += -Is * W->omega * (az - ax_prev[w]) / dt;
+                  ax_prev[w] = az; }
+                K->fz_pk = fmax(K->fz_pk, W->fz);
+                K->toe_pk = fmax(K->toe_pk, fabs(W->toe - base_toe[w]) * DEG);
+            }
+            have_ax = 1;
+            double dm[5] = {mfy - base_m[0], mfx - base_m[1], mmz - base_m[2], mfz - base_m[3], mg};
+            K->m_fy = fmax(K->m_fy, fabs(dm[0])); K->m_fx = fmax(K->m_fx, fabs(dm[1])); K->m_mz = fmax(K->m_mz, fabs(dm[2]));
+            K->m_fz = fmax(K->m_fz, fabs(dm[3])); K->m_gyro = fmax(K->m_gyro, fabs(dm[4]));
+            if (t_out < 0 || tt < t_out + 0.5) for (int q = 0; q < 5; q++) K->imp[q] += fabs(dm[q]) * dt;
+            double rim = fabs(t.sw_angle - base_sw) * DEG;
+            if (rim > K->rim_pk) { K->rim_pk = rim; t_rim_pk = tt; }
+            K->col_pk = fmax(K->col_pk, fabs(t.column_torque - base_col));
+            K->rim_rate_pk = fmax(K->rim_rate_pk, fabs(t.sw_rate) * DEG);
+            K->hand_pk = fmax(K->hand_pk, fabs(t.driver_torque - base_drv));
+            if (D->kind == KD_ARMS && fabs(t.driver_torque) >= 0.98 * D->tmax) K->hand_sat = 1;
+            if (D->kind == KD_GP && fabs(t.driver_torque) >= 0.98 * S->gp_tmax) K->hand_sat = 1;
+            double dpsi = (hd - base_hd) * DEG;
+            K->dpsi_pk = fabs(dpsi) > fabs(K->dpsi_pk) ? dpsi : K->dpsi_pk;
+            if (t_rim_pk > 0 && K->dpsi_recentre == 0 && tt > t_rim_pk && rim < 1.0) K->dpsi_recentre = dpsi + 1e-9;
+            /* recovery (s after the rear axle leaves the event): heading within 0.3 deg of the pre-event value, yaw rate within 0.5 deg/s of the path, rim within 2 deg, held 1 s */
+            if (t_out >= 0) {
+                if (fabs(dpsi) < 0.3 && fabs(t.yaw_rate) * DEG < fabs(kap * v) * DEG + 0.5 && rim < 2.0) { if (K->t_recover < 0) K->t_recover = tt; }
+                else K->t_recover = -1;
+            }
+            K->dlat_end = dlat - base_lat; tmax_run = tt;
+            if (f && ((int)(tt / dt + 0.5)) % 2 == 0)
+                fprintf(f, "%.3f,%.3f,%.3f,%.1f,%.3f,%.3f,%.4f,%.4f,%.0f,%.0f,%.2f,%.2f,%.2f,%.2f,%.2f,%.4f,%.4f\n", tt - t_in, lane_wrap_s(T, sf - s_in),
+                        (t.sw_angle - base_sw) * DEG, t.sw_rate * DEG, t.column_torque, t.driver_torque, dpsi, dlat - base_lat,
+                        t.w[0].fz, t.w[1].fz, dm[0], dm[1], dm[2], dm[3], dm[4], (t.w[0].toe - base_toe[0]) * DEG, (t.w[1].toe - base_toe[1]) * DEG);
+        }
+        sim_tick(S, dt);
+    }
+    if (f) fclose(f);
+    track_isolate_feature = -1;
+    if (K->t_recover >= 0) { if (tmax_run - K->t_recover >= (capped ? 0.5 : 1.0))   /* window capped before a bend: accept a 0.5 s hold */ K->t_recover = fmax(0, K->t_recover - t_out); else K->t_recover = -1; }
+}
+
+/* ---- fishtail-settle regression (make fishtest): exit code != 0 on failure ----
+   Reference "before" = legacy raw gamepad path + no orifice back-drive (results/fishtail/default_car_before.txt):
+   gp_release lift_60: 3 swings zeta 0.16 settle 1.46 s; lift_85: 7 swings zeta -0.13 settle 6.71 s (beta 38 deg). */
+static int fishcheck(const char* car, const char* out) {
+    static rig_t R; int fails = 0, known = 0;
+    printf("fishtail-settle check (car %s)\n", car && *car ? car : "built-in default");
+    for (int i = 0; i < NSCEN; i++) for (int j = 0; j < NDRV; j++) {
+        const driver_t* D = &DRIVERS[j];
+        int is_rel = D->kind == DRV_GP_RELEASE, is_hum = D->kind == DRV_GP_HUMAN, is_ide = D->kind == DRV_IDEAL, is_ho = D->kind == DRV_HANDSOFF;
+        if (!(is_rel || is_hum || is_ide || is_ho)) continue;
+        for (int raw = 0; raw <= (is_rel ? 1 : 0); raw++) {
+            rig_init(&R, car, raw ? "raw" : NULL);
+            if (raw) { R.S.P.assist_backdrive = 0; rig_rebuild(&R); }
+            char csv[512]; snprintf(csv, sizeof csv, "%s/fishcheck_%s_%s%s.csv", out, SCEN[i].name, D->name, raw ? "_BEFORE" : "");
+            metr_t M; run_fishtail(&R, &SCEN[i], D, csv, &M, 0);
+            const char* verdict = "ok"; int bad = 0;
+            if (raw) verdict = "(before, info)";
+            else if (is_rel) bad = M.spin || M.swings > 1 || M.settle < 0 || M.settle > 1.0 || (M.swings >= 1 && M.zeta < 0.3);
+            else if (is_hum) bad = M.spin || M.zeta < 0.05 || M.settle < 0 || M.settle > 2.5;
+            else if (is_ide) bad = M.spin || M.swings > 1 || M.settle < 0 || M.settle > 0.6;
+            else if (is_ho) {
+                bad = M.spin || M.zeta < 0.1;
+                if (bad && SCEN[i].v > 20) { bad = 0; known++; verdict = "KNOWN RESIDUAL (free wheel, 85 km/h)"; }
+            }
+            if (bad) { fails++; verdict = "FAIL"; }
+            printf("  %-16s %-10s%s swings %d zeta %5.2f settle %5.2f s beta %5.1f %s  -> %s\n", SCEN[i].name, D->name, raw ? " RAW" : "    ",
+                   M.swings, M.zeta, M.settle, M.peak_beta, M.spin ? "SPIN" : "    ", verdict);
+        }
+    }
+    printf("fishtail-settle: %s (%d failures, %d known residuals)\n", fails ? "FAIL" : "PASS", fails, known);
+    return fails ? 1 : 0;
+}
+
 int main(int argc, char** argv) {
     const char* what = argc > 1 ? argv[1] : "fishtail";
     const char* car = argc > 2 ? argv[2] : "";
@@ -222,6 +408,7 @@ int main(int argc, char** argv) {
     char cmd[512]; snprintf(cmd, sizeof cmd, "mkdir -p %s", out); if (system(cmd)) {}
     track_build(&TRK, 1.0, TRACK_PROVING);
     static rig_t R;
+    if (!strcmp(what, "fishcheck")) return fishcheck(car, out);
     if (!strcmp(what, "fishtail") || !strcmp(what, "all")) {
         char path[512]; snprintf(path, sizeof path, "%s/fishtail_summary.csv", out);
         FILE* s = fopen(path, "w"); fprintf(s, "scenario,driver,swings,zeta,settle_s,peak_r_dps,peak_beta_deg,peak_sw_rate_dps,peak_col_nm,spin\n");
@@ -235,6 +422,30 @@ int main(int argc, char** argv) {
             char csv[512]; snprintf(csv, sizeof csv, "%s/fish_%s_%s.csv", out, SCEN[i].name, DRIVERS[j].name);
             metr_t M; run_fishtail(&R, &sc, &DRIVERS[j], csv, &M, 1);
             fprintf(s, "%s,%s,%d,%.3f,%.3f,%.2f,%.2f,%.1f,%.3f,%d\n", SCEN[i].name, DRIVERS[j].name, M.swings, M.zeta, M.settle, M.peak_r, M.peak_beta, M.peak_sw_rate, M.peak_col, M.spin);
+        }
+        fclose(s);
+    }
+    if (!strcmp(what, "kickback") || !strcmp(what, "all")) {
+        RIG_ROAD = 1;
+        char path[512]; snprintf(path, sizeof path, "%s/kickback_summary.csv", out);
+        FILE* s = fopen(path, "w");
+        fprintf(s, "event,kmh,driver,col_pk_nm,rim_pk_deg,rim_rate_pk_dps,hand_pk_nm,hand_saturated,dpsi_at_recentre_deg,dpsi_pk_deg,dlat_end_m,recover_s,M_Fy_trail,M_Fx_scrub,M_Mz,M_Fz_jack,M_gyro,toe_pk_deg,fz_pk_n,I_Fy_trail,I_Fx_scrub,I_Mz,I_Fz_jack,I_gyro\n");
+        const char* only = getenv("DRV"); const char* sel = getenv("SC");
+        double speeds[2] = {60 / 3.6, 100 / 3.6};
+        for (int i = 0; i < NKEV; i++) for (int vi = 0; vi < 2; vi++) for (int j = 0; j < NKDRV; j++) {
+            if (only && !strstr(only, KDRV[j].name)) continue;
+            if (sel && !strstr(sel, KEV[i].name)) continue;
+            double v = KEV[i].v > 0 ? KEV[i].v : speeds[vi];
+            if (KEV[i].v > 0 && vi) continue;
+            rig_init(&R, car, gpm); R.T = &TRK;
+            char csv[512]; snprintf(csv, sizeof csv, "%s/kick_%s_%.0f_%s.csv", out, KEV[i].name, v * 3.6, KDRV[j].name);
+            kres_t K; run_kick(&R, &KEV[i], v, &KDRV[j], csv, &K);
+            printf("  %-16s %3.0f %-13s col %5.2f  rim %6.2f deg (%5.0f dps)  hand %5.2f%s  dpsi@ctr %6.2f pk %6.2f deg  dlat %6.3f m  rec %5.2f s | Fy*t %5.1f Fx*s %5.1f Mz %5.1f Fz %5.1f gyro %5.2f toe %.3f | imp Fy %.3f Fx %.3f Mz %.3f gyro %.3f\n",
+                   KEV[i].name, v * 3.6, KDRV[j].name, K.col_pk, K.rim_pk, K.rim_rate_pk, K.hand_pk, K.hand_sat ? "*SAT" : "    ", K.dpsi_recentre, K.dpsi_pk, K.dlat_end, K.t_recover,
+                   K.m_fy, K.m_fx, K.m_mz, K.m_fz, K.m_gyro, K.toe_pk, K.imp[0], K.imp[1], K.imp[2], K.imp[4]);
+            fprintf(s, "%s,%.0f,%s,%.3f,%.3f,%.1f,%.3f,%d,%.3f,%.3f,%.4f,%.3f,%.2f,%.2f,%.2f,%.2f,%.3f,%.4f,%.0f,%.4f,%.4f,%.4f,%.4f,%.4f\n", KEV[i].name, v * 3.6, KDRV[j].name,
+                    K.col_pk, K.rim_pk, K.rim_rate_pk, K.hand_pk, K.hand_sat, K.dpsi_recentre, K.dpsi_pk, K.dlat_end, K.t_recover, K.m_fy, K.m_fx, K.m_mz, K.m_fz, K.m_gyro, K.toe_pk, K.fz_pk, K.imp[0], K.imp[1], K.imp[2], K.imp[3], K.imp[4]);
+            fflush(stdout);
         }
         fclose(s);
     }

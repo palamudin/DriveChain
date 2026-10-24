@@ -30,6 +30,9 @@ const char* track_spot(const track_t* T, int i, double* x, double* y, double* ya
 int track_spot_by_name(const track_t* T, const char* name);
 /* height + surface at (x,y); d_out/s_out: signed lateral offset (+ left) and arc length of the nearest centreline point */
 double track_height(const track_t* T, double x, double y, int* surf, double* grip, double* d_out, double* s_out);
+/* proving-ground feature ids for the test-only isolation hook (drivetest kickback): -1 = all features */
+enum { PGF_PAVE, PGF_UNDUL25, PGF_UNDUL9, PGF_TWIST, PGF_BUMP_L, PGF_BUMP_R, PGF_POT_L, PGF_POT_R, PGF_CROSSFALL, PGF_RUTS, PGF_BUMPYARC };
+extern int track_isolate_feature;
 double track_road_fn(void* user, double x, double y, double* nx, double* ny, double* nz, double* grip); /* dc_road_fn */
 void track_point(const track_t* T, double s, double d, double* x, double* y, double* yaw); /* centreline frame */
 #endif

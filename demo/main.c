@@ -163,7 +163,7 @@ static void build_world(void) {
         double sa = k0 * TRK.ds, sb = (k0 + 40) * TRK.ds; int sub = 1;
         if (TRK.layout == TRACK_PROVING) {
             if (sb > 100 && sa < 300) sub = 8;
-            else if ((sb > 340 && sa < 560) || (sb > TRK.s_str2 + 40 && sa < TRK.s_str2 + 520) || (sb > TRK.s_arc2 + 30 && sa < TRK.s_arc2 + 410)) sub = 4;
+            else if ((sb > 340 && sa < 540) || (sb > TRK.s_str2 + 100 && sa < TRK.s_str2 + 530) || (sb > TRK.s_arc2 + 30 && sa < TRK.s_arc2 + 410)) sub = 4;
         }
         rib_u R = {k0, sub, wmax, 2 * wmax / (nu - 1)};
         int nv = (k0 + 40 < TRK.n ? 40 : TRK.n - k0) * sub + 1;

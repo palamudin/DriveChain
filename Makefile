@@ -24,6 +24,7 @@ build/smoke: tests/smoke.c build/libdrivechain.a
 test: build/dc_tests
 	./build/dc_tests | tee results/summary.txt
 	python3 tests/plot.py results
+	$(MAKE) fishtest
 
 cars: build/libdrivechain.a
 	$(CC) $(CFLAGS) -o build/gen_cars tools/gen_cars.c build/libdrivechain.a $(LDLIBS) && ./build/gen_cars
@@ -48,4 +49,7 @@ DT_SRC = tools/drivetest.c demo/sim.c demo/track.c demo/audio.c demo/input.c dem
 build/drivetest: $(DT_SRC) demo/*.h build/libdrivechain.a
 	$(CC) -O2 -std=gnu11 -Wall -Wno-misleading-indentation -Wno-unused-parameter -DDEMO_NO_SDL -Icore/include -o $@ $(DT_SRC) build/libdrivechain.a -lm -lpthread
 drivetest: build/drivetest
-.PHONY: drivetest
+# fishtail-settle regression (gamepad arms layer + orifice back-drive), part of `make test`
+fishtest: build/drivetest
+	mkdir -p results/fishtail/check && ./build/drivetest fishcheck "$(or $(DC_CAR),cars/mx5_na.ini)" results/fishtail/check | tee results/fishtail/check/fishcheck.txt
+.PHONY: drivetest fishtest

@@ -131,12 +131,12 @@ static double sdiff(const track_t* T, double a, double b) { double v = b - a; wh
 
 
 /* ---------------- proving ground surface (layout 1) ----------------
-   Straight 1 (s 0..600, eastbound):  pave 100..300 | long-wave undulations 340..440 (25 m, +-90 mm) | 450..510 (9 m, +-35 mm)
-                                      | 515..560 short warp (3.2 m + diagonal 7 m twist)
+   Straight 1 (s 0..600, eastbound):  pave 100..300 | long-wave undulations 340..440 (25 m, +-90 mm) | 450..504 (9 m, +-35 mm)
+                                      | 508..540 short warp (3.2 m + diagonal 7 m twist)  (features end >= 25 m before the bank ramp so a car can settle before the bend)
    East turn (600..1071): banked 6 deg.
-   Straight 2 (u = s - s_str2, westbound): left-only bump u 60, right-only bump 110 (50 mm x 0.7 m half-sine),
-                                      left pothole 160, right pothole 210 (45 mm x 0.9 m), camber change 260..340 (+-3 %),
-                                      tramline ruts 380..500 (18 mm deep, wandering)
+   Straight 2 (u = s - s_str2, westbound): left-only bump u 120, right-only bump 170 (50 mm x 0.7 m half-sine),
+                                      left pothole 220, right pothole 270 (45 mm x 0.9 m), camber change 320..400 (+-3 %),
+                                      tramline ruts 440..530 (18 mm deep, wandering); u 0..100 left flat so a car leaving the banked turn settles first
    West turn (s_arc2..): banked 6 deg, bumpy (value-noise +-30 mm, 2..5 m waves) from +40 m to +400 m.
    Pad: flat tarmac x 70..530, y 45..255; skidpad circle R 40 at (170,150), lanes marked at R 38 / 42; slalom cones y = 150. */
 static double win(double u, double a, double b, double r) { return smooth01((u - a) / r) * smooth01((b - u) / r); }
@@ -153,37 +153,40 @@ static double pave_h(double u, double d) {
     double top = hs + dome;
     return -0.018 + (0.018 + top) * edge + 0.017 * vnoise(u / 4.0, d / 4.0, 47) + 0.008 * vnoise(u / 1.5, d / 1.5, 53);
 }
+/* test hook: >= 0 keeps only that proving-ground feature (see track.h); the game never sets it */
+int track_isolate_feature = -1;
+#define PGF(id) (track_isolate_feature < 0 || track_isolate_feature == (id))
 static double pg_road(const track_t* T, double s, double d, double x, double y, int* sf, double* g) {
     double h = 0;
-    if (s >= 100 && s <= 300) {
+    if (PGF(PGF_PAVE) && s >= 100 && s <= 300) {
         double w = win(s, 100, 300, 1.0);
         h += w * (pave_h(s, d) - 0.04 * (d / T->half_w) * (d / T->half_w));
         if (w > 0.5) { *sf = SURF_PAVE; *g = 0.85; }
     }
-    if (s > 340 && s < 440) h += win(s, 340, 440, 12) * 0.09 * sin(2 * M_PI * (s - 340) / 25.0);
-    if (s > 450 && s < 510) h += win(s, 450, 510, 6) * 0.035 * sin(2 * M_PI * (s - 450) / 9.0);
-    if (s > 515 && s < 560) h += win(s, 515, 560, 4) * (0.015 * sin(2 * M_PI * (s - 515) / 3.2) + 0.02 * sin(2 * M_PI * (s - 515) / 7.0) * d / T->half_w);
+    if (PGF(PGF_UNDUL25) && s > 340 && s < 440) h += win(s, 340, 440, 12) * 0.09 * sin(2 * M_PI * (s - 340) / 25.0);
+    if (PGF(PGF_UNDUL9) && s > 450 && s < 504) h += win(s, 450, 504, 6) * 0.035 * sin(2 * M_PI * (s - 450) / 9.0);
+    if (PGF(PGF_TWIST) && s > 508 && s < 540) h += win(s, 508, 540, 4) * (0.015 * sin(2 * M_PI * (s - 508) / 3.2) + 0.02 * sin(2 * M_PI * (s - 508) / 7.0) * d / T->half_w);
     double u = s - T->s_str2;
     if (u > 0 && u < 600) {
         /* single-wheel bumps (car centred: wheels at d = +-0.7) */
-        static const double bu[2] = {60, 110}, bs[2] = {1, -1};
-        for (int i = 0; i < 2; i++) if (u > bu[i] && u < bu[i] + 0.7) {
+        static const double bu[2] = {120, 170}, bs[2] = {1, -1};
+        for (int i = 0; i < 2; i++) if (PGF(PGF_BUMP_L + i) && u > bu[i] && u < bu[i] + 0.7) {
             double lat = smooth01((bs[i] * d - 0.15) / 0.1) * smooth01((1.7 - bs[i] * d) / 0.1);
             h += 0.05 * sin(M_PI * (u - bu[i]) / 0.7) * lat;
         }
-        static const double pu[2] = {160, 210}, ps[2] = {1, -1};
-        for (int i = 0; i < 2; i++) if (u > pu[i] - 0.1 && u < pu[i] + 1.0) {
+        static const double pu[2] = {220, 270}, ps[2] = {1, -1};
+        for (int i = 0; i < 2; i++) if (PGF(PGF_POT_L + i) && u > pu[i] - 0.1 && u < pu[i] + 1.0) {
             double lat = smooth01((ps[i] * d - 0.3) / 0.04) * smooth01((1.2 - ps[i] * d) / 0.04);
             h -= 0.045 * smooth01((u - pu[i]) / 0.04) * smooth01((pu[i] + 0.9 - u) / 0.04) * lat;
         }
-        if (u > 260 && u < 340) h += 0.03 * sin(2 * M_PI * (u - 260) / 80.0) * d;   /* cross-slope +3 % -> -3 % */
-        if (u > 380 && u < 500) {
-            double w = win(u, 380, 500, 8), c0 = 0.72 + 0.12 * sin(2 * M_PI * (u - 380) / 35.0) + 0.0 * d;
+        if (PGF(PGF_CROSSFALL) && u > 320 && u < 400) h += 0.03 * sin(2 * M_PI * (u - 320) / 80.0) * d;   /* cross-slope +3 % -> -3 % */
+        if (PGF(PGF_RUTS) && u > 440 && u < 530) {
+            double w = win(u, 440, 530, 8), c0 = 0.72 + 0.12 * sin(2 * M_PI * (u - 440) / 35.0) + 0.0 * d;
             for (int sd = -1; sd <= 1; sd += 2) { double q = (d - sd * c0) / 0.22; if (fabs(q) < 1) h -= w * 0.018 * 0.5 * (1 + cos(M_PI * q)); }
         }
     }
     double ua = s - T->s_arc2;
-    if (ua > 40 && ua < 400) h += win(ua, 40, 400, 10) * (0.022 * vnoise(x / 4.0, y / 4.0, 61) + 0.010 * vnoise(x / 1.8, y / 1.8, 67));
+    if (PGF(PGF_BUMPYARC) && ua > 40 && ua < 400) h += win(ua, 40, 400, 10) * (0.022 * vnoise(x / 4.0, y / 4.0, 61) + 0.010 * vnoise(x / 1.8, y / 1.8, 67));
     return h;
 }
 /* banking: outside of the bends raised, ramps in over 40 m; returns height at lateral offset d (clamped to the road band) */
@@ -311,7 +314,7 @@ const char* track_spot(const track_t* T, int i, double* x, double* y, double* ya
     default: {
         static const double ss[TRK_NSPOT] = {20, 0, 60, 300, 560, 0, 0, 0, 0};
         double s = ss[i];
-        if (i == 6) s = T->s_str2 + 20; if (i == 7) s = T->s_str2 + 350; if (i == 8) s = T->s_arc2 + 10;
+        if (i == 6) s = T->s_str2 + 60; if (i == 7) s = T->s_str2 + 410; if (i == 8) s = T->s_arc2 + 10;
         track_point(T, s, 0, x, y, yaw);
     } }
     return SPOTN[i];
