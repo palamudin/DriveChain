@@ -424,7 +424,7 @@ static Camera3D make_cam(int mode, const sim_snap* V, const dc_car_params* P, do
 
 static void draw_scene(Camera3D cam, const sim_snap* V, const dc_car_params* P, int xray, int forces, int camode) {
     float vp[3] = {cam.position.x, cam.position.y, cam.position.z}; SetShaderValue(LIT, LOC_VIEW, vp, SHADER_UNIFORM_VEC3);
-    BeginMode3D(cam);
+    BeginMode3D(cam); rlDisableBackfaceCulling();   /* raylib re-enables culling in some draw calls; terrain winding must not matter */
     for (int i = 0; i < NCH; i++) {
         float dx = CHC[i].x - cam.position.x, dz = CHC[i].z - cam.position.z;
         if (i != FAR_CH && dx * dx + dz * dz > 420.0f * 420.0f) continue;
@@ -562,7 +562,7 @@ int main(int argc, char** argv) {
                 rlFrustum(-right, right, -top, top, 0.05, 2000);
                 rlMatrixMode(RL_MODELVIEW); rlLoadIdentity();
                 Matrix view = MatrixLookAt(cam.position, cam.target, cam.up); rlMultMatrixf(MatrixToFloat(view));
-                rlEnableDepthTest();
+                rlEnableDepthTest(); rlDisableBackfaceCulling();
                 float vp[3] = {cam.position.x, cam.position.y, cam.position.z}; SetShaderValue(LIT, LOC_VIEW, vp, SHADER_UNIFORM_VEC3);
                 for (int i = 0; i < NCH; i++) DrawMesh(CH[i].meshes[0], CH[i].materials[0], MatrixIdentity());
                 draw_car(&VIEW, P, xray);

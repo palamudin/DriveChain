@@ -119,7 +119,8 @@ double track_height(const track_t* T, double x, double y, int* surf, double* gri
     int kerb = d > 0 ? T->kerb_l[k] : T->kerb_r[k];
     int sf = SURF_TARMAC; double g = 1.0, h = 0;
     /* tarmac: slight crown (1.5 % fall to each edge) + bump section + plank */
-    double tar = -0.015 * ad * ad / (2 * hw);
+    double ac = fmin(ad, hw + kw);   /* crown only across the road band (was unbounded -> terrain sank far from the track) */
+    double tar = -0.015 * ac * ac / (2 * hw);
     {
         double u = sdiff(T, T->bump_s0, s), len = T->bump_s1 - T->bump_s0;
         if (u > 0 && u < len) {
