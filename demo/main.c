@@ -334,7 +334,7 @@ static void draw_hud(const sim_snap* V, const dc_car_params* P, int sw_, int sh_
     snprintf(b, sizeof b, "steer %+6.1f deg   column (FFB) %+5.2f N m   FFB out %+4.2f", t->sw_angle * 180 / M_PI, t->column_torque, V->ffb_level); DrawText(b, x, y, 14, RAYWHITE); y += 18;
     snprintf(b, sizeof b, "rack %+6.1f mm  F %+6.0f N  assist %s %+6.0f N", t->rack_pos * 1e3, t->rack_force, V->assist ? "HYD" : "off", t->assist_force); DrawText(b, x, y, 14, RAYWHITE); y += 18;
     snprintf(b, sizeof b, "ay %+5.2f g  ax %+5.2f g  yaw %+5.1f deg/s  beta %+5.1f deg", t->ay / 9.81, t->ax / 9.81, t->yaw_rate * 180 / M_PI, V->beta * 180 / M_PI); DrawText(b, x, y, 14, RAYWHITE); y += 18;
-    snprintf(b, sizeof b, "physics %.1f us/substep @%.0f Hz (%.1fx RT)  render %.0f fps  cam %s", V->us_per_substep, P->substep_hz, V->rt_factor, fps, cam); DrawText(b, x, y, 14, (Color){180, 220, 255, 255}); y += 20;
+    snprintf(b, sizeof b, "physics %s  %.1f us/substep @%.0f Hz (%.1fx RT)  render %.0f fps  cam %s", V->solver == 1 ? "MULTIBODY" : "legacy", V->us_per_substep, P->substep_hz, V->rt_factor, fps, cam); DrawText(b, x, y, 14, (Color){180, 220, 255, 255}); y += 20;
     if (!full) return;
     DrawText("      Fz     Fx     Fy    Mz   alpha  kappa slide trav  psi   rim  surf", x, y, 13, (Color){255, 220, 120, 255}); y += 16;
     static const char* cn[4] = {"FL", "FR", "RL", "RR"};

@@ -21,7 +21,7 @@ typedef struct {            /* physics -> render */
     dc_seg seg[SIM_MAXSEG]; int nseg;
     dc_input in;
     int surf[4];
-    double ffb_level, us_per_substep, rt_factor, sim_time, beta;
+    double ffb_level, us_per_substep, rt_factor, sim_time, beta; int solver;
     int gear_req, assist, autopilot, paused, device_kind, has_ffb;
     char device[128];
     double raw_axis[8]; int raw_buttons, raw_naxes, hgear;   /* input diagnostics for mapping */

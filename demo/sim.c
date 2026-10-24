@@ -279,7 +279,7 @@ void sim_tick(sim_t* S, double dt) {
     N->t = t; dc_get_parts(S->car, N->parts, DC_PART_COUNT); N->nseg = dc_get_segments(S->car, N->seg, SIM_MAXSEG);
     N->in = in; memcpy(N->surf, surf, sizeof surf); N->ffb_level = S->dev.ffb_out; N->sim_time = S->sim_time;
     N->beta = fabs(t.vx) > 1 ? atan2(t.vy, fabs(t.vx)) : 0;
-    N->gear_req = S->gear; N->assist = S->P.assist; N->autopilot = S->autopilot;
+    N->gear_req = S->gear; N->assist = S->P.assist; N->autopilot = S->autopilot; N->solver = S->car ? dc_active_solver(S->car) : 0;
     N->device_kind = S->dev.kind; N->has_ffb = S->dev.has_ffb; snprintf(N->device, sizeof N->device, "%s", S->dev.name);
     for (int a = 0; a < 8; a++) N->raw_axis[a] = S->dev.axis[a];
     N->drv_on = S->drv_on; N->drv_takeover = S->drv_takeover; N->drv_mode = S->drv_cmd.steer_mode; N->drv_clients = S->ext_clients;
