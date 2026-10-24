@@ -4,8 +4,9 @@
 #ifndef DEMO_TRACK_H
 #define DEMO_TRACK_H
 #define TRK_MAXS 8192
-enum { SURF_TARMAC = 0, SURF_KERB = 1, SURF_GRASS = 2, SURF_ROUGH = 3, SURF_SAUSAGE = 4, SURF_LINE = 5, SURF_PAVE = 6, SURF_PAD = 7 };
-enum { TRACK_CIRCUIT = 0, TRACK_PROVING = 1 };
+enum { SURF_TARMAC = 0, SURF_KERB = 1, SURF_GRASS = 2, SURF_ROUGH = 3, SURF_SAUSAGE = 4, SURF_LINE = 5, SURF_PAVE = 6, SURF_PAD = 7,
+       SURF_GRAVEL = 8, SURF_WALL = 9, SURF_OTHER = 10, SURF_CONCRETE = 11 };
+enum { TRACK_CIRCUIT = 0, TRACK_PROVING = 1, TRACK_MESH = 2 };
 #define TRK_MAXCONE 64
 #define TRK_NSPOT 10   /* keys 1..9, 0 */
 typedef struct {
@@ -18,13 +19,23 @@ typedef struct {
     double rough_cx, rough_cy, rough_r;              /* off-road zone */
     double bump_s0, bump_s1, plank_s, sausage_s0, sausage_s1, start_s;
     double rough_scale;                              /* multiplier on rough-terrain amplitude (config) */
-    int layout;                                      /* TRACK_CIRCUIT | TRACK_PROVING */
+    int layout;                                      /* TRACK_CIRCUIT | TRACK_PROVING | TRACK_MESH */
+    /* mesh map (layout 2): collider + render scenery, centreline from the map's line file, named spawn spots */
+    struct meshtrk_s* mesh; char name[96], dir[256];
+    int nspot; double spot[TRK_NSPOT][3]; char spotn[TRK_NSPOT][32];
     /* proving ground (layout 1): see track.c for the full map */
     double bank_deg, s_arc1, s_str2, s_arc2;
     double pad_x0, pad_x1, pad_y0, pad_y1, skid_cx, skid_cy, skid_r;
     int ncone; double cone_x[TRK_MAXCONE], cone_y[TRK_MAXCONE];
 } track_t;
 void track_build(track_t* T, double rough_scale, int layout);
+/* mesh map from a directory holding track.cfg (name, line, collider, scenery, half_width, spot0..9 = "name x y yaw_deg");
+   returns 1 ok, else 0 with err filled (T is then left as the proving ground) */
+int track_load_mesh(track_t* T, const char* dir, char* err, int errn);
+/* "proving" | "circuit" | a mesh-map directory (or name under tracks/): builds T accordingly */
+int track_select(track_t* T, const char* layout, double rough_scale, char* err, int errn);
+const char* track_layout_name(const track_t* T);
+void track_free(track_t* T);   /* releases the grid / mesh of a built track (before rebuilding it) */
 /* named spawn points (keys 1..9 in the demo): returns name or NULL */
 const char* track_spot(const track_t* T, int i, double* x, double* y, double* yaw);
 int track_spot_by_name(const track_t* T, const char* name);

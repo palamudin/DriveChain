@@ -1,4 +1,7 @@
 #include "track.h"
+#include "meshtrack.h"
+#include "cfg.h"
+#include <stdio.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,6 +32,50 @@ static void cr(double t, const double* p0, const double* p1, const double* p2, c
         o[k] = 0.5 * ((2 * p1[k]) + (-p0[k] + p2[k]) * t + (2 * p0[k] - 5 * p1[k] + 4 * p2[k] - p3[k]) * t2 + (-p0[k] + 3 * p1[k] - 3 * p2[k] + p3[k]) * t3);
 }
 
+/* uniform-arc-length resampling of a closed polyline, tangents, curvature */
+static void cl_resample(track_t* T, const double* dx, const double* dy, int nd) {
+    double L = 0; for (int i = 0; i < nd; i++) { int j = (i + 1) % nd; L += hypot(dx[j] - dx[i], dy[j] - dy[i]); }
+    T->n = (int)(L / 0.5); if (T->n > TRK_MAXS) T->n = TRK_MAXS;
+    T->ds = L / T->n; T->length = L;
+    /* resample at uniform arc length */
+    double acc = 0; int seg = 0; double segl = hypot(dx[1] - dx[0], dy[1] - dy[0]);
+    for (int k = 0; k < T->n; k++) {
+        double target = k * T->ds;
+        while (acc + segl < target && seg < nd - 1) { acc += segl; seg++; int j = (seg + 1) % nd; segl = hypot(dx[j] - dx[seg], dy[j] - dy[seg]); }
+        int j = (seg + 1) % nd; double f = segl > 0 ? (target - acc) / segl : 0;
+        T->px[k] = dx[seg] + (dx[j] - dx[seg]) * f; T->py[k] = dy[seg] + (dy[j] - dy[seg]) * f; T->s[k] = target;
+    }
+    for (int k = 0; k < T->n; k++) {
+        int a = (k + T->n - 1) % T->n, b = (k + 1) % T->n;
+        double tx = T->px[b] - T->px[a], ty = T->py[b] - T->py[a], l = hypot(tx, ty);
+        T->tx[k] = tx / l; T->ty[k] = ty / l;
+    }
+    for (int k = 0; k < T->n; k++) {
+        int a = (k + T->n - 4) % T->n, b = (k + 4) % T->n;
+        double h1 = atan2(T->ty[a], T->tx[a]), h2 = atan2(T->ty[b], T->tx[b]), dh = h2 - h1;
+        while (dh > M_PI) dh -= 2 * M_PI; while (dh < -M_PI) dh += 2 * M_PI;
+        T->curv[k] = dh / (8 * T->ds);
+    }
+}
+/* bounds + nearest-sample grid */
+static void cl_grid(track_t* T) {
+    /* bounds + nearest grid */
+    T->xmin = T->ymin = 1e9; T->xmax = T->ymax = -1e9;
+    for (int k = 0; k < T->n; k++) {
+        if (T->px[k] < T->xmin) T->xmin = T->px[k]; if (T->px[k] > T->xmax) T->xmax = T->px[k];
+        if (T->py[k] < T->ymin) T->ymin = T->py[k]; if (T->py[k] > T->ymax) T->ymax = T->py[k];
+    }
+    T->xmin -= 120; T->ymin -= 120; T->xmax += 120; T->ymax += 120;
+    T->gcell = 4.0; T->gnx = (int)((T->xmax - T->xmin) / T->gcell) + 1; T->gny = (int)((T->ymax - T->ymin) / T->gcell) + 1;
+    T->grid = (int*)malloc(sizeof(int) * T->gnx * T->gny);
+    for (int j = 0; j < T->gny; j++)
+        for (int i = 0; i < T->gnx; i++) {
+            double x = T->xmin + (i + 0.5) * T->gcell, y = T->ymin + (j + 0.5) * T->gcell, bd = 1e18; int bk = 0;
+            for (int k = 0; k < T->n; k += 4) { double d = (T->px[k] - x) * (T->px[k] - x) + (T->py[k] - y) * (T->py[k] - y); if (d < bd) { bd = d; bk = k; } }
+            T->grid[j * T->gnx + i] = bk;
+        }
+}
+
 void track_build(track_t* T, double rough_scale, int layout) {
     memset(T, 0, sizeof *T);
     T->half_w = 6.0; T->kerb_w = 1.2; T->rough_scale = rough_scale; T->layout = layout;
@@ -53,28 +100,7 @@ void track_build(track_t* T, double rough_scale, int layout) {
         const double *p0 = CP[(i + NCP - 1) % NCP], *p1 = CP[i], *p2 = CP[(i + 1) % NCP], *p3 = CP[(i + 2) % NCP];
         for (int j = 0; j < 400; j++) { double o[2]; cr(j / 400.0, p0, p1, p2, p3, o); dx[nd] = o[0]; dy[nd] = o[1]; nd++; }
     }
-    double L = 0; for (int i = 0; i < nd; i++) { int j = (i + 1) % nd; L += hypot(dx[j] - dx[i], dy[j] - dy[i]); }
-    T->n = (int)(L / 0.5); if (T->n > TRK_MAXS) T->n = TRK_MAXS;
-    T->ds = L / T->n; T->length = L;
-    /* resample at uniform arc length */
-    double acc = 0; int seg = 0; double segl = hypot(dx[1] - dx[0], dy[1] - dy[0]);
-    for (int k = 0; k < T->n; k++) {
-        double target = k * T->ds;
-        while (acc + segl < target && seg < nd - 1) { acc += segl; seg++; int j = (seg + 1) % nd; segl = hypot(dx[j] - dx[seg], dy[j] - dy[seg]); }
-        int j = (seg + 1) % nd; double f = segl > 0 ? (target - acc) / segl : 0;
-        T->px[k] = dx[seg] + (dx[j] - dx[seg]) * f; T->py[k] = dy[seg] + (dy[j] - dy[seg]) * f; T->s[k] = target;
-    }
-    for (int k = 0; k < T->n; k++) {
-        int a = (k + T->n - 1) % T->n, b = (k + 1) % T->n;
-        double tx = T->px[b] - T->px[a], ty = T->py[b] - T->py[a], l = hypot(tx, ty);
-        T->tx[k] = tx / l; T->ty[k] = ty / l;
-    }
-    for (int k = 0; k < T->n; k++) {
-        int a = (k + T->n - 4) % T->n, b = (k + 4) % T->n;
-        double h1 = atan2(T->ty[a], T->tx[a]), h2 = atan2(T->ty[b], T->tx[b]), dh = h2 - h1;
-        while (dh > M_PI) dh -= 2 * M_PI; while (dh < -M_PI) dh += 2 * M_PI;
-        T->curv[k] = dh / (8 * T->ds);
-    }
+    cl_resample(T, dx, dy, nd);
     /* kerbs where the corner is tighter than R 120 m (both edges, widened 8 m either side) */
     for (int k = 0; k < T->n; k++) {
         if (fabs(T->curv[k]) < 1.0 / 120) continue;
@@ -92,21 +118,7 @@ void track_build(track_t* T, double rough_scale, int layout) {
     T->sausage_s0 = T->s[kb] - 6; T->sausage_s1 = T->s[kb] + 6;
     T->rough_cx = 95; T->rough_cy = 85; T->rough_r = 42;
     if (layout == TRACK_PROVING) { T->sausage_s0 = T->sausage_s1 = 0; T->rough_r = 0; }
-    /* bounds + nearest grid */
-    T->xmin = T->ymin = 1e9; T->xmax = T->ymax = -1e9;
-    for (int k = 0; k < T->n; k++) {
-        if (T->px[k] < T->xmin) T->xmin = T->px[k]; if (T->px[k] > T->xmax) T->xmax = T->px[k];
-        if (T->py[k] < T->ymin) T->ymin = T->py[k]; if (T->py[k] > T->ymax) T->ymax = T->py[k];
-    }
-    T->xmin -= 120; T->ymin -= 120; T->xmax += 120; T->ymax += 120;
-    T->gcell = 4.0; T->gnx = (int)((T->xmax - T->xmin) / T->gcell) + 1; T->gny = (int)((T->ymax - T->ymin) / T->gcell) + 1;
-    T->grid = (int*)malloc(sizeof(int) * T->gnx * T->gny);
-    for (int j = 0; j < T->gny; j++)
-        for (int i = 0; i < T->gnx; i++) {
-            double x = T->xmin + (i + 0.5) * T->gcell, y = T->ymin + (j + 0.5) * T->gcell, bd = 1e18; int bk = 0;
-            for (int k = 0; k < T->n; k += 4) { double d = (T->px[k] - x) * (T->px[k] - x) + (T->py[k] - y) * (T->py[k] - y); if (d < bd) { bd = d; bk = k; } }
-            T->grid[j * T->gnx + i] = bk;
-        }
+    cl_grid(T);
 }
 
 static void nearest(const track_t* T, double x, double y, double* d, double* s, int* kk) {
@@ -223,6 +235,10 @@ static double pg_height(const track_t* T, double x, double y, double d, double s
     return h;
 }
 double track_height(const track_t* T, double x, double y, int* surf, double* grip, double* d_out, double* s_out) {
+    if (T->layout == TRACK_MESH) {
+        if (d_out || s_out) { double d, s; int k; nearest(T, x, y, &d, &s, &k); if (d_out) *d_out = d; if (s_out) *s_out = s; }
+        return mt_height(T->mesh, x, y, NULL, surf, grip, NULL);
+    }
     double d, s; int k; nearest(T, x, y, &d, &s, &k);
     if (d_out) *d_out = d; if (s_out) *s_out = s;
     if (T->layout == TRACK_PROVING) return pg_height(T, x, y, d, s, surf, grip);
@@ -286,6 +302,11 @@ double track_height(const track_t* T, double x, double y, int* surf, double* gri
 
 double track_road_fn(void* user, double x, double y, double* nx, double* ny, double* nz, double* grip) {
     const track_t* T = (const track_t*)user;
+    if (T->layout == TRACK_MESH) {   /* exact face height and normal of the collider triangle under (x,y) */
+        if (!nx) return mt_height(T->mesh, x, y, NULL, NULL, grip, NULL);
+        double n[3]; double h = mt_height(T->mesh, x, y, n, NULL, grip, NULL);
+        *nx = n[0]; *ny = n[1]; *nz = n[2]; return h;
+    }
     const double e = 0.02;
     double h = track_height(T, x, y, NULL, grip, NULL, NULL);
     if (!nx) return h;   /* DC_ROAD_HEIGHT_ONLY query */
@@ -311,6 +332,7 @@ static const char* SPOTN[TRK_NSPOT] = {"hub", "start", "skidpad", "pave", "undul
 #define HUB_Y 80.0
 const char* track_spot(const track_t* T, int i, double* x, double* y, double* yaw) {
     if (i < 0 || i >= TRK_NSPOT) return NULL;
+    if (T->layout == TRACK_MESH) { if (i >= T->nspot) return NULL; *x = T->spot[i][0]; *y = T->spot[i][1]; *yaw = T->spot[i][2]; return T->spotn[i]; }
     if (T->layout != TRACK_PROVING) { if (i > 1) return NULL; track_point(T, T->start_s, 0, x, y, yaw); return SPOTN[i]; }
     switch (i) {
     case 0: *x = HUB_X; *y = HUB_Y; *yaw = 0; break;
@@ -325,6 +347,72 @@ const char* track_spot(const track_t* T, int i, double* x, double* y, double* ya
     return SPOTN[i];
 }
 int track_spot_by_name(const track_t* T, const char* name) {
+    if (T->layout == TRACK_MESH) { for (int i = 0; i < T->nspot; i++) if (!strcmp(name, T->spotn[i])) return i; return -1; }
     for (int i = 0; i < TRK_NSPOT; i++) if (!strcmp(name, SPOTN[i])) return i;
     return -1;
+}
+
+/* ---------------- mesh maps ---------------- */
+static int file_exists(const char* p) { FILE* f = fopen(p, "rb"); if (f) fclose(f); return f != NULL; }
+int track_load_mesh(track_t* T, const char* dir, char* err, int errn) {
+    char p[512], p2[512];
+    snprintf(p, sizeof p, "%s/track.cfg", dir);
+    cfg_t* C = (cfg_t*)calloc(1, sizeof(cfg_t));
+    if (!cfg_load(C, p)) { snprintf(err, errn, "no %s", p); free(C); return 0; }
+    /* centreline: x,y[,z] per line, closed loop; smoothed (Catmull-Rom) only for the driver path / (s,d) frame */
+    snprintf(p, sizeof p, "%s/%s", dir, cfg_str(C, "line", "line.csv"));
+    FILE* f = fopen(p, "r"); if (!f) { snprintf(err, errn, "no centreline %s", p); free(C); return 0; }
+    static double lx[20000], ly[20000]; int nl = 0; char ln[256];
+    while (fgets(ln, sizeof ln, f) && nl < 20000) { if (ln[0] == '#') continue; double a, b; if (sscanf(ln, "%lf,%lf", &a, &b) == 2) { lx[nl] = a; ly[nl] = b; nl++; } }
+    fclose(f);
+    if (nl < 8) { snprintf(err, errn, "centreline %s has %d points", p, nl); free(C); return 0; }
+    if (hypot(lx[nl - 1] - lx[0], ly[nl - 1] - ly[0]) < 0.05) nl--;   /* explicit closing point */
+    meshtrk_t* M = (meshtrk_t*)calloc(1, sizeof(meshtrk_t));
+    snprintf(p, sizeof p, "%s/%s", dir, cfg_str(C, "collider", "collider.bin"));
+    p2[0] = 0; if (cfg_str(C, "scenery", NULL)) snprintf(p2, sizeof p2, "%s/%s", dir, cfg_str(C, "scenery", ""));
+    if (!mt_build(M, p, p2, err, errn)) { free(M); free(C); return 0; }
+    /* optional per-surface grip overrides: grip.<surface id> = value */
+    for (int i = 0; i < 16; i++) { char k[32]; snprintf(k, sizeof k, "grip.%d", i); M->grip[i] = cfg_num(C, k, M->grip[i]); }
+    memset(T, 0, sizeof *T);
+    T->layout = TRACK_MESH; T->mesh = M; T->rough_scale = 1.0;
+    T->half_w = cfg_num(C, "half_width", 4.0); T->kerb_w = 0;
+    snprintf(T->name, sizeof T->name, "%s", cfg_str(C, "name", dir)); snprintf(T->dir, sizeof T->dir, "%s", dir);
+    static double dx[200000], dy[200000]; int nd = 0;
+    for (int i = 0; i < nl; i++) {
+        const double P0[2] = {lx[(i + nl - 1) % nl], ly[(i + nl - 1) % nl]}, P1[2] = {lx[i], ly[i]}, P2[2] = {lx[(i + 1) % nl], ly[(i + 1) % nl]}, P3[2] = {lx[(i + 2) % nl], ly[(i + 2) % nl]};
+        int sub = (int)ceil(hypot(P2[0] - P1[0], P2[1] - P1[1]) / 0.1); if (sub < 1) sub = 1;
+        for (int j = 0; j < sub && nd < 200000; j++) { double o[2]; cr((double)j / sub, P0, P1, P2, P3, o); dx[nd] = o[0]; dy[nd] = o[1]; nd++; }
+    }
+    cl_resample(T, dx, dy, nd);
+    T->plank_s = -1e6; T->start_s = 0;
+    for (int i = 0; i < TRK_NSPOT; i++) {
+        char k[16], nm[32]; double x, y, yd; snprintf(k, sizeof k, "spot%d", i);
+        const char* v = cfg_str(C, k, NULL);
+        if (v && sscanf(v, "%31s %lf %lf %lf", nm, &x, &y, &yd) == 4) {
+            int j = T->nspot++; snprintf(T->spotn[j], sizeof T->spotn[j], "%s", nm); T->spot[j][0] = x; T->spot[j][1] = y; T->spot[j][2] = yd * M_PI / 180;
+        }
+    }
+    if (T->nspot == 0) { double x, y, yaw; track_point(T, 0, 0, &x, &y, &yaw); T->nspot = 1; strcpy(T->spotn[0], "start"); T->spot[0][0] = x; T->spot[0][1] = y; T->spot[0][2] = yaw; }
+    cl_grid(T);
+    { double d, s; int k; nearest(T, T->spot[0][0], T->spot[0][1], &d, &s, &k); T->start_s = s; }
+    free(C);
+    return 1;
+}
+int track_select(track_t* T, const char* layout, double rough_scale, char* err, int errn) {
+    if (!layout || !*layout || !strcmp(layout, "proving")) { track_build(T, rough_scale, TRACK_PROVING); return 1; }
+    if (!strcmp(layout, "circuit")) { track_build(T, rough_scale, TRACK_CIRCUIT); return 1; }
+    char p[512], dir[300];
+    snprintf(dir, sizeof dir, "%s", layout); snprintf(p, sizeof p, "%s/track.cfg", dir);
+    if (!file_exists(p)) { snprintf(dir, sizeof dir, "tracks/%s", layout); snprintf(p, sizeof p, "%s/track.cfg", dir); }
+    if (!file_exists(p)) { snprintf(err, errn, "unknown layout '%s' (no %s/track.cfg or tracks/%s/track.cfg)", layout, layout, layout); track_build(T, rough_scale, TRACK_PROVING); return 0; }
+    if (!track_load_mesh(T, dir, err, errn)) { track_build(T, rough_scale, TRACK_PROVING); return 0; }
+    return 1;
+}
+const char* track_layout_name(const track_t* T) {
+    if (T->layout == TRACK_MESH) return T->name;
+    return T->layout == TRACK_PROVING ? "proving ground" : "circuit";
+}
+void track_free(track_t* T) {
+    free(T->grid); T->grid = NULL;
+    if (T->mesh) { mt_free(T->mesh); free(T->mesh); T->mesh = NULL; }
 }
