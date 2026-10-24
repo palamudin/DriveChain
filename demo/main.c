@@ -7,6 +7,8 @@
 #include "sim.h"
 #include "drvproto.h"
 #include "objload.h"
+#include "meshtrack.h"
+#include <dirent.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,6 +21,7 @@ __declspec(dllimport) unsigned int __stdcall timeBeginPeriod(unsigned int uPerio
 __declspec(dllimport) unsigned int __stdcall timeEndPeriod(unsigned int uPeriod);
 #endif
 
+static char MAP_TITLE[128] = "PROVING GROUND";
 static cfg_t CFG; static track_t TRK; static audio_t AUD; static sim_t SIM;
 static pthread_mutex_t MTX = PTHREAD_MUTEX_INITIALIZER;
 static sim_snap VIEW;              /* render copy */
@@ -151,12 +154,86 @@ static void rib_fn(void* u, int i, int j, double* x, double* y, double* z, Color
     int sf; double dd, ss; double h = track_height(&TRK, *x, *y, &sf, NULL, &dd, &ss);
     *z = h + 0.004; *c = surf_col(sf, *x, *y, ss, h);
 }
-static Material MAT_V; static int FAR_CH = -1;
+static Material MAT_V; static int FAR_CH = -1; static double FAR_Z = -0.35;
 static void far_fn(void* u, int i, int j, double* x, double* y, double* z, Color* c) {
-    terr_u* T = (terr_u*)u; *x = T->x0 + i * T->step; *y = T->y0 + j * T->step; *z = -0.35; *c = (Color){52, 98, 40, 255};
+    terr_u* T = (terr_u*)u; *x = T->x0 + i * T->step; *y = T->y0 + j * T->step; *z = FAR_Z; *c = (Color){52, 98, 40, 255};
+}
+/* mesh map: the collider's own triangles (plus render-only scenery), flat-coloured by surface, in 64 m tiles */
+static Color mesh_col(int sf) {
+    switch (sf) {
+    case SURF_TARMAC: return (Color){62, 62, 66, 255};
+    case SURF_CONCRETE: return (Color){150, 150, 145, 255};
+    case SURF_KERB: return (Color){200, 40, 35, 255};
+    case SURF_PAVE: return (Color){110, 100, 90, 255};
+    case SURF_GRASS: return (Color){70, 120, 50, 255};
+    case SURF_GRAVEL: return (Color){170, 150, 110, 255};
+    case SURF_WALL: return (Color){190, 195, 205, 255};
+    case MESH_SC_FOLIAGE: return (Color){40, 85, 35, 255};
+    case MESH_SC_TYRES: return (Color){32, 32, 34, 255};
+    case MESH_SC_FENCE: return (Color){175, 180, 190, 255};
+    default: return (Color){150, 140, 125, 255};
+    }
+}
+static void mesh_tiles(const double* v, const int* t, const unsigned char* sf, int nt) {
+    const meshtrk_t* M = TRK.mesh; const double TS = 64.0;
+    int nx = (int)((M->bmax[0] - M->bmin[0]) / TS) + 1, ny = (int)((M->bmax[1] - M->bmin[1]) / TS) + 1;
+    int* cnt = (int*)calloc((size_t)nx * ny, sizeof(int)); int* tile = (int*)malloc(sizeof(int) * (nt > 0 ? nt : 1));
+    for (int k = 0; k < nt; k++) {
+        const double *a = &v[3 * t[3 * k]], *b = &v[3 * t[3 * k + 1]], *c = &v[3 * t[3 * k + 2]];
+        int i = (int)(((a[0] + b[0] + c[0]) / 3 - M->bmin[0]) / TS), j = (int)(((a[1] + b[1] + c[1]) / 3 - M->bmin[1]) / TS);
+        i = i < 0 ? 0 : (i >= nx ? nx - 1 : i); j = j < 0 ? 0 : (j >= ny ? ny - 1 : j);
+        tile[k] = j * nx + i; cnt[tile[k]]++;
+    }
+    int** lists = (int**)calloc((size_t)nx * ny, sizeof(int*)); int* fill = (int*)calloc((size_t)nx * ny, sizeof(int));
+    for (int c = 0; c < nx * ny; c++) if (cnt[c]) lists[c] = (int*)malloc(sizeof(int) * cnt[c]);
+    for (int k = 0; k < nt; k++) lists[tile[k]][fill[tile[k]]++] = k;
+    for (int c = 0; c < nx * ny && NCH < MAXCH - 1; c++) {
+        if (!cnt[c]) continue;
+        Mesh m = {0}; m.triangleCount = cnt[c]; m.vertexCount = 3 * cnt[c];
+        m.vertices = (float*)MemAlloc(m.vertexCount * 3 * sizeof(float)); m.normals = (float*)MemAlloc(m.vertexCount * 3 * sizeof(float));
+        m.texcoords = (float*)MemAlloc(m.vertexCount * 2 * sizeof(float)); m.colors = (unsigned char*)MemAlloc(m.vertexCount * 4);
+        double cx = 0, cy = 0;
+        for (int q = 0; q < cnt[c]; q++) {
+            int k = lists[c][q]; const double* P[3] = {&v[3 * t[3 * k]], &v[3 * t[3 * k + 1]], &v[3 * t[3 * k + 2]]};
+            double e1[3] = {P[1][0] - P[0][0], P[1][1] - P[0][1], P[1][2] - P[0][2]}, e2[3] = {P[2][0] - P[0][0], P[2][1] - P[0][1], P[2][2] - P[0][2]};
+            double n[3] = {e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]};
+            double l = sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]) + 1e-12;
+            if (n[2] < 0) l = -l;   /* render faces lit from above regardless of winding */
+            Color col = mesh_col(sf[k]);
+            double shade = 0.93 + 0.07 * (double)(((unsigned)k * 2654435761u >> 16) & 255) / 255.0;   /* faint per-face jitter shows the triangles */
+            Vector3 nn = R3(n[0] / l, n[1] / l, n[2] / l);
+            for (int e = 0; e < 3; e++) {
+                int vi = 3 * q + e; Vector3 r = RV(P[e]);
+                m.vertices[3 * vi] = r.x; m.vertices[3 * vi + 1] = r.y; m.vertices[3 * vi + 2] = r.z;
+                m.normals[3 * vi] = nn.x; m.normals[3 * vi + 1] = nn.y; m.normals[3 * vi + 2] = nn.z;
+                m.texcoords[2 * vi] = 0; m.texcoords[2 * vi + 1] = 0;
+                m.colors[4 * vi] = (unsigned char)(col.r * shade); m.colors[4 * vi + 1] = (unsigned char)(col.g * shade);
+                m.colors[4 * vi + 2] = (unsigned char)(col.b * shade); m.colors[4 * vi + 3] = 255;
+                cx += P[e][0]; cy += P[e][1];
+            }
+        }
+        UploadMesh(&m, false);
+        MemFree(m.vertices); MemFree(m.normals); MemFree(m.texcoords); MemFree(m.colors);   /* keep the GPU copy only */
+        m.vertices = m.normals = m.texcoords = NULL; m.colors = NULL;
+        CH[NCH] = LoadModelFromMesh(m); CH[NCH].materials[0].shader = LIT; CHC[NCH] = R3(cx / m.vertexCount, cy / m.vertexCount, 0); NCH++;
+    }
+    for (int c = 0; c < nx * ny; c++) free(lists[c]);
+    free(lists); free(fill); free(cnt); free(tile);
+}
+static void build_world_mesh(void) {
+    meshtrk_t* M = TRK.mesh;
+    mesh_tiles(M->v, M->t, M->s, M->nt);
+    if (cfg_int(&CFG, "track.scenery", 1) && M->snt) mesh_tiles(M->sv, M->st, M->ss, M->snt);
+    int snt = M->snt; mt_free_scenery(M);
+    { terr_u T = {M->bmin[0] - 2500, M->bmin[1] - 2500, (M->bmax[0] - M->bmin[0] + 5000) / 15.0};
+      FAR_Z = M->bmin[2] - 0.3;
+      Mesh m = grid_mesh(16, 16, far_fn, &T); CH[NCH] = LoadModelFromMesh(m); CH[NCH].materials[0].shader = LIT; CHC[NCH] = R3(0, 0, 0); FAR_CH = NCH++; }
+    printf("[demo] map '%s': %d collider tris, %d scenery tris, %d tiles\n", TRK.name, M->nt, snt, NCH); fflush(stdout);
 }
 static void build_world(void) {
     MAT_V = LoadMaterialDefault(); MAT_V.shader = LIT;
+    FAR_Z = -0.35;
+    if (TRK.layout == TRACK_MESH) { build_world_mesh(); return; }
     /* track ribbon chunks: 40 samples (20 m) x across 0.125 m */
     double wmax = TRK.half_w + TRK.kerb_w + 1.5; int nu = (int)(2 * wmax / 0.125) + 1;
     for (int k0 = 0; k0 < TRK.n && NCH < MAXCH; k0 += 40) {
@@ -325,7 +402,7 @@ static void bar(int x, int y, int w, int h, double v, Color c, const char* lab) 
     DrawRectangle(x, y, w, h, (Color){0, 0, 0, 120}); DrawRectangle(x, y + (int)(h * (1 - fmin(fmax(v, 0), 1))), w, (int)(h * fmin(fmax(v, 0), 1)), c);
     DrawText(lab, x + w / 2 - MeasureText(lab, 12) / 2, y + h + 3, 12, RAYWHITE);
 }
-static const char* surf_name(int s) { static const char* n[] = {"tarmac", "kerb", "grass", "rough", "sausage", "paint", "pave", "pad"}; return s >= 0 && s < 8 ? n[s] : "?"; }
+static const char* surf_name(int s) { static const char* n[] = {"tarmac", "kerb", "grass", "rough", "sausage", "paint", "pave", "pad", "gravel", "wall", "off-map", "concrete"}; return s >= 0 && s < 12 ? n[s] : "?"; }
 static void draw_hud(const sim_snap* V, const dc_car_params* P, int sw_, int sh_, double fps, const char* cam, int full) {
     const dc_telemetry* t = &V->t; char b[512]; int x = 12, y = 10;
     DrawRectangle(0, 0, 410, full ? 405 : 120, (Color){0, 0, 0, 140});
@@ -379,24 +456,52 @@ static void draw_hud(const sim_snap* V, const dc_car_params* P, int sw_, int sh_
         DrawLine(x0, gy + gh / 2 - (int)(H_sw[i0] * gh / 2 / 6.0), x1, gy + gh / 2 - (int)(H_sw[i1] * gh / 2 / 6.0), SKYBLUE);
     }
     DrawText("FFB N m (y) / steer (b)", gx, gy + gh + 2, 10, RAYWHITE);
-    DrawText("keys: 1-9,0 spots  F1 spot list  arrows/WASD drive  A/Z or Q/E shift  C cam  F2 x-ray  F3 hud  F4 forces  H assist  P puncture  R reset  O autopilot  G plug-in driver  Space handbrake  LShift clutch",
+    DrawText(TextFormat("map: %s  (F6 next)", MAP_TITLE), 10, sh_ - 34, 12, (Color){255, 220, 120, 220});
+    DrawText("keys: 1-9,0 spots  F1 spot list  F6 map  arrows/WASD drive  A/Z or Q/E shift  C cam  F2 x-ray  F3 hud  F4 forces  H assist  P puncture  R reset  O autopilot  G plug-in driver  Space handbrake  LShift clutch",
              10, sh_ - 18, 12, (Color){230, 230, 230, 200});
     (void)sw_;
 }
 
 static const char* spot_label(int i);
+/* ---------------- maps: proving, circuit, every tracks/<name>/track.cfg ---------------- */
+static char MAPS[32][128]; static int NMAPS = 0, CUR_MAP = 0;
+static void scan_maps(const char* cur) {
+    const char* root = cfg_str(&CFG, "track.maps_dir", "tracks");   /* every <root>/<name>/track.cfg is a map */
+    NMAPS = 0; snprintf(MAPS[NMAPS++], 128, "proving"); snprintf(MAPS[NMAPS++], 128, "circuit");
+    DIR* d = opendir(root);
+    if (d) {
+        struct dirent* e; static char names[30][128]; int nn = 0;
+        while ((e = readdir(d)) && nn < 30) {
+            if (e->d_name[0] == '.') continue;
+            char p[400]; snprintf(p, sizeof p, "%s/%s/track.cfg", root, e->d_name);
+            FILE* f = fopen(p, "r"); if (f) { fclose(f); if (strlen(root) + strlen(e->d_name) < 120) snprintf(names[nn++], 128, "%.60s/%.60s", root, e->d_name); }
+        }
+        closedir(d);
+        for (int i = 0; i < nn; i++) for (int j = i + 1; j < nn; j++)
+            if (strcmp(names[j], names[i]) < 0) { char tmp[128]; memcpy(tmp, names[i], 128); memcpy(names[i], names[j], 128); memcpy(names[j], tmp, 128); }
+        for (int i = 0; i < nn && NMAPS < 32; i++) memcpy(MAPS[NMAPS++], names[i], 128);
+    }
+    CUR_MAP = -1;
+    for (int i = 0; i < NMAPS; i++) { const char* m = MAPS[i]; size_t lr = strlen(root);
+        if (!strcmp(m, cur) || (!strncmp(m, root, lr) && m[lr] == '/' && !strcmp(m + lr + 1, cur))) CUR_MAP = i; }
+    if (CUR_MAP < 0 && NMAPS < 32) { snprintf(MAPS[NMAPS], 128, "%s", cur); CUR_MAP = NMAPS++; }   /* a map given by directory */
+}
+static void set_map_title(void) {
+    if (TRK.layout == TRACK_MESH) { snprintf(MAP_TITLE, sizeof MAP_TITLE, "%s", TRK.name); for (char* c = MAP_TITLE; *c; c++) if (*c >= 'a' && *c <= 'z') *c -= 32; }
+    else snprintf(MAP_TITLE, sizeof MAP_TITLE, "%s", TRK.layout == TRACK_PROVING ? "PROVING GROUND" : "CIRCUIT");
+}
 /* spot list overlay: shown at start for ~10 s (fades), F1 toggles */
 static int HELP_ON = 1, HELP_STICKY = 0; static double HELP_T0 = 0;
 static void draw_spot_help(int sw_, int sh_, float a) {
     int w = 360, h = 30 + 22 * TRK_NSPOT + 26, x = sw_ - w - 16, y = 70; (void)sh_;
     DrawRectangle(x, y, w, h, (Color){10, 20, 30, (unsigned char)(200 * a)});
-    DrawText("PROVING GROUND  -  teleport keys", x + 12, y + 8, 18, (Color){255, 220, 120, (unsigned char)(255 * a)});
+    DrawText(TextFormat("%s  -  teleport keys", MAP_TITLE), x + 12, y + 8, 18, (Color){255, 220, 120, (unsigned char)(255 * a)});
     for (int i = 0; i < TRK_NSPOT; i++) {
         double px, py, pyaw; if (!track_spot(&TRK, i, &px, &py, &pyaw)) continue;
         char b[96]; snprintf(b, sizeof b, "%d   %s", i < 9 ? i + 1 : 0, spot_label(i));
         DrawText(b, x + 16, y + 34 + 22 * i, 18, (Color){240, 240, 240, (unsigned char)(255 * a)});
     }
-    DrawText("F1 show/hide   R reset   G plug-in driver", x + 12, y + h - 24, 14, (Color){180, 220, 255, (unsigned char)(255 * a)});
+    DrawText("F1 show/hide   F6 next map   R reset   G plug-in driver", x + 12, y + h - 24, 14, (Color){180, 220, 255, (unsigned char)(255 * a)});
 }
 
 /* ---------------- physics thread ---------------- */
@@ -469,6 +574,7 @@ static Camera3D make_cam(int mode, const sim_snap* V, const dc_car_params* P, do
 /* ---------------- proving-ground signage: a numbered board per teleport spot (key 1..9, 0) ---------------- */
 static RenderTexture2D SIGN_RT[TRK_NSPOT]; static double SIGN_P[TRK_NSPOT][3]; static int NSIGN = 0;
 static const char* spot_label(int i) {
+    if (TRK.layout == TRACK_MESH) { double x, y, yaw; const char* n = track_spot(&TRK, i, &x, &y, &yaw); return n ? n : ""; }
     static const char* L[TRK_NSPOT] = {"START HUB", "START STRAIGHT", "SKIDPAD R40", "PAVE", "UNDULATIONS", "BANKED OVAL", "SLALOM", "BUMPS / POTHOLES", "RUTS", "BUMPY CORNER"};
     return L[i];
 }
@@ -486,7 +592,7 @@ static void build_signs(void) {
         char b[64]; snprintf(b, sizeof b, "%d", i < 9 ? i + 1 : 0);
         DrawText(b, 24, 22, 84, YELLOW);
         DrawText(spot_label(i), 100, i == 0 ? 18 : 40, 44, RAYWHITE);
-        if (i == 0) DrawText("PROVING GROUND   keys 1-9,0   F1 list", 100, 76, 26, (Color){220, 255, 220, 255});
+        if (i == 0) DrawText(TextFormat("%s   keys 1-9,0   F1 list", MAP_TITLE), 100, 76, 26, (Color){220, 255, 220, 255});
         EndTextureMode();
         NSIGN = i + 1;
     }
@@ -529,6 +635,27 @@ static void draw_scene(Camera3D cam, const sim_snap* V, const dc_car_params* P, 
     EndMode3D();
 }
 
+/* F6: rebuild the world on the next map in place (physics is held by MTX while the map loads), then reset to its start */
+static void switch_map(sim_ctl* C) {
+    if (NMAPS < 2) return;
+    for (int tries = 0; tries < NMAPS; tries++) {
+        int next = (CUR_MAP + 1 + tries) % NMAPS; char err[256] = "";
+        track_t T2; memset(&T2, 0, sizeof T2);
+        if (!track_select(&T2, MAPS[next], cfg_num(&CFG, "track.rough_scale", 1.0), err, sizeof err) && strcmp(MAPS[next], "proving")) {
+            fprintf(stderr, "[demo] map '%s' failed: %s\n", MAPS[next], err); track_free(&T2); continue;
+        }
+        for (int i = 0; i < NCH; i++) UnloadModel(CH[i]);
+        NCH = 0; FAR_CH = -1;
+        for (int i = 0; i < NSIGN; i++) UnloadRenderTexture(SIGN_RT[i]);
+        NSIGN = 0;
+        track_free(&TRK); TRK = T2; CUR_MAP = next; set_map_title();
+        double t0 = GetTime(); build_world(); build_signs();
+        printf("[demo] map -> %s (%d chunks, %.1f s)\n", MAP_TITLE, NCH, GetTime() - t0); fflush(stdout);
+        int sp = TRK.layout == TRACK_MESH ? track_spot_by_name(&TRK, "start") : 0; C->spot = sp < 0 ? 0 : sp; C->spot_req++;
+        HELP_ON = 1; HELP_STICKY = 0; HELP_T0 = GetTime();
+        return;
+    }
+}
 int main(int argc, char** argv) {
     const char* cfgpath = "demo.ini";
     const char* shots = NULL; const char* wav = NULL; double shot_dt = 1.0 / 60; double max_time = 0;
@@ -541,8 +668,10 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--time") && i + 1 < argc) max_time = atof(argv[++i]);
     }
     int headless = shots != NULL || (wav && max_time > 0);
-    { const char* lay = cfg_str(&CFG, "track.layout", "proving");
-      track_build(&TRK, cfg_num(&CFG, "track.rough_scale", 1.0), !strcmp(lay, "circuit") ? TRACK_CIRCUIT : TRACK_PROVING); }
+    { const char* lay = cfg_str(&CFG, "track.layout", "proving"); char terr[256] = "";
+      if (!track_select(&TRK, lay, cfg_num(&CFG, "track.rough_scale", 1.0), terr, sizeof terr)) { fprintf(stderr, "map '%s' failed: %s -> proving ground\n", lay, terr); lay = "proving"; }
+      scan_maps(lay); set_map_title();
+      if (TRK.layout == TRACK_MESH && !cfg_str(&CFG, "start.spot", NULL)) cfg_set(&CFG, "start.spot", "start"); }
     char err[256] = "";
     audio_init(&AUD, 44100, 1000);
     AUD.master = (float)cfg_num(&CFG, "audio.master", 0.8); AUD.engine_gain = (float)cfg_num(&CFG, "audio.engine", 1.0);
@@ -626,6 +755,7 @@ int main(int argc, char** argv) {
         if (IsKeyPressed(KEY_O)) C->autopilot++;
         if (IsKeyPressed(KEY_G)) C->drv_toggle++;
         if (IsKeyPressed(KEY_PAUSE) || IsKeyPressed(KEY_F5)) C->pause = !C->pause;
+        if (IsKeyPressed(KEY_F6) && !headless) switch_map(C);
         if (headless) {   /* synchronous fixed-step physics for reproducible shots */
             int n = (int)(shot_dt / 0.001 + 0.5);
             for (int k = 0; k < n; k++) sim_tick(&SIM, 0.001);
