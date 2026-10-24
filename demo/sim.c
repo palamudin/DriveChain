@@ -32,8 +32,8 @@ int sim_init(sim_t* S, cfg_t* cfg, track_t* trk, audio_t* audio, char* err, int 
     S->auto_clutch = cfg_int(cfg, "input.auto_clutch", -1);
     S->kb_hands_off = cfg_int(cfg, "input.keyboard_hands_off", 1);
     S->auto_line = cfg_num(cfg, "autopilot.inside_offset", 4.8);
-    S->auto_ay = cfg_num(cfg, "autopilot.lat_accel", 6.5);
-    S->auto_speed_cap = cfg_num(cfg, "autopilot.speed_cap", 40);
+    S->auto_ay = cfg_num(cfg, "autopilot.lat_accel", 5.5);
+    S->auto_speed_cap = cfg_num(cfg, "autopilot.speed_cap", 33);
     S->autopilot = cfg_int(cfg, "autopilot.enabled", 0);
     S->auto_straight = cfg_num(cfg, "autopilot.straight_speed", 0);
     input_open(cfg, &S->dev);
@@ -83,15 +83,19 @@ static void autopilot(sim_t* S, const dc_telemetry* t, const dc_xform* ch, dc_in
     in->hands_k = 40; in->hands_d = 1.0; in->hands_tmax = 25;
     /* speed: min over the next 80 m of sqrt(ay/|k|) with braking distance */
     double vt = S->auto_speed_cap;
-    for (double a = 0; a < 90; a += 2) {
+    for (double a = 0; a < 160; a += 2) {
         int kk = (int)(fmod(s + a, T->length) / T->ds) % T->n;
         double c = fabs(T->curv[kk]) + 1e-4, vc = sqrt(S->auto_ay / c);
-        double vb = sqrt(vc * vc + 2 * 6.0 * a);
+        double vb = sqrt(vc * vc + 2 * 4.5 * fmax(a - 0.4 * v, 0));
         if (vb < vt) vt = vb;
     }
     double e = vt - v;
-    in->throttle = clampd(e * 0.35, 0, 1); in->brake = clampd(-e * 0.25, 0, 1);
-    (void)d;
+    in->throttle = clampd(e * 0.35, 0, 1); in->brake = clampd(-e * 0.6, 0, 0.85);
+    if (fabs(t->ay) > 0.8 * S->auto_ay * 1.3) in->throttle *= 0.5;
+    /* recovery: autopilot that left the circuit (or spun) is put back on the centre line, like a marshal would */
+    if (fabs(d) > T->half_w + T->kerb_w + 4 || (v < 2 && S->sim_time > 5)) {
+        if (++S->auto_off_ms > 2500) { S->auto_off_ms = 0; sim_reset_on_track(S, s, 0, 8); S->gear = 1; }
+    } else S->auto_off_ms = 0;
 }
 
 void sim_tick(sim_t* S, double dt) {

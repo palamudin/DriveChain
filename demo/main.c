@@ -146,7 +146,10 @@ static void rib_fn(void* u, int i, int j, double* x, double* y, double* z, Color
     int sf; double dd, ss; double h = track_height(&TRK, *x, *y, &sf, NULL, &dd, &ss);
     *z = h + 0.004; *c = surf_col(sf, *x, *y, ss, h);
 }
-static Material MAT_V;
+static Material MAT_V; static int FAR_CH = -1;
+static void far_fn(void* u, int i, int j, double* x, double* y, double* z, Color* c) {
+    terr_u* T = (terr_u*)u; *x = T->x0 + i * T->step; *y = T->y0 + j * T->step; *z = -0.35; *c = (Color){52, 98, 40, 255};
+}
 static void build_world(void) {
     MAT_V = LoadMaterialDefault(); MAT_V.shader = LIT;
     /* track ribbon chunks: 40 samples (20 m) x across 0.125 m */
@@ -158,6 +161,9 @@ static void build_world(void) {
         CH[NCH] = LoadModelFromMesh(m); CH[NCH].materials[0].shader = LIT;
         double x, y; track_point(&TRK, (k0 + 20) * TRK.ds, 0, &x, &y, NULL); CHC[NCH] = R3(x, y, 0); NCH++;
     }
+    /* far ground: big plane slightly below the terrain so the horizon has no gap */
+    { terr_u T = {TRK.xmin - 2500, TRK.ymin - 2500, (TRK.xmax - TRK.xmin + 5000) / 15.0};
+      Mesh m = grid_mesh(16, 16, far_fn, &T); CH[NCH] = LoadModelFromMesh(m); CH[NCH].materials[0].shader = LIT; CHC[NCH] = R3(0, 0, 0); FAR_CH = NCH++; }
     /* terrain chunks: 32 m; 0.5 m step near the track / in the rough zone, else 2 m */
     for (double y0 = TRK.ymin; y0 < TRK.ymax; y0 += 32)
         for (double x0 = TRK.xmin; x0 < TRK.xmax && NCH < MAXCH; x0 += 32) {
@@ -421,7 +427,7 @@ static void draw_scene(Camera3D cam, const sim_snap* V, const dc_car_params* P, 
     BeginMode3D(cam);
     for (int i = 0; i < NCH; i++) {
         float dx = CHC[i].x - cam.position.x, dz = CHC[i].z - cam.position.z;
-        if (dx * dx + dz * dz > 420.0f * 420.0f) continue;
+        if (i != FAR_CH && dx * dx + dz * dz > 420.0f * 420.0f) continue;
         DrawMesh(CH[i].meshes[0], CH[i].materials[0], MatrixIdentity());
     }
     draw_car(V, P, xray);
@@ -477,7 +483,8 @@ int main(int argc, char** argv) {
         if (IsAudioDeviceReady()) { SetAudioStreamBufferSizeDefault(512); st = LoadAudioStream(44100, 32, 2); SetAudioStreamCallback(st, audio_cb); PlayAudioStream(st); audio_on = 1; }
     }
     int camode = CAM_CHASE; for (int i = 0; i < CAM_N; i++) if (!strcmp(cfg_str(&CFG, "camera.mode", "chase"), CAMN[i])) camode = i;
-    int xray = 0, hud = 1, forces = cfg_int(&CFG, "display.force_arrows", 1);
+    rlDisableBackfaceCulling();
+    int xray = cfg_int(&CFG, "display.xray", 0), hud = 1, forces = cfg_int(&CFG, "display.force_arrows", 1);
     double fovv = cfg_num(&CFG, "display.fov_v_deg", 50);
     int triple = cfg_int(&CFG, "display.triple", 0);
     pthread_t th;
@@ -522,6 +529,8 @@ int main(int argc, char** argv) {
             dt = shot_dt;
         }
         VIEW = SIM.snap;
+        if (getenv("DEMO_TRACE") && headless && ((int)(VIEW.sim_time * 60 + 0.5)) % 60 == 0) { double d_, s_; track_height(&TRK, VIEW.parts[0].pos[0], VIEW.parts[0].pos[1], NULL, NULL, &d_, &s_);
+            printf("[trace] t %.1f s %.0f d %+.1f v %.1f gear %d rpm %.0f ay %+.2f sw %+.0f\n", VIEW.sim_time, s_, d_, VIEW.t.speed * 3.6, VIEW.t.gear, VIEW.t.engine_rpm, VIEW.t.ay / 9.81, VIEW.t.sw_angle * 57.3); }
         pthread_mutex_unlock(&MTX);
         if (IsKeyPressed(KEY_C)) { camode = (camode + 1) % CAM_N; CHASE_INIT = 0; }
         if (IsKeyPressed(KEY_F2)) xray = !xray;

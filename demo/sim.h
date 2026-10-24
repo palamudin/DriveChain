@@ -31,7 +31,7 @@ typedef struct {
     double sim_time, kb_sw;
     int gear, shift_timer_ms;
     double rotation_rad, hands_k, hands_d, hands_tmax;
-    int auto_clutch, kb_hands_off, autopilot;
+    int auto_clutch, kb_hands_off, autopilot, auto_off_ms;
     double auto_line, auto_ay, auto_speed_cap, auto_straight;
     double us_acc; long long steps_acc;
     sim_snap snap;
