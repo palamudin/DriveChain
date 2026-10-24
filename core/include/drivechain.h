@@ -231,6 +231,8 @@ DC_API int    dc_abi_size(int which); /* sizeof: 0 params, 1 input, 2 telemetry,
 DC_API dc_car* dc_create(const dc_car_params* p);
 DC_API void   dc_destroy(dc_car* c);
 DC_API void   dc_set_road(dc_car* c, dc_road_fn fn, void* user);
+#define DC_ROAD_HEIGHT_ONLY 1   /* road callback accepts nx/ny/nz == NULL: return height (and grip) only */
+DC_API void   dc_set_road_flags(dc_car* c, int flags); /* opt-in, call after dc_set_road (which resets it); lets the tyre lattice sampler skip the normal. Results are identical. */
 DC_API void   dc_set_heightfield(dc_car* c, const dc_heightfield* hf); /* uses built-in bilinear road fn */
 DC_API void   dc_reset(dc_car* c, const double pos[3], double yaw, double speed); /* pos = ground point under CG */
 DC_API void   dc_set_input(dc_car* c, const dc_input* in);

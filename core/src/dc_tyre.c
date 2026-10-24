@@ -33,10 +33,10 @@ static void grid_init(rgrid *G, double cx, double cy, double dw) {
 static double grid_node(rgrid *G, const dc_car *c, int i, int j, double *g) {
     int li = i - G->i0, lj = j - G->j0;
     if (li >= 0 && lj >= 0 && li < GRID_N && lj < GRID_N) {
-        if (!G->have[li][lj]) { v3 n; G->h[li][lj] = dc_road_eval(c, i * G->dw, j * G->dw, &n, &G->g[li][lj]); G->have[li][lj] = 1; }
+        if (!G->have[li][lj]) { G->h[li][lj] = dc_road_height(c, i * G->dw, j * G->dw, &G->g[li][lj]); G->have[li][lj] = 1; }
         *g = G->g[li][lj]; return G->h[li][lj];
     }
-    v3 n; return dc_road_eval(c, i * G->dw, j * G->dw, &n, g);
+    return dc_road_height(c, i * G->dw, j * G->dw, g);
 }
 static double grid_h(rgrid *G, const dc_car *c, double x, double y, double *Hx, double *Hy, double *grip) {
     double fx = x / G->dw, fy = y / G->dw, ix = floor(fx), iy = floor(fy); fx -= ix; fy -= iy;

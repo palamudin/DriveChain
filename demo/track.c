@@ -288,6 +288,7 @@ double track_road_fn(void* user, double x, double y, double* nx, double* ny, dou
     const track_t* T = (const track_t*)user;
     const double e = 0.02;
     double h = track_height(T, x, y, NULL, grip, NULL, NULL);
+    if (!nx) return h;   /* DC_ROAD_HEIGHT_ONLY query */
     double hx = (track_height(T, x + e, y, NULL, NULL, NULL, NULL) - track_height(T, x - e, y, NULL, NULL, NULL, NULL)) / (2 * e);
     double hy = (track_height(T, x, y + e, NULL, NULL, NULL, NULL) - track_height(T, x, y - e, NULL, NULL, NULL, NULL)) / (2 * e);
     double l = sqrt(hx * hx + hy * hy + 1);

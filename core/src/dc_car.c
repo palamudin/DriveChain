@@ -46,7 +46,8 @@ static double wheel_steer(const dc_pose* p, const dc_kin* k) {
 
 DC_API const dc_car_params* dc_params(const dc_car* c) { return &c->P; }
 DC_API void dc_debug_flags(dc_car* c, int f) { c->dbg = f; }
-DC_API void dc_set_road(dc_car* c, dc_road_fn fn, void* user) { c->road = fn; c->road_user = user; }
+DC_API void dc_set_road(dc_car* c, dc_road_fn fn, void* user) { c->road = fn; c->road_user = user; c->road_flags = 0; }
+DC_API void dc_set_road_flags(dc_car* c, int flags) { c->road_flags = flags; }
 DC_API void dc_set_heightfield(dc_car* c, const dc_heightfield* hf) { c->hf = *hf; c->road = NULL; }
 DC_API void dc_set_input(dc_car* c, const dc_input* in) { c->in = *in; }
 DC_API double dc_ffb_torque(const dc_car* c) { return c->tel.column_torque; }

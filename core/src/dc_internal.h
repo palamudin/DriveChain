@@ -44,7 +44,7 @@ typedef struct {
 struct dc_car {
     dc_car_params P;
     dc_kin K[4];
-    dc_road_fn road; void* road_user; dc_heightfield hf;
+    dc_road_fn road; void* road_user; int road_flags; dc_heightfield hf;
     dc_input in;
     int dbg;
     /* derived constants */
@@ -83,6 +83,7 @@ int  dc_kin_solve(const dc_kin* k, double s, double r, dc_pose* p, int need_jac)
 void dc_kin_full(const dc_kin* k, double s, double r, double sd, double rd, dc_pose* p);
 /* road */
 double dc_road_eval(const dc_car* c, double x, double y, v3* n, double* grip);
+double dc_road_height(const dc_car* c, double x, double y, double* grip);   /* height + grip only (no normal) */
 /* params */
 void dc_params_finalize(dc_car_params* p);
 #endif

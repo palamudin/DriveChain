@@ -30,3 +30,9 @@ double dc_road_eval(const dc_car* c, double x, double y, v3* n, double* grip) {
     }
     *n = V3(0, 0, 1); *grip = 1; return 0;
 }
+
+/* Height-only query for the tyre's world-lattice sampler, which builds its own slopes from the lattice. */
+double dc_road_height(const dc_car* c, double x, double y, double* grip) {
+    if (c->road && (c->road_flags & DC_ROAD_HEIGHT_ONLY)) { double g = 1; double h = c->road(c->road_user, x, y, NULL, NULL, NULL, &g); *grip = g; return h; }
+    v3 n; return dc_road_eval(c, x, y, &n, grip);
+}
