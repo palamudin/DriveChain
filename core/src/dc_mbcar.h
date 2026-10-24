@@ -33,6 +33,8 @@ typedef struct dc_mbcar {
     dc_tc tc[4];
     int el_tyre[4];
     double Fx_app[4];
+    v3 T_tyre[4];
+    double E_audit, W_audit; int audit_init;   /* energy audit carried between steps */                 /* contact moments applied to each wheel this step (audit) */
     double diss;
     /* per step telemetry scratch */
     double Fs[4], Fd[4], Fb[4], tau_tb, T_hands, F_assist, F_rack;

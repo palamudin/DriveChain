@@ -1,0 +1,30 @@
+=== dc_mb Phase 0 ===
+[pendulum] 1 kg rod-bob on 1 m spherical joint, released horizontal with out-of-plane speed
+  max constraint error |phi| [m]                      3.992e-12  (limit 1.0e-06)  PASS
+  energy drift rate [1/s] (fit over 20 s)             6.194e-05  (limit 2.0e-04)  PASS
+  max |E-E0|/E0 (staggered-velocity oscillation, O(h))    2.301e-02  (limit 3.0e-02)  PASS
+  radial balance error / mg (O(h))                    1.326e-03  (limit 1.0e-02)  PASS
+[slider-crank] crank 0.1 m, rod 0.3 m, slider 0.5 kg; crank revolute, rod spherical-spherical, slider prismatic
+  max loop closure error [m|rad]                      6.118e-10  (limit 1.0e-06)  PASS
+  energy drift rate [1/s]                             1.060e-07  (limit 2.0e-04)  PASS
+  max |E-E0|/E0                                       7.614e-06  (limit 2.0e-02)  PASS
+[four-bar] ground 0.4, crank 0.15, coupler 0.4, rocker 0.25 under gravity
+  max loop closure error                              1.319e-08  (limit 1.0e-06)  PASS
+  energy drift rate (rel. to max KE) [1/s]            5.819e-05  (limit 2.0e-04)  PASS
+  max |E-E0|/KEmax                                    1.033e-02  (limit 2.0e-02)  PASS
+[statics] 10 kg plate on a ball joint + 2 vertical two-force links; analytic reactions W/3 each
+  max |reaction - statics| / weight                   1.111e-11  (limit 1.0e-06)  PASS
+  residual velocity after one step [m/s]              1.635e-13  (limit 1.0e-09)  PASS
+[box row] flywheel I=0.2, w0=10 rad/s, Coulomb torque 0.5 N m -> stops at t = 4.000 s, then sticks
+  max |w - analytic| [rad/s]                          9.319e-13  (limit 1.0e-09)  PASS
+  stop time error [s]                                 0.000e+00  (limit 1.0e-09)  PASS
+  off-axis spin from the side torque [rad/s]          2.935e-31  (limit 1.0e-09)  PASS
+[momentum] two free bodies, revolute + implicit torsion spring element, gyroscopic spin, no gravity
+  linear momentum change [N s]                        2.505e-12  (limit 1.0e-10)  PASS
+  angular momentum change / |L| over 5 s (implicit gyro, O(h))    9.659e-04  (limit 2.0e-03)  PASS
+[bench] car-sized mechanism: chassis + 4 x (2 arms, knuckle, wheel, link) + 5 steering + 4 ARB + 3 driveline
+  bodies 30, joints 41, nodes 67, unknowns 333, factor blocks 2916 doubles
+  heap allocations during 4000 steps                  0.000e+00  (limit 0.0e+00)  PASS
+  67.6 us per step (target <= 250 us)
+  step time over 250 us budget [us]                   0.000e+00  (limit 0.0e+00)  PASS
+=== ALL PASS (0 failures) ===

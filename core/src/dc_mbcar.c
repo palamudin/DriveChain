@@ -275,7 +275,7 @@ void dc_mbcar_reset(dc_car* c) {
     for (int j = 0; j < W->nj; j++) memset(W->Jt[j].lam, 0, sizeof W->Jt[j].lam);
     m->th_prev_raw = m->pin_prev_raw = m->inp_prev_raw = 0;
     m->th_acc = m->pin_acc = m->inp_acc = 0;
-    m->lam_diff_prev = 0; m->diss = 0;
+    m->lam_diff_prev = 0; m->diss = 0; m->audit_init = 0;
     memset(m->extF, 0, sizeof m->extF); memset(m->extT, 0, sizeof m->extT);
 }
 
@@ -346,6 +346,7 @@ void dc_mbcar_step(dc_car* c) {
     }
     v3 Kp = vsub(Ch->x, mv(&R, m->cgc));                 /* K-frame origin (old sprung CG) in world */
     double Win = 0;                                      /* external work this step (energy audit) */
+    v3 F_chx = V3(0, 0, 0), T_chx = V3(0, 0, 0);         /* aero + body-contact wrench on the chassis (about its CG) */
     {
         v3 F = V3(0, 0, 0), T = V3(0, 0, 0);
         if (!(c->dbg & DC_DBG_NO_AERO)) {
@@ -370,7 +371,7 @@ void dc_mbcar_step(dc_car* c) {
             if (vtl > 1e-9 && !(c->dbg & DC_DBG_NO_FRICTION)) Fc = vsub(Fc, vscl(vt, P->body_mu * gr * N * tanh(vtl / 0.05) / vtl));
             F = vadd(F, Fc); T = vadd(T, vcross(vsub(X, Ch->x), Fc));
         }
-        Ch->F = vadd(Ch->F, F); Ch->T = vadd(Ch->T, T);
+        Ch->F = vadd(Ch->F, F); Ch->T = vadd(Ch->T, T); F_chx = F; T_chx = T;
         Fext = vadd(Fext, F); Text = vadd(Text, vadd(vcross(Ch->x, F), T));
     }
     /* engine: combustion torque on the crank, reaction on the block (chassis) */
@@ -384,6 +385,7 @@ void dc_mbcar_step(dc_car* c) {
         for (int r = 0; r < t->nrows; r++) if (t->N[r] > 0) F = vadd(F, vscl(t->nr[r], t->N[r]));
         v3 T = vadd(t->tau, vscl(t->n, -t->ey_new * t->Fx_star));
         Wb->F = vadd(Wb->F, F); Wb->T = vadd(Wb->T, T);
+        m->T_tyre[i] = T;                                /* pure contact moments: external torque (Newton audit) */
     }
     /* ---- 4. constraint rows that change every step */
     double th, thp, thi, r;
@@ -479,7 +481,7 @@ void dc_mbcar_step(dc_car* c) {
         mb_elem_add(W, 2, bb, jj, -m->k_bar[a] * gg, -m->k_bar[a], 0);
         pe += 0.5 * m->k_bar[a] * gg * gg;
     }
-    m->tau_tb = 0; m->T_hands = 0; m->F_assist = 0;
+    m->tau_tb = 0; m->T_hands = 0; m->F_assist = 0; double F_act = 0;
     if (m->steer) {
         /* torsion bar (valve input shaft to pinion) */
         double ktb = P->assist ? P->assist_torsion_k : P->torsion_k;
@@ -512,7 +514,7 @@ void dc_mbcar_step(dc_car* c) {
             }
             double ch_ = nodamp ? 0 : P->assist_damping;
             f += F - ch_ * rd - cbd * rd; cc -= ch_ + cbd;
-            m->F_assist = F - cbd * rd;
+            m->F_assist = F - cbd * rd; F_act = F;   /* F: pump-powered (external energy), cbd/ch_: dissipative */
         }
         double ex = fabs(r) - c->rack_max;
         if (ex > 0) {
@@ -552,6 +554,13 @@ void dc_mbcar_step(dc_car* c) {
     }
     /* ---- 6. solve (re-solve once if the linearised Fx overshoots the friction circle) */
     for (int b = 0; b < W->nb; b++) { m->v_save[b] = W->B[b].v; m->w_save[b] = W->B[b].w; }
+    /* stored energy at the start of the step, every term at the same instant (energy audit) */
+    double E_start = pe;
+    for (int b = 0; b < W->nb; b++) {
+        mb_body* B = &W->B[b];
+        E_start += 0.5 * B->m * vdot(B->v, B->v) + 0.5 * vdot(B->w, mv(&B->Iw, B->w)) + B->m * g * B->x.z;
+    }
+    for (int i = 0; i < 4; i++) E_start += m->tc[i].pe;
     double dgd[4] = {0, 0, 0, 0};
     for (int pass = 0; pass < 2; pass++) {
         mb_solve(W);
@@ -587,9 +596,23 @@ void dc_mbcar_step(dc_car* c) {
         t->F = vadd(vscl(t->xc, Fx_app), vscl(t->yc, Fy_app));
         for (int q = 0; q < t->nrows; q++) if (t->N[q] > 0) t->F = vadd(t->F, vscl(t->nr[q], t->N[q]));
         Fext = vadd(Fext, t->F);
-        Text = vadd(Text, vcross(t->p, t->F));   /* moment of the contact force about the world origin */
-        Win += h * vdot(t->F, mb_point_vel(&W->B[m->wh[i]], t->p));
+        Text = vadd(Text, vadd(vcross(t->p, t->F), m->T_tyre[i]));   /* contact force moment about the world origin + contact moments */
+        /* no Win term: the road is stationary, so contact forces do no work on the vehicle+tyre system; tyre
+           carcass deflection is stored energy (tc.pe) and slip/hysteresis shows up as dissipation */
         c->Fc[i] = t->F; c->Pc[i] = t->p;
+    }
+    /* external power sources (solved velocities): combustion torque, driver's hands, pump-powered assist,
+       aero + body contacts. Everything else (dampers, Coulomb rows, orifices, LSD, integrator) is dissipation. */
+    {
+        v3 ax = mv(&R, EX);
+        Win += h * Te * (vdot(W->B[m->eng].w, ax) - vdot(Ch->w, ax));
+        Win += h * (vdot(F_chx, Ch->v) + vdot(T_chx, Ch->w));
+        if (m->steer) {
+            v3 er = mv(&R, m->e_rim);
+            Win += h * m->T_hands * (vdot(W->B[m->rim].w, er) - vdot(Ch->w, er));
+            v3 dvr = vsub(W->B[m->rack].v, mb_point_vel(Ch, W->B[m->rack].x));
+            Win += h * F_act * vdot(dvr, yw);
+        }
     }
     /* momentum before integration (for the Newton-3 audit) */
     v3 P0 = V3(0, 0, 0), L0 = V3(0, 0, 0);
@@ -655,7 +678,9 @@ void dc_mbcar_step(dc_car* c) {
     double Enew = ke + pg + pe + tpe;
     /* internal dissipation = external work in - stored energy change (dampers, friction, valve, tyre carcass
        damping; aero and body-contact work are not in Win, so they show up here too) */
-    if (c->tick > 0) c->dissipated += Eprev - Enew + Win;
+    /* audit over the previous step: E(start k-1) + W_in(k-1) - E(start k) */
+    if (m->audit_init) c->dissipated += m->E_audit - E_start + m->W_audit;
+    m->E_audit = E_start; m->W_audit = Win; m->audit_init = 1; (void)Eprev; (void)Enew;
     (void)E0;
     T->kinetic = ke; T->potential = pg + pe + tpe;
     T->momentum[0] = P1.x; T->momentum[1] = P1.y; T->momentum[2] = P1.z;

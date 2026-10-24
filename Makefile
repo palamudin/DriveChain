@@ -23,13 +23,21 @@ build/smoke: tests/smoke.c build/libdrivechain.a
 	$(CC) $(CFLAGS) -o $@ $< build/libdrivechain.a $(LDLIBS)
 build/mb_tests: tests/mb_tests.c core/src/dc_mb.c core/src/dc_mb.h core/src/dc_math.h
 	$(CC) $(CFLAGS) -std=gnu11 -o $@ tests/mb_tests.c core/src/dc_mb.c $(LDLIBS)
+build/mbcar_tests: tests/mbcar_tests.c build/libdrivechain.a
+	$(CC) -O2 -std=gnu11 -Icore/include -o $@ $< build/libdrivechain.a -lm
+build/mbcar_smoke: tests/mbcar_smoke.c build/libdrivechain.a
+	$(CC) -O2 -std=gnu11 -Icore/include -o $@ $< build/libdrivechain.a -lm
+mbcartest: build/mbcar_tests build/mbcar_smoke
+	./build/mbcar_tests cars/mx5_na.ini
+.PHONY: mbcartest
 mbtest: build/mb_tests
 	./build/mb_tests | tee results/mb/phase0_summary.txt
 .PHONY: mbtest
 
-test: build/dc_tests build/mb_tests
+test: build/dc_tests build/mb_tests build/mbcar_tests
 	./build/dc_tests | tee results/summary.txt
 	mkdir -p results/mb && ./build/mb_tests | tee results/mb/phase0_summary.txt
+	./build/mbcar_tests cars/mx5_na.ini | tee results/mb/phase12_summary.txt
 	python3 tests/plot.py results
 	$(MAKE) fishtest
 	$(MAKE) drvtest
