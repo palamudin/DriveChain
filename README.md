@@ -84,7 +84,7 @@ See docs/FISHTAIL_KICKBACK.md for the root cause, the physical fixes, before/aft
 See docs/DRIFT.md. In short:
 - Zero input = hands off. The gamepad stick is linear to full lock at every speed, and the deadzone releases the hands. `column_inertia` (the steering shaft below the torsion bar) is 0.002 kg·m², down from 0.01.
 - The front wheels track β_f to within about 3° rms (before: 4–29°). Plot: `results/countersteer/countersteer_before_after.png`.
-- In the NA Miata, `tyre_falloff_speed` 1 → 4 (the AC NA Miata tyre value). A human-like driver (0.15 s delay, finite arms) now holds a 27° power drift for 12 s (before: 1.4 s). Plot: `results/drift/drift_mx5.png`.
+- In the NA Miata, `tyre_falloff_speed` 1 → 4 (a value consistent with published passenger-tyre sliding-friction fits). A human-like driver (0.15 s delay, finite arms) now holds a 27° power drift for 12 s (before: 1.4 s). Plot: `results/drift/drift_mx5.png`.
 - Commands:
   - `./build/drivetest counter [car] results/countersteer`
   - `./build/drivetest drift cars/mx5_na.ini results/drift`

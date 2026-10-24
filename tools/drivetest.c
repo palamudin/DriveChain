@@ -50,7 +50,7 @@ static void rig_init(rig_t* R, const char* carini, const char* gp_mode) {
     if (!RIG_ROAD) dc_set_road(R->S.car, flat_road, NULL);
     const char* ps = getenv("PSET");   /* "car.key=val;front.key=val" parameter variants for attribution runs */
     if (ps && *ps) {
-        char buf[1024]; snprintf(buf, sizeof buf, "%s", ps);
+        static char buf[16384]; snprintf(buf, sizeof buf, "%s", ps);
         for (char* tok = strtok(buf, ";"); tok; tok = strtok(NULL, ";")) {
             char* dot = strchr(tok, '.'); char* eq = strchr(tok, '='); if (!dot || !eq) continue; *dot = 0; *eq = 0;
             if (!strcmp(tok, "axle")) { dc_set_param(&R->S.P, "front", dot + 1, eq + 1); dc_set_param(&R->S.P, "rear", dot + 1, eq + 1); }
@@ -609,6 +609,9 @@ static int drift(const char* car, const char* out, const char* tag) {
     for (int h = 0; h < 2; h++) for (int b = 0; b < 4; b++) {
         drift_cfg_t C = {b < 3 ? bst[b] : 27, 40, 60 / 3.6, 0.15, 12, 5, 0.5, 0.02, 0.02, 0, 2, h, b == 3};
         if (getenv("DRIFT_DELAY")) C.delay = atof(getenv("DRIFT_DELAY"));
+        if (getenv("DRIFT_R")) C.R = atof(getenv("DRIFT_R"));            /* power-margin probe: smaller/slower circle */
+        if (getenv("DRIFT_V0")) C.v0 = atof(getenv("DRIFT_V0")) / 3.6;
+        if (getenv("DRIFT_GEAR")) C.gear = atoi(getenv("DRIFT_GEAR"));
         C.kbs = getenv("DRIFT_KB") ? atof(getenv("DRIFT_KB")) : 0.35; C.krs = getenv("DRIFT_KR") ? atof(getenv("DRIFT_KR")) : 0.20;
         C.hb_s = getenv("DRIFT_HB") ? atof(getenv("DRIFT_HB")) : 0.35;
         if (getenv("DRIFT_A0")) C.alpha0 = atof(getenv("DRIFT_A0"));

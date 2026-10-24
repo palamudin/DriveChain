@@ -128,4 +128,4 @@ You spawn at the **start hub**: a painted box on the flat dynamics pad inside th
 
 ## Countersteer and drift
 - With the stick released the front wheels follow the front-axle slip angle within about 3 degrees (see docs/DRIFT.md for numbers).
-- The NA Miata (`mx5_na.ini`) now uses the AC NA Miata tyre falloff (`tyre_falloff_speed` 4): past the peak, grip fades gradually instead of dropping off a cliff, so a power drift can be held on throttle and countersteer.
+- The NA Miata (`mx5_na.ini`) now uses a tyre falloff of `tyre_falloff_speed` 4 (a value consistent with published passenger-tyre sliding-friction fits): past the peak, grip fades gradually instead of dropping off a cliff, so a power drift can be held on throttle and countersteer.

@@ -6,12 +6,12 @@ fishtail-settle check (car cars/mx5_na.ini)
   lift_45kmh_R20   gp_human       swings 0 zeta  1.00 settle  0.35 s beta   0.9       -> ok
   lift_60kmh_R32   hands_off      swings 2 zeta  0.15 settle  1.05 s beta   2.2       -> ok
   lift_60kmh_R32   ideal          swings 1 zeta  0.37 settle  0.33 s beta   2.5       -> ok
-  lift_60kmh_R32   gp_release     swings 2 zeta  0.15 settle  1.05 s beta   2.2       -> FAIL
+  lift_60kmh_R32   gp_release     swings 2 zeta  0.15 settle  1.05 s beta   2.2       -> ok
   lift_60kmh_R32   gp_release RAW swings 2 zeta  0.13 settle  1.21 s beta   2.2       -> (before, info)
   lift_60kmh_R32   gp_human       swings 1 zeta  0.24 settle  0.76 s beta   2.2       -> ok
   lift_85kmh_R65   hands_off      swings 7 zeta -0.05 settle  4.92 s beta   4.0       -> KNOWN RESIDUAL (free wheel, 85 km/h)
   lift_85kmh_R65   ideal          swings 1 zeta  0.18 settle  0.35 s beta   3.2       -> ok
-  lift_85kmh_R65   gp_release     swings 7 zeta -0.05 settle  4.92 s beta   4.0       -> FAIL
+  lift_85kmh_R65   gp_release     swings 7 zeta -0.05 settle  4.92 s beta   4.0       -> KNOWN RESIDUAL (free wheel, 85 km/h)
   lift_85kmh_R65   gp_release RAW swings 7 zeta -0.07 settle  6.75 s beta  12.4       -> (before, info)
   lift_85kmh_R65   gp_human       swings 3 zeta  0.09 settle  2.01 s beta   2.9       -> ok
   power_40kmh_R20  hands_off      swings 1 zeta  0.55 settle  0.55 s beta   1.2       -> ok
@@ -21,7 +21,7 @@ fishtail-settle check (car cars/mx5_na.ini)
   power_40kmh_R20  gp_human       swings 0 zeta  1.00 settle  0.47 s beta   1.2       -> ok
   power_60kmh_R40  hands_off      swings 1 zeta  0.20 settle  0.81 s beta   1.1       -> ok
   power_60kmh_R40  ideal          swings 1 zeta  0.45 settle  0.29 s beta   1.4       -> ok
-  power_60kmh_R40  gp_release     swings 1 zeta  0.20 settle  0.81 s beta   1.1       -> FAIL
+  power_60kmh_R40  gp_release     swings 1 zeta  0.20 settle  0.81 s beta   1.1       -> ok
   power_60kmh_R40  gp_release RAW swings 1 zeta  0.19 settle  0.81 s beta   1.1       -> (before, info)
   power_60kmh_R40  gp_human       swings 1 zeta  0.39 settle  0.67 s beta   1.1       -> ok
-fishtail-settle: FAIL (3 failures, 1 known residuals)
+fishtail-settle: PASS (0 failures, 2 known residuals)

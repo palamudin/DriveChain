@@ -1,4 +1,4 @@
 config,us_per_substep,realtime_factor_at_hz
-default 3x13 rays flat,60.092,8.3
-1x7 rays flat,27.875,17.9
-3x13 rays rough terrain,79.524,6.3
+default 3x13 rays flat,53.382,9.4
+1x7 rays flat,28.700,17.4
+3x13 rays rough terrain,83.803,6.0
