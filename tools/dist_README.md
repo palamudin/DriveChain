@@ -14,6 +14,19 @@ Unzip anywhere and double-click `drivechain_demo.exe`. Run it from its own folde
 
 The console window prints the joysticks it found, which one it picked, and whether constant-force FFB opened (`[ffb] constant force OK`).
 
+## Physics core (`solver` in the car file)
+
+- `solver = 1` (default): the new coupled multibody core. Arms, knuckles, wheels, rack, column, U-joints,
+  torsion bar, anti-roll bars, engine and brakes are bodies and joints in one solve; every joint only carries
+  the forces its design allows. The HUD line `physics MULTIBODY` confirms it is active.
+- `solver = 0`: the previous (legacy) core, for A/B comparison. HUD shows `physics legacy`.
+- To switch, edit the `solver = ` line near the top of `cars/miata_ac.ini` (or `cars/mx5_na.ini`) and restart.
+- The car files now carry stock 1990 NA values: wheel rates 12.5 / 10.1 kN/m, passenger-car damping,
+  viscous LSD, final drive 4.3, front toe-in 0.15° per side, lower grip than before.
+- What to try: skidpad, slalom, lift-off mid-corner (from about 55 km/h it steps out; at 60 km/h and above it
+  spins unless you catch it), let go of the wheel in a slide (countersteer should appear on its own),
+  sustained drift on throttle, and single-wheel bumps (feel the kick in the wheel).
+
 ## Controls
 | Action | Keyboard | Wheel / pedals (SDL joystick) | Gamepad |
 |---|---|---|---|
