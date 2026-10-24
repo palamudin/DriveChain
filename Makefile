@@ -52,7 +52,7 @@ clean:
 
 # ---- raylib test drive (Linux). raylib is compiled from source by tools/build_raylib.sh into build-deps/linux
 RAYLIB_SRC ?= /workspace/deps/raylib-5.5/src
-DEMO_SRC = demo/main.c demo/sim.c demo/track.c demo/audio.c demo/input.c demo/cfg.c demo/objload.c demo/drvproto.c demo/net.c
+DEMO_SRC = demo/main.c demo/sim.c demo/track.c demo/meshtrack.c demo/audio.c demo/input.c demo/cfg.c demo/objload.c demo/drvproto.c demo/net.c
 build-deps/linux/libraylib.a:
 	tools/build_raylib.sh $(RAYLIB_SRC) build-deps/linux gcc ar linux
 build/drivechain_demo: $(DEMO_SRC) demo/*.h build/libdrivechain.a build-deps/linux/libraylib.a
@@ -62,7 +62,7 @@ demo: build/drivechain_demo
 .PHONY: demo
 
 # ---- headless closed-loop driver harness (exact demo tick, no SDL / raylib)
-DT_SRC = tools/drivetest.c demo/sim.c demo/track.c demo/audio.c demo/input.c demo/cfg.c
+DT_SRC = tools/drivetest.c demo/sim.c demo/track.c demo/meshtrack.c demo/audio.c demo/input.c demo/cfg.c
 build/drivetest: $(DT_SRC) demo/*.h build/libdrivechain.a
 	$(CC) -O2 -std=gnu11 -Wall -Wno-misleading-indentation -Wno-unused-parameter -DDEMO_NO_SDL -Icore/include -o $@ $(DT_SRC) build/libdrivechain.a -lm -lpthread
 drivetest: build/drivetest
@@ -72,7 +72,10 @@ fishtest: build/drivetest
 .PHONY: drivetest fishtest
 
 # headless lockstep host for the JSON-lines driver protocol (agent / Python / CI driving)
-DH_SRC = tools/drvhost.c demo/drvproto.c demo/net.c demo/sim.c demo/track.c demo/audio.c demo/input.c demo/cfg.c
+DH_SRC = tools/drvhost.c demo/drvproto.c demo/net.c demo/sim.c demo/track.c demo/meshtrack.c demo/audio.c demo/input.c demo/cfg.c
+build/meshdiag: tools/meshdiag.c demo/track.c demo/meshtrack.c demo/cfg.c demo/*.h
+	$(CC) -O2 -std=gnu11 -Wall -Wno-misleading-indentation -Wno-unused-parameter -Icore/include -o $@ tools/meshdiag.c demo/track.c demo/meshtrack.c demo/cfg.c -lm
+
 build/drvhost: $(DH_SRC) demo/*.h build/libdrivechain.a
 	$(CC) -O2 -std=gnu11 -Wall -Wno-misleading-indentation -Wno-unused-parameter -DDEMO_NO_SDL -Icore/include -o $@ $(DH_SRC) build/libdrivechain.a -lm -lpthread
 drvhost: build/drvhost
