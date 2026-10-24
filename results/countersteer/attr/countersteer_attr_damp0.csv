@@ -1,0 +1,7 @@
+scenario,driver,gp_mode,onset_s,t_track_s,rms_err_deg,max_err_deg,lag_s,max_beta_front_deg,max_delta_deg,max_rim_deg,max_rim_rate_dps,max_hand_nm,slide_end_s,swings,zeta,peak_beta_deg,spin,pass
+lift_40kmh_R20,hands_off,arms,0.000,0.000,0.72,1.23,0.010,4.84,7.01,107.7,638,2.66,0.610,1,0.342,9.20,0,1
+lift_60kmh_R32,hands_off,arms,0.019,0.638,4.15,12.87,0.075,39.18,36.63,519.7,1388,2.22,2.483,3,0.237,40.44,0,0
+lift_85kmh_R65,hands_off,arms,0.000,0.865,35.80,70.60,0.500,87.54,39.80,572.4,2006,2.21,6.554,2,0.200,87.89,1,0
+power_40kmh_R20,hands_off,arms,0.032,0.351,3.07,8.33,0.040,30.79,29.46,424.8,1526,2.07,4.499,5,-0.071,31.40,0,0
+power_60kmh_R40,hands_off,arms,0.000,2.201,5.27,12.88,0.150,88.38,38.95,555.6,1689,2.10,4.583,2,-0.112,88.46,1,0
+power_85kmh_R65,hands_off,arms,0.351,0.488,6.67,15.40,0.130,62.04,38.82,556.5,1691,2.11,4.499,3,-0.197,62.36,1,0

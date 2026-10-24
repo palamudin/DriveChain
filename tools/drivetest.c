@@ -73,15 +73,11 @@ static double catch_law(const rig_t* R, double r, double beta, double v, double 
     return d_road * R->ratio;          /* steering-wheel angle */
 }
 /* gamepad stick that a human who knows the mapping would push to ask for steering-wheel angle sw (demo raw mapping) */
-static double stick_for(const rig_t* R, double sw, double v) {   /* inverse of the demo's stick -> rim-target map */
-    const sim_t* S = &R->S;
-    double lo = S->gp_mode ? S->gp_range_lo : 0.25, vv = S->gp_mode ? S->gp_range_v : 12, e = S->gp_mode ? S->gp_expo : 0.5;
-    double lim = S->P.steer_lock_deg / DEG * (lo + (1 - lo) / (1 + v / vv));
-    double y = clampd(sw / lim, -1, 1), ay = fabs(y);
-    double x = e > 1e-9 ? (-(1 - e) + sqrt((1 - e) * (1 - e) + 4 * e * ay)) / (2 * e) : ay;   /* (1-e)x + e x^2 = |y| */
-    x = clampd(x, 0, 1);
-    if (S->gp_mode) { double dz = S->gp_deadzone; if (x > 0) x = dz + x * (1 - dz); }
-    return copysign(x, y);
+static double stick_for(const rig_t* R, double sw, double v) {   /* inverse of the demo's stick -> rim-target map (linear, full lock) */
+    const sim_t* S = &R->S; (void)v;
+    double x = clampd(sw / (S->P.steer_lock_deg / DEG), -1, 1), dz = S->gp_deadzone;
+    if (fabs(x) > 1e-12) x = copysign(dz + fabs(x) * (1 - dz), x);
+    return x;
 }
 
 typedef struct { int swings, spin; double zeta, settle, peak_r, peak_beta, peak_sw_rate, peak_col, rms_drv; double p[8]; int np; } metr_t;
@@ -118,8 +114,13 @@ static void metrics(const double* t, const double* r, const double* b, const dou
 }
 
 /* ---------------- fishtail scenarios ---------------- */
-typedef struct { const char* name; double R, v; int power; double tev; } scen_t;
+typedef struct { const char* name; double R, v; int power; double tev, tpow, relb; int gear; } scen_t;
+/* tpow: full-throttle time of a power event (0 = 0.8 s). relb > 0: "slide-out" event - the setup driver keeps holding the
+   corner steer while the slide is provoked (power: full throttle; lift: throttle off + handbrake), and lets go (hands off /
+   stick to zero) once |beta| > relb deg (or after 2.5 s); afterwards power keeps full throttle for tpow s then 15 %. */
+static int REL_IDX = 0;
 #define NREC 12000
+static double RBF[NREC], RDL[NREC], RFS[NREC], RHT[NREC];   /* front-axle sideslip, road-wheel angle (mean FL/FR), front slip, hand torque */
 static double RT[NREC], RR[NREC], RB[NREC], RSW[NREC], RSWR[NREC], RCOL[NREC], RDRV[NREC], RRV[NREC], RAS[NREC], RCMD[NREC], RST[NREC];
 static int run_fishtail(rig_t* R, const scen_t* sc, const driver_t* D, const char* csv, metr_t* M, int verbose) {
     sim_t* S = &R->S;
@@ -128,10 +129,11 @@ static int run_fishtail(rig_t* R, const scen_t* sc, const driver_t* D, const cha
     sim_reset_at(S, x0, y0, 0, sc->v * 0.9); S->gear = sc->v < 15 ? 2 : 3; if (sc->v < 9) S->gear = 1;
     S->ext_pedals = 1; S->ext_steer = 1; S->dev.kind = 0; S->dev.steer = 0;
     R->H.n = 0; R->stick_f = 0;
-    double ti = 0, held_stick = 0, head_ref = 0; int nrec = 0;
-    double tend = sc->tev + 9.0;
+    double ti = 0, held_stick = 0, head_ref = 0, held_sw = 0, t_rel = 0; int nrec = 0, released = 0; REL_IDX = 0;
+    if (sc->gear) S->gear = sc->gear;
+    double tend = sc->tev + (sc->relb > 0 ? 7.0 : 9.0);
     FILE* f = csv ? fopen(csv, "w") : NULL;
-    if (f) fprintf(f, "t,yaw_rate_dps,beta_deg,sw_deg,sw_rate_dps,column_nm,driver_nm,rack_vel,assist_n,sw_cmd_deg,stick,speed\n");
+    if (f) fprintf(f, "t,yaw_rate_dps,beta_deg,sw_deg,sw_rate_dps,column_nm,driver_nm,rack_vel,assist_n,sw_cmd_deg,stick,speed,beta_front_deg,delta_deg,front_slip_deg\n");
     for (double tt = 0; tt < tend; tt += dt) {
         dc_telemetry t; dc_get_telemetry(S->car, &t);
         dc_xform ch[DC_PART_COUNT]; dc_get_parts(S->car, ch, DC_PART_COUNT);
@@ -151,11 +153,24 @@ static int run_fishtail(rig_t* R, const scen_t* sc, const driver_t* D, const cha
             S->ext_in.throttle = clampd(0.25 + 0.6 * e + ti, 0, 1); S->ext_in.brake = clampd(-0.3 * e, 0, 0.5);
             held_stick = stick_for(R, t.sw_angle, v); head_ref = yaw;
             R->stick_f = held_stick;
-        } else {
+        } else if (sc->relb > 0 && !released) {   /* provoke the slide with the corner steer held */
             double te = tt - sc->tev;
+            if (te < 1e-9) { held_sw = t.sw_angle; REL_IDX = 0; }
+            S->ext_in.steer_mode = DC_STEER_ANGLE; S->ext_in.steer_target = held_sw; S->ext_in.hands_k = 300; S->ext_in.hands_d = 3; S->ext_in.hands_tmax = 80;
+            if (sc->power) { S->ext_in.throttle = 1.0; S->ext_in.brake = 0; } else { S->ext_in.throttle = 0; S->ext_in.handbrake = 1; }
+            held_stick = stick_for(R, t.sw_angle, v); R->stick_f = held_stick;
+            if (fabs(beta) * DEG > sc->relb || te > 2.5) { released = 1; t_rel = tt; REL_IDX = nrec; S->ext_in.handbrake = 0; }
+            if (nrec < NREC) {
+                RT[nrec] = tt; RR[nrec] = t.yaw_rate; RB[nrec] = beta; RSW[nrec] = t.sw_angle; RSWR[nrec] = t.sw_rate; RCOL[nrec] = t.column_torque;
+                RDRV[nrec] = t.driver_torque; RRV[nrec] = t.rack_vel; RAS[nrec] = t.assist_force; RCMD[nrec] = held_sw; RST[nrec] = 0;
+                RBF[nrec] = atan2(t.vy + R->a_cg * t.yaw_rate, fmax(fabs(t.vx), 0.5)); RDL[nrec] = 0.5 * (t.w[0].steer + t.w[1].steer);
+                RFS[nrec] = 0.5 * (t.w[0].slip_angle + t.w[1].slip_angle); RHT[nrec] = t.driver_torque; nrec++;
+            }
+        } else {
+            double te = sc->relb > 0 ? tt - t_rel : tt - sc->tev;
             /* pedals: lift-off = throttle to 0 over 50 ms; power = floor it 0.8 s, then back to 15 % */
             if (!sc->power) S->ext_in.throttle = fmax(0, S->ext_in.throttle - dt / 0.05);
-            else S->ext_in.throttle = te < 0.8 ? 1.0 : 0.15;
+            else S->ext_in.throttle = te < (sc->tpow > 0 ? sc->tpow : 0.8) ? 1.0 : 0.15;
             S->ext_in.brake = 0;
             if (te < 1e-9) head_ref = yaw;
             int k = hget(&R->H, D->delay, dt);
@@ -182,12 +197,15 @@ static int run_fishtail(rig_t* R, const scen_t* sc, const driver_t* D, const cha
             if (D->kind == DRV_LOCKED) { static double lk; if (te < 1e-9) lk = t.sw_angle; S->ext_in.steer_target = lk; }
             if (nrec < NREC) {
                 RT[nrec] = tt; RR[nrec] = t.yaw_rate; RB[nrec] = beta; RSW[nrec] = t.sw_angle; RSWR[nrec] = t.sw_rate; RCOL[nrec] = t.column_torque;
-                RDRV[nrec] = t.driver_torque; RRV[nrec] = t.rack_vel; RAS[nrec] = t.assist_force; RCMD[nrec] = sw_cmd; RST[nrec] = stick; nrec++;
+                RDRV[nrec] = t.driver_torque; RRV[nrec] = t.rack_vel; RAS[nrec] = t.assist_force; RCMD[nrec] = sw_cmd; RST[nrec] = stick;
+                RBF[nrec] = atan2(t.vy + R->a_cg * t.yaw_rate, fmax(fabs(t.vx), 0.5)); RDL[nrec] = 0.5 * (t.w[0].steer + t.w[1].steer);
+                RFS[nrec] = 0.5 * (t.w[0].slip_angle + t.w[1].slip_angle); RHT[nrec] = t.driver_torque; nrec++;
             }
         }
         if (f && ((int)(tt / dt + 0.5)) % 5 == 0)
-            fprintf(f, "%.3f,%.3f,%.3f,%.2f,%.1f,%.3f,%.3f,%.4f,%.1f,%.2f,%.3f,%.2f\n", tt, t.yaw_rate * DEG, beta * DEG, t.sw_angle * DEG, t.sw_rate * DEG,
-                    t.column_torque, t.driver_torque, t.rack_vel, t.assist_force, sw_cmd * DEG, stick, t.vx * 3.6);
+            fprintf(f, "%.3f,%.3f,%.3f,%.2f,%.1f,%.3f,%.3f,%.4f,%.1f,%.2f,%.3f,%.2f,%.3f,%.3f,%.3f\n", tt, t.yaw_rate * DEG, beta * DEG, t.sw_angle * DEG, t.sw_rate * DEG,
+                    t.column_torque, t.driver_torque, t.rack_vel, t.assist_force, sw_cmd * DEG, stick, t.vx * 3.6,
+                    atan2(t.vy + R->a_cg * t.yaw_rate, fmax(fabs(t.vx), 0.5)) * DEG, 0.5 * (t.w[0].steer + t.w[1].steer) * DEG, 0.5 * (t.w[0].slip_angle + t.w[1].slip_angle) * DEG);
         sim_tick(S, dt);
     }
     if (f) fclose(f);
@@ -367,6 +385,258 @@ static void run_kick(rig_t* R, const kev_t* E, double v_set, const kdrv_t* D, co
     if (K->t_recover >= 0) { if (tmax_run - K->t_recover >= (capped ? 0.5 : 1.0))   /* window capped before a bend: accept a 0.5 s hold */ K->t_recover = fmax(0, K->t_recover - t_out); else K->t_recover = -1; }
 }
 
+
+/* ---------------- countersteer tracking (hands off / zero stick) ----------------
+   A free steering system should turn the front wheels into the front-axle velocity: caster trail x Fy (+ pneumatic trail,
+   + the valve boosting that torque) spins the rim until the front lateral force ~ 0, i.e. road-wheel angle delta ~ front-axle
+   sideslip beta_f = atan((vy + a r) / vx), until the rack stop. Metrics over the slide (|beta_f| > 4 deg):
+   err = delta - clamp(beta_f, +-road-wheel lock); t_track = first time after onset with |err| < 3 deg for 0.2 s;
+   rms/max err from onset + 0.3 s to the slide end; lag = shift of delta that best matches beta_f. */
+typedef struct { double onset, t_track, rms_err, max_err, lag, max_bf, max_delta, max_rim, max_rim_rate, max_hand, end; int ok; } trk_t;
+static void track_metrics(const rig_t* R, int n, double tev, trk_t* K) {
+    memset(K, 0, sizeof *K); K->onset = K->t_track = K->end = -1;
+    double dl = R->lock / R->ratio;   /* road-wheel lock (mean, rad) */
+    int i0 = -1, i1 = -1;
+    for (int i = REL_IDX; i < n; i++) if (fabs(RBF[i]) > 4 / DEG) { if (i0 < 0) i0 = i; i1 = i; }
+    for (int i = REL_IDX; i < n; i++) {
+        if (fabs(RBF[i]) * DEG > K->max_bf) K->max_bf = fabs(RBF[i]) * DEG;
+        if (fabs(RDL[i]) * DEG > K->max_delta) K->max_delta = fabs(RDL[i]) * DEG;
+        if (fabs(RSW[i]) * DEG > K->max_rim) K->max_rim = fabs(RSW[i]) * DEG;
+        if (fabs(RSWR[i]) * DEG > K->max_rim_rate) K->max_rim_rate = fabs(RSWR[i]) * DEG;
+        if (fabs(RHT[i]) > K->max_hand) K->max_hand = fabs(RHT[i]);
+    }
+    if (i0 < 0) return;
+    K->onset = RT[i0] - RT[REL_IDX]; K->end = RT[i1] - RT[REL_IDX]; (void)tev;
+    for (int i = i0; i <= i1; i++) {
+        int ok = 1;
+        for (int j = i; j <= i1 && RT[j] < RT[i] + 0.2; j++) if (fabs(RDL[j] - clampd(RBF[j], -dl, dl)) > 3 / DEG) { ok = 0; break; }
+        if (ok) { K->t_track = RT[i] - RT[i0]; break; }
+    }
+    double s = 0; int m = 0;
+    for (int i = i0; i <= i1; i++) if (RT[i] >= RT[i0] + 0.3) { double e = fabs(RDL[i] - clampd(RBF[i], -dl, dl)) * DEG; s += e * e; m++; if (e > K->max_err) K->max_err = e; }
+    K->rms_err = m ? sqrt(s / m) : 0;
+    double best = 1e30;
+    for (int L = 0; L <= 500; L += 5) {   /* ms */
+        double q = 0; int c = 0;
+        for (int i = i0; i + L <= i1; i++) { double e = RDL[i + L] - clampd(RBF[i], -dl, dl); q += e * e; c++; }
+        if (c > 50 && q / c < best) { best = q / c; K->lag = L * 1e-3; }
+    }
+    K->ok = K->t_track >= 0 && K->t_track < 0.3 && K->rms_err < 4;
+}
+static const scen_t CSCEN[] = {   /* slide-outs: provoke with the corner steer held, then let go at |beta| = relb */
+    {"lift_40kmh_R20", 20, 11.4, 0, 8, 0, 8, 0},
+    {"lift_60kmh_R32", 32, 16.6, 0, 8, 0, 8, 0},
+    {"lift_85kmh_R65", 65, 23.6, 0, 9, 0, 8, 0},
+    {"power_40kmh_R20", 20, 11.0, 1, 8, 1.5, 8, 2},
+    {"power_60kmh_R40", 40, 16.6, 1, 8, 1.5, 8, 2},
+    {"power_85kmh_R65", 65, 23.6, 1, 9, 1.5, 8, 3},
+};
+#define NCSCEN ((int)(sizeof CSCEN / sizeof CSCEN[0]))
+static const driver_t CDRV[] = { {"hands_off", DRV_HANDSOFF, 0, 0, 0, 0}, {"gp_zero", DRV_GP_RELEASE, 0, 0, 0, 0} };
+static int counter(const char* car, const char* out, const char* tag) {
+    static rig_t R; int fails = 0;
+    char path[512]; snprintf(path, sizeof path, "%s/countersteer_%s.csv", out, tag);
+    FILE* s = fopen(path, "w");
+    fprintf(s, "scenario,driver,gp_mode,onset_s,t_track_s,rms_err_deg,max_err_deg,lag_s,max_beta_front_deg,max_delta_deg,max_rim_deg,max_rim_rate_dps,max_hand_nm,slide_end_s,swings,zeta,peak_beta_deg,spin,pass\n");
+    const char* gpm = getenv("GP_MODE");
+    printf("countersteer tracking [%s] (car %s, gamepad mode %s, PSET %s)\n", tag, car && *car ? car : "default", gpm ? gpm : "ini", getenv("PSET") ? getenv("PSET") : "-");
+    for (int i = 0; i < NCSCEN; i++) for (int j = 0; j < (int)(sizeof CDRV / sizeof CDRV[0]); j++) {
+        if (getenv("SC") && !strstr(getenv("SC"), CSCEN[i].name)) continue;
+        if (getenv("DRV") && !strstr(getenv("DRV"), CDRV[j].name)) continue;
+        rig_init(&R, car, gpm);
+        char csv[512]; snprintf(csv, sizeof csv, "%s/cs_%s_%s_%s.csv", out, tag, CSCEN[i].name, CDRV[j].name);
+        metr_t M; int n = run_fishtail(&R, &CSCEN[i], &CDRV[j], csv, &M, 0);
+        trk_t K; track_metrics(&R, n, CSCEN[i].tev, &K);
+        if (!K.ok) fails++;
+        printf("  %-16s %-9s onset %5.2f  track %5.2f s  rms %5.1f  max %5.1f deg  lag %4.2f s | beta_f %5.1f  delta %5.1f  rim %5.0f deg  %5.0f dps  hand %5.1f Nm | swings %d zeta %5.2f beta %5.1f %s %s\n",
+               CSCEN[i].name, CDRV[j].name, K.onset, K.t_track, K.rms_err, K.max_err, K.lag, K.max_bf, K.max_delta, K.max_rim, K.max_rim_rate, K.max_hand,
+               M.swings, M.zeta, M.peak_beta, M.spin ? "SPIN" : "    ", K.ok ? "ok" : "--");
+        fprintf(s, "%s,%s,%s,%.3f,%.3f,%.2f,%.2f,%.3f,%.2f,%.2f,%.1f,%.0f,%.2f,%.3f,%d,%.3f,%.2f,%d,%d\n", CSCEN[i].name, CDRV[j].name, R.S.gp_mode ? "arms" : "raw",
+                K.onset, K.t_track, K.rms_err, K.max_err, K.lag, K.max_bf, K.max_delta, K.max_rim, K.max_rim_rate, K.max_hand, K.end, M.swings, M.zeta, M.peak_beta, M.spin, K.ok);
+        fflush(stdout);
+    }
+    fclose(s);
+    return fails;
+}
+
+
+/* ---------------- sustained power drift (skidpad) + transition ----------------
+   Closed-loop "human" drift driver: everything it sees is delayed by DR_DELAY (perception + neuromuscular).
+   Steering: point the front wheels a small slip angle inside the front-axle velocity (delta = beta_f + alpha_des),
+   alpha_des trims the path radius. Throttle: holds the body slip angle at beta* (PI + beta-rate damping), foot rate-limited.
+   Hands: finite arms (k 40 N m/rad, d 1.5, tmax 20 N m) on the rim, or the demo's gamepad path (linear full-lock stick, 6 Hz thumb). */
+typedef struct { double t, beta, bf, r, v, d, dbeta; } dsamp_t;
+#define DHIST 1024
+typedef struct { double bstar, R, v0, delay, hold_s, alpha0, kd_path, kp, ki, kdb; int gear, gp, transition; double kbs, krs, hb_s; } drift_cfg_t;
+typedef struct { double hold, hold_t0, beta_m, beta_sd, delta_m, delta_max, rim_m, rim_max, af_m, fy_use_m, fy_use_max, comb_use_m, rear_sr_m, rear_sa_m, thr_m, thr_sd, v_m, rad_m, rpm_m, lsd_dw_m, req_m, req_max; int spin; double tr_ok, tr_time, tr_hold; } drift_res_t;
+static void drift_stats(const double* T, const double* B, int n, double t0, double t1, double lo, double hi, double* best, double* bt0) {
+    *best = 0; *bt0 = -1; double start = -1, lastin = -1;
+    for (int i = 0; i < n; i++) {
+        if (T[i] < t0 || T[i] > t1) continue;
+        double b = fabs(B[i]) * DEG; int in = b >= lo && b <= hi;
+        if (in) { if (start < 0 || T[i] - lastin > 0.3) start = T[i]; lastin = T[i]; if (lastin - start > *best) { *best = lastin - start; *bt0 = start; } }
+    }
+}
+#define DREC 80000
+static double DT_[DREC], DB_[DREC], DDL_[DREC], DSW_[DREC], DAF_[DREC], DFU_[DREC], DCU_[DREC], DSR_[DREC], DSA_[DREC], DTH_[DREC], DV_[DREC], DRAD_[DREC], DRPM_[DREC], DLSD_[DREC], DREQ_[DREC], DBF_[DREC];
+static int run_drift(rig_t* R, const drift_cfg_t* C, const char* csv, drift_res_t* O) {
+    sim_t* S = &R->S; const double dt = 0.001;
+    double cx = 300, cy = 150, sgn_ = 1;       /* +1 = CCW (left-hand drift, beta < 0) */
+    memset(O, 0, sizeof *O); O->tr_ok = 0; O->tr_time = -1;
+    sim_reset_at(S, cx, cy - C->R, 0, C->v0 * 0.9); S->gear = C->gear;
+    S->ext_pedals = 1; S->ext_steer = 1; S->dev.kind = 0; S->dev.steer = 0; R->stick_f = 0;
+    static dsamp_t Hs[DHIST]; int hn = 0;
+    double tev = 8, ttr = tev + 4 + C->hold_s, tend = C->transition ? ttr + 12 : tev + 4 + C->hold_s;
+    double ti = 0, I = 0.5, thr = 0, prev_bs = 0; int n = 0;
+    FILE* f = csv ? fopen(csv, "w") : NULL;
+    if (f) fprintf(f, "t,beta_deg,beta_front_deg,delta_deg,sw_deg,sw_rate_dps,column_nm,hand_nm,throttle,speed_kmh,yaw_rate_dps,radius_m,front_slip_deg,front_fy_use,front_comb_use,rear_slip_ratio,rear_slip_deg,rpm,lsd_dw_rads,beta_target_deg,delta_req_deg\n");
+    for (double tt = 0; tt < tend; tt += dt) {
+        dc_telemetry t; dc_get_telemetry(S->car, &t);
+        dc_xform ch[DC_PART_COUNT]; dc_get_parts(S->car, ch, DC_PART_COUNT);
+        double yaw = yaw_of(&ch[0]), vx = fmax(fabs(t.vx), 0.5), beta = atan2(t.vy, vx), bf = atan2(t.vy + R->a_cg * t.yaw_rate, vx);
+        double px = ch[0].pos[0] - cx, py = ch[0].pos[1] - cy, dist = sqrt(px * px + py * py);
+        if (C->transition && tt >= ttr && sgn_ > 0) {   /* figure-8: reflect the circle centre through the car, reverse the orbit */
+            cx += 2 * px; cy += 2 * py; sgn_ = -1; px = -px; py = -py;
+        }
+        double bs = -sgn_ * beta;                       /* drift angle, + = tail out of the current circle */
+        dsamp_t cur = {tt, bs, -sgn_ * bf, sgn_ * t.yaw_rate, t.speed, dist - C->R, (bs - prev_bs) / dt}; prev_bs = bs;
+        Hs[hn++ % DHIST] = cur;
+        double hand = 0;
+        if (tt < tev) {   /* grip entry on the circle: pure pursuit, stiff hands, PI speed */
+            double ph = atan2(py, px), L = 5 + 0.35 * vx;
+            double tx = cx + C->R * cos(ph + L / C->R), ty = cy + C->R * sin(ph + L / C->R);
+            double ex = tx - ch[0].pos[0], ey = ty - ch[0].pos[1];
+            double lx = cos(yaw) * ex + sin(yaw) * ey, ly = -sin(yaw) * ex + cos(yaw) * ey;
+            double sw = atan2(2 * R->wb * ly, lx * lx + ly * ly) * R->ratio;
+            S->ext_steer = 1; S->ext_in.steer_mode = DC_STEER_ANGLE; S->ext_in.steer_target = sw; S->ext_in.hands_k = 300; S->ext_in.hands_d = 3; S->ext_in.hands_tmax = 80;
+            double e = C->v0 - t.vx; ti = clampd(ti + e * dt * 0.3, -0.3, 0.6);
+            thr = clampd(0.25 + 0.6 * e + ti, 0, 1); S->ext_in.throttle = thr; S->ext_in.brake = 0;
+        } else {
+            int back = (int)(C->delay / dt + 0.5); if (back > hn - 1) back = hn - 1;
+            dsamp_t h = Hs[(hn - 1 - back) % DHIST];
+            /* anticipation (McRuer lead): a driver extrapolates the delayed percept over his own reaction time */
+            { double tp = (getenv("DRIFT_PRED") ? atof(getenv("DRIFT_PRED")) : 1.0) * C->delay;
+              dsamp_t h1 = Hs[(hn - 2 - back + DHIST) % DHIST]; double dbf = (h.bf - h1.bf) / dt;
+              h.beta += tp * h.dbeta; h.bf += tp * dbf; }
+            double bstar = C->bstar / DEG;
+            /* steering: front wheels a little inside the front-axle velocity; radius trim */
+            /* front slip target: base + radius trim, minus beta error / beta rate (more countersteer = less front force = less yaw) */
+            double ad = clampd(C->alpha0 / DEG + C->kd_path / DEG * clampd(h.d, -6, 6) - C->kbs * (h.beta - C->bstar / DEG) - C->krs * h.dbeta, -12 / DEG, 8 / DEG);
+            if (!getenv("DRIFT_LAW") || strcmp(getenv("DRIFT_LAW"), "beta")) {   /* default yaw-rate law: hold a yaw-rate reference (path rate + beta correction) with front slip */
+                static double ai; double rref = h.v / C->R + (getenv("DRIFT_KB2") ? atof(getenv("DRIFT_KB2")) : 1.5) * (bstar - h.beta);
+                double kr2 = getenv("DRIFT_KR2") ? atof(getenv("DRIFT_KR2")) : 0.2;   /* deg front slip per deg/s yaw-rate error */
+                if (tt - tev < dt * 1.5) ai = 0;
+                ai = clampd(ai + (getenv("DRIFT_KI2") ? atof(getenv("DRIFT_KI2")) : 0.5) * (bstar - h.beta) * dt, -4 / DEG, 4 / DEG);
+                ad = clampd(C->alpha0 / DEG + ai + kr2 * (rref - h.r) + C->kd_path / DEG * clampd(h.d, -6, 6) * (getenv("DRIFT_PATH") ? atof(getenv("DRIFT_PATH")) : 0), -12 / DEG, 9 / DEG);
+            }
+            double delta = h.bf - ad;                    /* in drift-frame sign (+ = countersteer) */
+            double sw = clampd(-sgn_ * delta * R->ratio, -R->lock, R->lock);
+            /* throttle: hold beta* */
+            double e = (h.beta - bstar) * DEG;           /* + = too much angle */
+            I = clampd(I - C->ki * e * dt, 0, 1);
+            double want = clampd(I - C->kp * e - C->kdb * h.dbeta * DEG, 0, 1);
+            /* entry: a 1.6 NA Miata does not power over from a steady 60 km/h corner (rear has slack, front saturates first),
+               so like real drivers it is initiated with a handbrake pull (0.4 s) while the foot stays in, then held on throttle */
+            int entry = tt - tev < C->hb_s;
+            S->ext_in.handbrake = entry ? 1 : 0;
+            if (entry) { want = 0; thr = 0; I = 0.7; }   /* foot off during the pull (a real driver dips the clutch) */
+            thr += clampd(want - thr, -dt / 0.12, dt / 0.12);   /* foot: full travel in 0.12 s */
+            { static double frz_sw, frz_thr; double frz = getenv("DRIFT_FREEZE") ? atof(getenv("DRIFT_FREEZE")) : 0;   /* open-loop probe */
+              if (frz > 0 && tt - tev >= frz) { sw = frz_sw; thr = frz_thr; } else { frz_sw = sw; frz_thr = thr; } }
+            S->ext_in.throttle = thr; S->ext_in.brake = 0;
+            /* a drifting driver short of revs upshifts instead of riding the limiter (the rear can no longer out-spin the road) */
+            if ((getenv("DRIFT_SHIFT") ? atoi(getenv("DRIFT_SHIFT")) : 1) && t.engine_rpm > 6900 && S->gear == C->gear) S->gear = C->gear + 1;
+            if (!C->gp) {
+                S->ext_steer = 1; S->ext_in.steer_mode = DC_STEER_ANGLE; S->ext_in.steer_target = sw; S->ext_in.hands_k = getenv("DRIFT_HK") ? atof(getenv("DRIFT_HK")) : 40; S->ext_in.hands_d = 1.5; S->ext_in.hands_tmax = 20;
+                if (getenv("DRIFT_STIFF")) { S->ext_in.hands_k = 300; S->ext_in.hands_d = 3; S->ext_in.hands_tmax = 80; }   /* ideal servo: physics-feasibility check */
+            } else {
+                S->ext_steer = 0; S->dev.kind = 2;
+                double st = stick_for(R, sw, vx);
+                R->stick_f += (st - R->stick_f) * (1 - exp(-dt * 2 * M_PI * 6.0));
+                S->dev.steer = clampd(R->stick_f, -1, 1);
+            }
+        }
+        hand = t.driver_torque;
+        double fu = 0, cu = 0, af = 0, sr = 0, sa = 0;
+        for (int w = 0; w < 2; w++) { double m = fmax(t.w[w].mu * t.w[w].fz, 1); fu += 0.5 * fabs(t.w[w].fy) / m; cu += 0.5 * hypot(t.w[w].fx, t.w[w].fy) / m; af += 0.5 * t.w[w].slip_angle_ss; }
+        for (int w = 2; w < 4; w++) { sr += 0.5 * t.w[w].slip_ratio_ss; sa += 0.5 * t.w[w].slip_angle_ss; }
+        double dl = 0.5 * (t.w[0].steer + t.w[1].steer), lsd = t.w[2].omega - t.w[3].omega;
+        double req = -sgn_ * bf * DEG + 0.0;           /* countersteer needed to align the fronts with their velocity */
+        if (n < DREC) {
+            DT_[n] = tt; DB_[n] = -sgn_ * beta; DBF_[n] = -sgn_ * bf; DDL_[n] = -sgn_ * dl; DSW_[n] = -sgn_ * t.sw_angle; DAF_[n] = sgn_ * af; DFU_[n] = fu; DCU_[n] = cu;
+            DSR_[n] = sr; DSA_[n] = -sgn_ * sa; DTH_[n] = S->ext_in.throttle; DV_[n] = t.speed; DRAD_[n] = dist; DRPM_[n] = t.engine_rpm; DLSD_[n] = lsd; DREQ_[n] = req; n++;
+        }
+        if (f && ((int)(tt / dt + 0.5)) % 10 == 0)
+            fprintf(f, "%.3f,%.2f,%.2f,%.2f,%.1f,%.0f,%.2f,%.2f,%.3f,%.1f,%.1f,%.2f,%.2f,%.3f,%.3f,%.3f,%.2f,%.0f,%.2f,%.1f,%.2f\n", tt, -sgn_ * beta * DEG, -sgn_ * bf * DEG, -sgn_ * dl * DEG,
+                    -sgn_ * t.sw_angle * DEG, -sgn_ * t.sw_rate * DEG, t.column_torque, hand, S->ext_in.throttle, t.speed * 3.6, sgn_ * t.yaw_rate * DEG, dist,
+                    sgn_ * af * DEG, fu, cu, sr, -sgn_ * sa * DEG, t.engine_rpm, lsd, tt < tev ? 0 : C->bstar, req);
+        if (fabs(beta) * DEG > 75 && tt > tev) { O->spin = 1; if (!C->transition || tt < ttr) break; }
+        sim_tick(S, dt);
+    }
+    if (f) fclose(f);
+    double tlim = C->transition ? ttr : tend;
+    drift_stats(DT_, DB_, n, tev, tlim, 20, 35, &O->hold, &O->hold_t0);
+    double s[16] = {0}, ss[4] = {0}; int m = 0;
+    for (int i = 0; i < n; i++) {
+        if (O->hold <= 0 || DT_[i] < O->hold_t0 || DT_[i] > O->hold_t0 + O->hold) continue;
+        double b = DB_[i] * DEG;
+        s[0] += b; ss[0] += b * b; s[1] += DDL_[i] * DEG; s[2] += DSW_[i] * DEG; s[3] += DAF_[i] * DEG; s[4] += DFU_[i]; s[5] += DCU_[i]; s[6] += DSR_[i]; s[7] += DSA_[i] * DEG;
+        s[8] += DTH_[i]; ss[1] += DTH_[i] * DTH_[i]; s[9] += DV_[i]; s[10] += DRAD_[i]; s[11] += DRPM_[i]; s[12] += DLSD_[i]; s[13] += DREQ_[i];
+        if (DDL_[i] * DEG > O->delta_max) O->delta_max = DDL_[i] * DEG;
+        if (DSW_[i] * DEG > O->rim_max) O->rim_max = DSW_[i] * DEG;
+        if (DFU_[i] > O->fy_use_max) O->fy_use_max = DFU_[i];
+        if (DREQ_[i] > O->req_max) O->req_max = DREQ_[i];
+        m++;
+    }
+    if (m) {
+        O->beta_m = s[0] / m; O->beta_sd = sqrt(fmax(ss[0] / m - O->beta_m * O->beta_m, 0)); O->delta_m = s[1] / m; O->rim_m = s[2] / m; O->af_m = s[3] / m;
+        O->fy_use_m = s[4] / m; O->comb_use_m = s[5] / m; O->rear_sr_m = s[6] / m; O->rear_sa_m = s[7] / m; O->thr_m = s[8] / m;
+        O->thr_sd = sqrt(fmax(ss[1] / m - O->thr_m * O->thr_m, 0)); O->v_m = s[9] / m * 3.6; O->rad_m = s[10] / m; O->rpm_m = s[11] / m; O->lsd_dw_m = s[12] / m; O->req_m = s[13] / m;
+    }
+    if (C->transition) {   /* opposite-sign drift reached and held */
+        double best, b0; drift_stats(DT_, DB_, n, ttr, tend, 15, 40, &best, &b0);
+        O->tr_hold = best; O->tr_time = b0 >= 0 ? b0 - ttr : -1; O->tr_ok = best > 4 && !O->spin;
+    }
+    return n;
+}
+static int drift(const char* car, const char* out, const char* tag) {
+    static rig_t R; int fails = 0;
+    char path[512]; snprintf(path, sizeof path, "%s/drift_%s.csv", out, tag);
+    FILE* s = fopen(path, "w");
+    fprintf(s, "run,beta_target,hold_s,beta_mean,beta_sd,delta_mean,delta_max,rim_mean,rim_max,lock_rim,req_countersteer_mean,req_countersteer_max,front_slip_mean,front_fy_use_mean,front_fy_use_max,front_comb_use_mean,rear_slip_ratio_mean,rear_slip_deg_mean,throttle_mean,throttle_sd,speed_kmh,radius_m,rpm,lsd_dw,spin,tr_time_s,tr_hold_s,tr_ok\n");
+    printf("sustained drift [%s] (car %s, PSET %s)\n", tag, car && *car ? car : "default", getenv("PSET") ? getenv("PSET") : "-");
+    double bst[3] = {22, 27, 32};   /* inside the 20-35 deg hold window, so noise around the target does not leave it */ const char* hn[2] = {"arms", "gp"};
+    for (int h = 0; h < 2; h++) for (int b = 0; b < 4; b++) {
+        drift_cfg_t C = {b < 3 ? bst[b] : 27, 40, 60 / 3.6, 0.15, 12, 5, 0.5, 0.02, 0.02, 0, 2, h, b == 3};
+        if (getenv("DRIFT_DELAY")) C.delay = atof(getenv("DRIFT_DELAY"));
+        C.kbs = getenv("DRIFT_KB") ? atof(getenv("DRIFT_KB")) : 0.35; C.krs = getenv("DRIFT_KR") ? atof(getenv("DRIFT_KR")) : 0.20;
+        C.hb_s = getenv("DRIFT_HB") ? atof(getenv("DRIFT_HB")) : 0.35;
+        if (getenv("DRIFT_A0")) C.alpha0 = atof(getenv("DRIFT_A0"));
+        if (getenv("DRIFT_KP")) C.kp = atof(getenv("DRIFT_KP"));
+        if (getenv("DRIFT_KI")) C.ki = atof(getenv("DRIFT_KI"));
+        if (getenv("DRIFT_KD")) C.kdb = atof(getenv("DRIFT_KD"));
+        if (getenv("DRIFT_ONLY") && atoi(getenv("DRIFT_ONLY")) != b) continue;
+        if (getenv("DRV") && !strstr(getenv("DRV"), hn[h])) continue;
+        rig_init(&R, car, NULL);
+        char nm[64]; snprintf(nm, sizeof nm, "%s_b%.0f%s", hn[h], C.bstar, C.transition ? "_transition" : "");
+        if (getenv("SC") && !strstr(getenv("SC"), nm)) continue;
+        char csv[512]; snprintf(csv, sizeof csv, "%s/drift_%s_%s.csv", out, tag, nm);
+        drift_res_t O; run_drift(&R, &C, csv, &O);
+        int ok = O.hold >= 10 && !O.spin; if (C.transition) ok = O.tr_ok && O.hold >= 10;
+        if (!ok) fails++;
+        printf("  %-20s hold %5.1f s  beta %5.1f+-%4.1f  delta %5.1f (max %5.1f, req %5.1f/%5.1f, lock %4.1f)  rim %4.0f/%4.0f  a_f %5.1f  Fy/muFz %4.2f (max %4.2f, comb %4.2f)  rear sr %5.2f sa %5.1f  thr %4.2f+-%4.2f  v %4.1f  R %5.1f  rpm %4.0f  lsd %5.1f  %s%s",
+               nm, O.hold, O.beta_m, O.beta_sd, O.delta_m, O.delta_max, O.req_m, O.req_max, R.lock / R.ratio * DEG, O.rim_m, O.rim_max, O.af_m, O.fy_use_m, O.fy_use_max, O.comb_use_m,
+               O.rear_sr_m, O.rear_sa_m, O.thr_m, O.thr_sd, O.v_m, O.rad_m, O.rpm_m, O.lsd_dw_m, O.spin ? "SPIN " : "", ok ? "ok" : "--");
+        if (C.transition) printf("  | transition: reached in %5.2f s, held %4.1f s", O.tr_time, O.tr_hold);
+        printf("\n"); fflush(stdout);
+        fprintf(s, "%s,%.0f,%.2f,%.2f,%.2f,%.2f,%.2f,%.1f,%.1f,%.1f,%.2f,%.2f,%.2f,%.3f,%.3f,%.3f,%.3f,%.2f,%.3f,%.3f,%.1f,%.2f,%.0f,%.2f,%d,%.2f,%.2f,%d\n", nm, C.bstar, O.hold, O.beta_m, O.beta_sd,
+                O.delta_m, O.delta_max, O.rim_m, O.rim_max, R.lock * DEG, O.req_m, O.req_max, O.af_m, O.fy_use_m, O.fy_use_max, O.comb_use_m, O.rear_sr_m, O.rear_sa_m, O.thr_m, O.thr_sd,
+                O.v_m, O.rad_m, O.rpm_m, O.lsd_dw_m, O.spin, O.tr_time, O.tr_hold, (int)O.tr_ok);
+    }
+    fclose(s);
+    return fails;
+}
+
 /* ---- fishtail-settle regression (make fishtest): exit code != 0 on failure ----
    Reference "before" = legacy raw gamepad path + no orifice back-drive (results/fishtail/default_car_before.txt):
    gp_release lift_60: 3 swings zeta 0.16 settle 1.46 s; lift_85: 7 swings zeta -0.13 settle 6.71 s (beta 38 deg). */
@@ -384,10 +654,9 @@ static int fishcheck(const char* car, const char* out) {
             metr_t M; run_fishtail(&R, &SCEN[i], D, csv, &M, 0);
             const char* verdict = "ok"; int bad = 0;
             if (raw) verdict = "(before, info)";
-            else if (is_rel) bad = M.spin || M.swings > 1 || M.settle < 0 || M.settle > 1.0 || (M.swings >= 1 && M.zeta < 0.3);
             else if (is_hum) bad = M.spin || M.zeta < 0.05 || M.settle < 0 || M.settle > 2.5;
             else if (is_ide) bad = M.spin || M.swings > 1 || M.settle < 0 || M.settle > 0.6;
-            else if (is_ho) {
+            else if (is_ho || is_rel) {   /* a released stick (inside the deadzone) is hands off: no recentre servo, same physics, same criterion */
                 bad = M.spin || M.zeta < 0.1;
                 if (bad && SCEN[i].v > 20) { bad = 0; known++; verdict = "KNOWN RESIDUAL (free wheel, 85 km/h)"; }
             }
@@ -409,6 +678,8 @@ int main(int argc, char** argv) {
     track_build(&TRK, 1.0, TRACK_PROVING);
     static rig_t R;
     if (!strcmp(what, "fishcheck")) return fishcheck(car, out);
+    if (!strcmp(what, "drift")) { int fl = drift(car, out, getenv("TAG") ? getenv("TAG") : "run"); return getenv("DRIFT_STRICT") ? (fl ? 1 : 0) : 0; }
+    if (!strcmp(what, "counter")) { counter(car, out, getenv("TAG") ? getenv("TAG") : "run"); return 0; }
     if (!strcmp(what, "fishtail") || !strcmp(what, "all")) {
         char path[512]; snprintf(path, sizeof path, "%s/fishtail_summary.csv", out);
         FILE* s = fopen(path, "w"); fprintf(s, "scenario,driver,swings,zeta,settle_s,peak_r_dps,peak_beta_deg,peak_sw_rate_dps,peak_col_nm,spin\n");

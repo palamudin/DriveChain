@@ -35,10 +35,8 @@ int sim_init(sim_t* S, cfg_t* cfg, track_t* trk, audio_t* audio, char* err, int 
     S->gp_k = cfg_num(cfg, "gamepad.arms_k", 10);          /* N m/rad at the rim: relaxed grip */
     S->gp_d = cfg_num(cfg, "gamepad.arms_d", 1.0);         /* N m s/rad: hand/forearm damping */
     S->gp_tmax = cfg_num(cfg, "gamepad.arms_tmax", 20);    /* N m: strongest the arms will push */
-    S->gp_deadzone = cfg_num(cfg, "gamepad.deadzone", 0.04);
-    S->gp_range_lo = cfg_num(cfg, "gamepad.range_highspeed", 0.25);  /* fraction of lock reachable at high speed */
-    S->gp_range_v = cfg_num(cfg, "gamepad.range_speed", 12);         /* m/s where range is halfway down */
-    S->gp_expo = cfg_num(cfg, "gamepad.expo", 0.5);
+    S->gp_deadzone = cfg_num(cfg, "gamepad.deadzone", 0.04);     /* stick jitter isolation only: inside it the hands are off the rim */
+    S->gp_grip_t = cfg_num(cfg, "gamepad.grip_time", 0.08);      /* s for the hands to close on the rim when the stick leaves the deadzone */
     S->auto_line = cfg_num(cfg, "autopilot.inside_offset", 4.8);
     S->auto_ay = cfg_num(cfg, "autopilot.lat_accel", 5.5);
     S->auto_speed_cap = cfg_num(cfg, "autopilot.speed_cap", 33);
@@ -180,19 +178,20 @@ void sim_tick(sim_t* S, double dt) {
     if (D->kind == 1) {          /* wheel: device angle is the steering-wheel angle (1:1), stiff hands; FFB = column torque */
         in.steer_mode = DC_STEER_ANGLE; in.steer_target = D->steer * S->rotation_rad * 0.5;
         in.hands_k = S->hands_k; in.hands_d = S->hands_d; in.hands_tmax = S->hands_tmax;
-    } else if (D->kind == 2 && S->gp_mode == 1) {   /* gamepad "arms": hands always on, finite strength */
-        double x = D->steer, dz = S->gp_deadzone;
-        x = fabs(x) <= dz ? 0 : (x - (x > 0 ? dz : -dz)) / (1 - dz);
-        double lim = S->P.steer_lock_deg * M_PI / 180 * (S->gp_range_lo + (1 - S->gp_range_lo) / (1 + v / S->gp_range_v));
-        in.steer_mode = DC_STEER_ANGLE; in.steer_target = ((1 - S->gp_expo) * x + S->gp_expo * x * fabs(x)) * lim;
-        in.hands_k = S->gp_k; in.hands_d = S->gp_d; in.hands_tmax = S->gp_tmax;
-    } else if (D->kind == 2 && fabs(D->steer) > 0.04) {   /* gamepad "raw" (legacy) */
-        double x = D->steer, lim = S->P.steer_lock_deg * M_PI / 180 * (0.25 + 0.75 / (1 + v / 12));
-        in.steer_mode = DC_STEER_ANGLE; in.steer_target = (0.5 * x + 0.5 * x * fabs(x)) * lim;
-        in.hands_k = 25; in.hands_d = 0.8; in.hands_tmax = 15;
+    } else if (D->kind == 2) {   /* gamepad: stick = rim target, linear over the FULL lock at every speed (no speed range, no expo) */
+        double x = D->steer, dz = S->gp_deadzone, lock = S->P.steer_lock_deg * M_PI / 180;
+        if (fabs(x) <= dz) {     /* stick centred: hands relaxed off the rim, caster trail x Fy / SAT / valve steer the wheel freely */
+            in.steer_mode = DC_STEER_TORQUE; in.steer_torque = 0; S->gp_grip = 0;
+        } else {
+            x = (x - (x > 0 ? dz : -dz)) / (1 - dz);
+            S->gp_grip = S->gp_grip_t > 0 ? fmin(1, S->gp_grip + dt / S->gp_grip_t) : 1;   /* hand grip onset, not a range limit */
+            in.steer_mode = DC_STEER_ANGLE; in.steer_target = x * lock;
+            if (S->gp_mode == 1) { in.hands_k = S->gp_k * S->gp_grip; in.hands_d = S->gp_d * S->gp_grip; in.hands_tmax = S->gp_tmax * S->gp_grip; }   /* arms */
+            else { in.hands_k = 25 * S->gp_grip; in.hands_d = 0.8 * S->gp_grip; in.hands_tmax = 15 * S->gp_grip; }                                  /* raw: stiffer legacy hands */
+        }
     } else {
         int dir = C->kb_left - C->kb_right;
-        double lim = S->P.steer_lock_deg * M_PI / 180 * (0.2 + 0.8 / (1 + v / 10));
+        double lim = S->P.steer_lock_deg * M_PI / 180;   /* full lock at every speed */
         if (dir) {
             if (S->kb_sw * dir < 0 || fabs(S->kb_sw - t.sw_angle) > 0.6) S->kb_sw = t.sw_angle;   /* grab the wheel where it is */
             S->kb_sw = clampd(S->kb_sw + dir * 6.0 * dt, -lim, lim);

@@ -64,7 +64,7 @@ void dc_default_params(dc_car_params* p) {
     R->brake_torque = 450; R->handbrake_torque = 400;
 
     p->steer_ratio = 15.0; p->steer_lock_deg = 504;
-    p->rack_mass = 3.0; p->sw_inertia = 0.035; p->column_inertia = 0.010;
+    p->rack_mass = 3.0; p->sw_inertia = 0.035; p->column_inertia = 0.002;
     p->torsion_k = 1500; p->torsion_c = 0.15; p->rack_friction = 60; p->column_friction = 0.15;
     p->rack_stop_k = 2e6; p->rack_stop_c = 3e3;
     p->assist = 1; p->assist_area = 8.8e-4; p->assist_pmax = 7e6; p->assist_tref = 3.5;

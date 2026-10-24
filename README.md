@@ -24,7 +24,7 @@ DriveChain has a C core with a Unity frontend (P/Invoke) and a raylib test drive
 | tests/ | `dc_tests.c` (physics test suite), `plot.py` |
 | cars/ | `mx5_na.ini` (public NA Miata reference) and `hatch_fwd.ini` |
 | results/ | Committed test CSV/PNG summaries |
-| docs/ | `DRIVER_INTERFACE.md`, `FISHTAIL_KICKBACK.md` |
+| docs/ | `DRIVER_INTERFACE.md`, `FISHTAIL_KICKBACK.md`, `DRIFT.md` |
 
 The tools are:
 - `drivetest` (fishtail and kickback harness)
@@ -79,3 +79,14 @@ See docs/DRIVER_INTERFACE.md. A bot, script or Python drives through finite-stre
 
 ## Fishtail, relaxation and kickback
 See docs/FISHTAIL_KICKBACK.md for the root cause, the physical fixes, before/after metrics, the relaxation-length decision, and the kickback/undulation analysis with a source breakdown and the NA Miata check.
+
+## Countersteer and sustained drift
+See docs/DRIFT.md. In short:
+- Zero input = hands off. The gamepad stick is linear to full lock at every speed, and the deadzone releases the hands. `column_inertia` (the steering shaft below the torsion bar) is 0.002 kg·m², down from 0.01.
+- The front wheels track β_f to within about 3° rms (before: 4–29°). Plot: `results/countersteer/countersteer_before_after.png`.
+- In the NA Miata, `tyre_falloff_speed` 1 → 4 (the AC NA Miata tyre value). A human-like driver (0.15 s delay, finite arms) now holds a 27° power drift for 12 s (before: 1.4 s). Plot: `results/drift/drift_mx5.png`.
+- Commands:
+  - `./build/drivetest counter [car] results/countersteer`
+  - `./build/drivetest drift cars/mx5_na.ini results/drift`
+  - `python3 tools/plot_drift_cs.py results`
+

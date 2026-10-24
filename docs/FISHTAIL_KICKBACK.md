@@ -31,7 +31,7 @@ The car is the public NA Miata reference (cars/mx5_na.ini) unless stated otherwi
 ### Physical fixes (65eb263, retuned in f2cb3f0)
 - **Gamepad "arms" layer:**
   - The stick sets where the **hands** want the rim. Finite-strength arms (PD: k 10 N·m/rad, d 1, cap 20 N·m) push the rim there. The SAT can still move the rim through a relaxed grip, as with a real driver, but the wheel is never left free.
-  - The reachable lock shrinks with speed (`range_highspeed` 0.25, `range_speed` 12 m/s), with a 0.04 deadzone and 0.5 expo.
+  - Superseded (countersteer work, see docs/DRIFT.md): the stick maps **linearly to full lock at every speed** (no speed range, no expo), and inside the 0.04 deadzone the hands **let go** (hand torque 0), so a released stick is hands off and the SAT steers the rim freely. Grip is re-established over `grip_time` 0.08 s when the stick leaves the deadzone, so the deadzone jitter is isolated without a recentre snap.
   - `[gamepad] mode = raw` keeps the legacy mapping. The FFB is untouched: it is the pure column torque.
 - **Valve orifice back-drive law:**
   - When the rack is back-driven against the valve, the displaced oil must pass the metering orifices (dP ∝ Q²). The incremental resistance is 2·dP/Q, giving a rack damping of `c = g·2|F|A/Qe`, applied linearly-implicitly and capped by the relief valve at 1.25·pmax·A.

@@ -40,7 +40,7 @@ typedef struct sim_s {
        grip (stiffness/damping/max torque of relaxed arms on the rim), always engaged, so the tyres' SAT can still
        turn the rim against the hands (self-steer emerges) while the hands' damping takes out the overshoot.
        mode 0 "raw" = legacy: stiff-ish angle servo, and inside the stick deadzone the hands come off the wheel. */
-    int gp_mode; double gp_k, gp_d, gp_tmax, gp_deadzone, gp_range_lo, gp_range_v, gp_expo;
+    int gp_mode; double gp_k, gp_d, gp_tmax, gp_deadzone, gp_grip_t, gp_grip;
     double auto_line, auto_ay, auto_speed_cap, auto_straight;
     double us_acc; long long steps_acc;
     sim_snap snap;

@@ -34,7 +34,8 @@ The console window prints the joysticks it found, which one it picked, and wheth
 - By default the stick does not set the rim angle. It sets where your **hands** want the rim, and finite-strength arms push the rim there.
   - The arms are a PD of `arms_k` 10 N·m/rad and `arms_d` 1, capped at `arms_tmax` 20 N·m.
   - Self-aligning torque can therefore still catch a slide, as a real driver's relaxed grip allows. This removes the left-right fishtail.
-- `range_highspeed` / `range_speed` limit how much lock the stick reaches at speed (25 % at high speed, halfway point at 12 m/s). Other keys are `deadzone` 0.04 and `expo` 0.5.
+- The stick is linear over the **full lock at every speed** (no speed limiting, no expo): the driver is not gated.
+- Inside `deadzone` (0.04) your hands let go: no hand torque, the wheel is free and follows the slide on its own (self-aligning torque through the steering). Leaving the deadzone re-grips over `grip_time` 0.08 s, so stick jitter around centre does not kick the rim.
 - `mode = raw` restores the old direct mapping, kept for comparison. FFB is unaffected either way: it is always the physical column torque.
 
 ## Letting a bot or script drive (`[driver]`)
@@ -124,3 +125,7 @@ You spawn at the **start hub**: a painted box on the flat dynamics pad inside th
   - `miata_ac.ini`: hardpoints, springs, dampers, tyres, steering and engine, calibrated from the AC data.
   - `mx5_na.ini` and `hatch_fwd.ini`: reference cars. Edit `car.ini` to switch.
 - `assets/miata_mesh/`: the car mesh (LOD B), with wheels, calipers/hubs and the steering wheel split out so each is posed from the physics.
+
+## Countersteer and drift
+- With the stick released the front wheels follow the front-axle slip angle within about 3 degrees (see docs/DRIFT.md for numbers).
+- The NA Miata (`mx5_na.ini`) now uses the AC NA Miata tyre falloff (`tyre_falloff_speed` 4): past the peak, grip fades gradually instead of dropping off a cliff, so a power drift can be held on throttle and countersteer.
