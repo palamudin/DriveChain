@@ -475,6 +475,7 @@ static void driveline(dc_car* c, step_scratch* S, double* Ieff, double* Wfree, d
         if (!C[n].active) { lam[n] = 0; continue; }
         lam[n] *= 0.8;
         if (n == CL_CLUTCH || n >= CL_BRAKE0) lam[n] = clampd(lam[n], C[n].lo, C[n].hi);
+        if ((n == CL_LSDF || n == CL_LSDR) && P->diff_viscous <= 0 && P->diff_preload <= 0) lam[n] = 0;
         for (int j = 0; j < 6; j++) v[j] += C[n].coef[j] * inv[j] * lam[n];
     }
     for (int it = 0; it < 30; it++) {
@@ -496,7 +497,13 @@ static void driveline(dc_car* c, step_scratch* S, double* Ieff, double* Wfree, d
                 err += cn->coef[j] * (v[j] - hv); eff += cn->coef[j] * cn->coef[j] * inv[j];
             }
             if (eff <= 0) continue;
-            double nl = clampd(lam[n] - err / eff, cn->lo, cn->hi), d = nl - lam[n];
+            double nl;
+            if ((n == CL_LSDF || n == CL_LSDR) && P->diff_viscous > 0) {
+                /* viscous coupling: implicit damper T = c*dw between the axle halves (soft row, gamma = 1/(c h)) */
+                double gam = 1.0 / (P->diff_viscous * h);
+                nl = lam[n] - (err + gam * lam[n]) / (eff + gam);
+            } else nl = clampd(lam[n] - err / eff, cn->lo, cn->hi);
+            double d = nl - lam[n];
             lam[n] = nl;
             if (d != 0) for (int j = 0; j < 6; j++) v[j] += cn->coef[j] * inv[j] * d;
         }

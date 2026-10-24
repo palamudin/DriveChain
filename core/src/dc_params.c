@@ -17,7 +17,7 @@ static void default_tyre(dc_tyre_params* t) {
     t->patch_factor = 0.62; t->peak_slip_deg = 8.5; t->cx_mult = 1.05;
     t->carcass_ky = 150e3; t->carcass_kx = 300e3; t->twist_k = 2500; t->twist_relax = 0.06;
     t->camber_gain = 0.12; t->dcamber0 = 1.0; t->dcamber1 = -12.0; t->rr_factor = 0.25;
-    t->n_rays = 13; t->n_rows = 3; t->ray_span_deg = 50;
+    t->n_rays = 13; t->n_rows = 3; t->ray_span_deg = 50; t->trail_factor = 1.0;
 }
 
 void dc_default_params(dc_car_params* p) {
@@ -86,6 +86,20 @@ void dc_default_params(dc_car_params* p) {
                        {0.5, 0.75, -0.32}, {0.5, -0.75, -0.32}, {-0.6, 0.75, -0.32}, {-0.6, -0.75, -0.32}};
     for (int i = 0; i < 8; i++) set3(p->bodypt[i], bp[i][0], bp[i][1], bp[i][2]);
     p->body_k = 2e5; p->body_c = 4e3; p->body_mu = 0.5;
+    p->solver = DC_SOLVER_REDUCED;
+    /* multibody part data: documented best estimates for a 1990 NA where no public measurement exists (docs/MULTIBODY.md) */
+    dc_mb_params* M = &p->mb;
+    M->uca_mass[0] = 1.2; M->uca_mass[1] = 1.0; M->lca_mass[0] = 2.8; M->lca_mass[1] = 2.5;
+    M->knuckle_mass[0] = 6.0; M->knuckle_mass[1] = 6.5; M->wheel_mass[0] = 20.0; M->wheel_mass[1] = 19.0;
+    for (int a = 0; a < 2; a++) { set3(M->knuckle_inertia[a], 0.06, 0.05, 0.06); M->wheel_inertia_t[a] = 0.42;
+        M->arb_arm[a] = 0.20; M->arb_link_frac[a] = 0.75; M->arb_bar_dz[a] = 0.06; }
+    M->bush_damp = 0.15;
+    set3(M->col_rim, -0.20, 0.37, 0.30); set3(M->col_u1, 0.32, 0.37, 0.11); set3(M->col_u2, 0.85, 0.31, -0.04);
+    M->pinion_y = 0.25;
+    M->rim_inertia = 0.035; M->ishaft_inertia = 5e-4; M->input_inertia = 3e-4; M->pinion_inertia = 2e-4;
+    M->valve_a0 = 4.4e-6; M->valve_amin = 2.0e-8; M->valve_theta_c = 0.05; M->valve_cd = 0.6;
+    M->oil_rho = 860; M->oil_beta = 3.0e8; M->chamber_vol = 5e-5; M->supply_vol = 1e-4;
+    M->diff_inertia = 0.02; M->gb_out_inertia = 0.01; M->baumgarte = 0.2;
 }
 
 /* ------------------------------------------------------------------ INI loader */
@@ -115,6 +129,18 @@ static const fld car_f[] = {
     CF("cda", cda, 1), CF("cla_front", cla_front, 1), CF("cla_rear", cla_rear, 1), CF("aero_front_x", aero_front_x, 1),
     CF("aero_rear_x", aero_rear_x, 1), CF("aero_z", aero_z, 1),
     CF("body_k", body_k, 1), CF("body_c", body_c, 1), CF("body_mu", body_mu, 1),
+    CF("diff_viscous", diff_viscous, 1), CI("solver", solver),
+    CF("mb_uca_mass", mb.uca_mass, 2), CF("mb_lca_mass", mb.lca_mass, 2), CF("mb_knuckle_mass", mb.knuckle_mass, 2),
+    CF("mb_wheel_mass", mb.wheel_mass, 2), CF("mb_knuckle_inertia", mb.knuckle_inertia, 6), CF("mb_wheel_inertia_t", mb.wheel_inertia_t, 2),
+    CF("mb_bush_kr", mb.bush_kr, 2), CF("mb_bush_ka", mb.bush_ka, 2), CF("mb_bush_kt", mb.bush_kt, 2), CF("mb_bush_damp", mb.bush_damp, 1),
+    CF("mb_rack_mount_k", mb.rack_mount_k, 1), CF("mb_rack_mount_c", mb.rack_mount_c, 1),
+    CF("mb_arb_arm", mb.arb_arm, 2), CF("mb_arb_link_frac", mb.arb_link_frac, 2), CF("mb_arb_bar_dz", mb.arb_bar_dz, 2),
+    CF("mb_col_rim", mb.col_rim, 3), CF("mb_col_u1", mb.col_u1, 3), CF("mb_col_u2", mb.col_u2, 3), CF("mb_pinion_y", mb.pinion_y, 1),
+    CF("mb_rim_inertia", mb.rim_inertia, 1), CF("mb_ishaft_inertia", mb.ishaft_inertia, 1), CF("mb_input_inertia", mb.input_inertia, 1),
+    CF("mb_pinion_inertia", mb.pinion_inertia, 1), CF("mb_valve_a0", mb.valve_a0, 1), CF("mb_valve_amin", mb.valve_amin, 1),
+    CF("mb_valve_theta_c", mb.valve_theta_c, 1), CF("mb_valve_cd", mb.valve_cd, 1), CF("mb_oil_rho", mb.oil_rho, 1),
+    CF("mb_oil_beta", mb.oil_beta, 1), CF("mb_chamber_vol", mb.chamber_vol, 1), CF("mb_supply_vol", mb.supply_vol, 1),
+    CF("mb_diff_inertia", mb.diff_inertia, 1), CF("mb_gb_out_inertia", mb.gb_out_inertia, 1), CF("mb_baumgarte", mb.baumgarte, 1),
     {NULL, 0, 0, 0}};
 static const fld axle_f[] = {
     AI("type", type), AI("steered", steered), AI("driven", driven), AF("hub", hub, 3), AI("nlinks", nlinks),
@@ -136,7 +162,7 @@ static const fld axle_f[] = {
     TF("tyre_peak_slip_deg", peak_slip_deg), TF("tyre_cx_mult", cx_mult), TF("tyre_carcass_ky", carcass_ky),
     TF("tyre_carcass_kx", carcass_kx), TF("tyre_twist_k", twist_k), TF("tyre_twist_relax", twist_relax),
     TF("tyre_camber_gain", camber_gain), TF("tyre_dcamber0", dcamber0), TF("tyre_dcamber1", dcamber1),
-    TF("tyre_rr_factor", rr_factor), TI("tyre_n_rays", n_rays), TI("tyre_n_rows", n_rows), TF("tyre_ray_span_deg", ray_span_deg),
+    TF("tyre_rr_factor", rr_factor), TI("tyre_n_rays", n_rays), TI("tyre_n_rows", n_rows), TF("tyre_ray_span_deg", ray_span_deg), TF("tyre_trail_factor", trail_factor),
     {NULL, 0, 0, 0}};
 
 static char* trim(char* s) {

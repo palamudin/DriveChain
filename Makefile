@@ -74,3 +74,9 @@ unitytest: build/libdrivechain.so
 	mcs -nowarn:414 -define:UNITY_5_3_OR_NEWER -t:library -out:build/unitycheck.dll tools/unity_stub/UnityEngine.cs $(UNITY_CS)
 	@echo "UNITY COMPILE CHECK PASS"
 .PHONY: unitytest
+
+# solver / parameter-set comparison suite through the driver interface (CSV per manoeuvre + summary)
+build/mbcompare: tools/mbcompare.c build/libdrivechain.a
+	$(CC) $(CFLAGS) -o $@ $< build/libdrivechain.a $(LDLIBS)
+mbcompare: build/mbcompare
+.PHONY: mbcompare

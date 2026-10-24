@@ -1,0 +1,36 @@
+after      settle_fz_front                 5357.8736 N
+after      settle_fz_rear                  4942.6064 N
+after      settle_front_pct                  52.0158 %
+after      settle_travel_f                   -0.2892 mm
+after      settle_travel_r                   -1.3788 mm
+after      bounce_overshoot                  32.4271 % body heave overshoot on 30 mm step
+after      bounce_period                      0.8500 s (2x max->min)
+after      bounce_zeta_est                    0.3374 from overshoot
+after      skidpad_ay_max                     0.7759 g
+after      skidpad_sw_at_3ms2                51.7063 deg
+after      skidpad_tq_at_3ms2                 1.9415 Nm
+after      skidpad_sw_at_5ms2                54.4046 deg
+after      skidpad_tq_at_5ms2                 2.2198 Nm
+after      skidpad_sw_at_7ms2                54.4885 deg
+after      skidpad_tq_at_7ms2                 2.1848 Nm
+after      understeer_grad_sw                 6.8236 deg sw/g (incl. ackermann change)
+after      skidpad_lost_path                  1.0000 
+after      step_yaw_rate_ss                  13.7409 deg/s
+after      step_t90                           0.5833 s
+after      step_overshoot                     1.7058 %
+after      step_ay_ss                         0.5396 g
+after      liftoff_ay0                        0.6842 g
+after      liftoff_yawrate_gain               6.6311 % over pre-lift
+after      liftoff_beta_max                   1.8903 deg
+after      handsoff_beta_max                 24.7834 deg
+after      handsoff_front_course_min        -23.8441 deg
+after      handsoff_sw_counter_max          331.3860 deg (opposite lock)
+after      handsoff_frontwheel_vs_course       2.0342 deg mean |steer - front-axle course| while beta>5
+after      bump_col_torque_peak               2.1367 Nm
+after      bump_sw_peak                       1.3880 deg
+after      bump_heading_change                0.2066 deg
+after      bump_lateral_drift                 0.1437 m
+after      slalom_lat_err_max                 0.8973 m
+after      slalom_ay_max                      0.6543 g
+after      slalom_col_torque_max              2.4218 Nm
+after      cpu_per_sim_s                      0.6168 (last manoeuvre normalised; see total)

@@ -59,6 +59,8 @@ typedef struct {
     double rr_factor;                      /* rolling resistance: Fz offset ahead of patch centre = rr_factor*deflection */
     int n_rays, n_rows;                    /* envelope fan rays per row, rows across width */
     double ray_span_deg;                   /* +- span of the fan around straight down */
+    double trail_factor;                   /* pneumatic-trail shape factor on the brush trail (1 = parabolic pressure, a/3 at
+                                              zero slip; 1.5 gives a/2 = 1/4 contact length as measured, Pacejka 2012 ch.3) */
 } dc_tyre_params;
 
 typedef struct {
@@ -95,6 +97,25 @@ typedef struct {
     dc_tyre_params tyre;
 } dc_axle_params;
 
+/* Multibody solver parameters (solver = DC_SOLVER_MULTIBODY). Index [0] front, [1] rear. Lengths m, masses kg.
+   Zero bushing rates mean a rigid joint (revolute) at that pivot. */
+typedef struct {
+    double uca_mass[2], lca_mass[2], knuckle_mass[2], wheel_mass[2];   /* wheel_mass = rim + tyre + hub/rotor */
+    double knuckle_inertia[2][3];   /* knuckle (+caliper) about x,y,z, kg m^2 */
+    double wheel_inertia_t[2];      /* wheel transverse inertia (spin inertia is tyre_spin_inertia) */
+    double bush_kr[2], bush_ka[2], bush_kt[2];   /* arm pivot bushings: radial N/m, axial N/m, conical (tilt) N m/rad */
+    double bush_damp;               /* bushing damping as a loss factor: c = bush_damp * k / (2 pi 10 Hz) */
+    double rack_mount_k, rack_mount_c;   /* rack housing to body along the rack axis, N/m, N s/m (0 = rigid) */
+    double arb_arm[2], arb_link_frac[2], arb_bar_dz[2];  /* bar lever length, drop-link point along the lower arm (0 inner..1 ball joint), bar axis height above the lower-arm axis */
+    double col_rim[3], col_u1[3], col_u2[3];  /* steering-wheel centre, upper and lower U-joint centres (vehicle frame) */
+    double pinion_y;                /* lateral position of the pinion on the rack */
+    double rim_inertia, ishaft_inertia, input_inertia, pinion_inertia;   /* about own axes, kg m^2 */
+    double valve_a0, valve_amin, valve_theta_c, valve_cd;   /* rotary valve: open orifice area m^2, leak area of a closed metering edge, twist to close rad, discharge coeff */
+    double oil_rho, oil_beta, chamber_vol, supply_vol;     /* oil density, effective bulk modulus incl. hose (Pa), each cylinder chamber + hose m^3, pump/supply volume m^3 */
+    double diff_inertia, gb_out_inertia;   /* diff carrier + ring, gearbox output + propshaft, kg m^2 */
+    double baumgarte;               /* joint drift correction per substep (0.1..0.3) */
+} dc_mb_params;
+
 typedef struct {
     double mass;                   /* total vehicle mass kg (incl. unsprung) */
     double sprung_inertia[3];      /* about sprung CG, vehicle axes, kg m^2 */
@@ -120,6 +141,7 @@ typedef struct {
     double coast_torque, coast_rpm, idle_rpm, limiter_rpm;
     double clutch_torque;
     double diff_power, diff_coast, diff_preload;     /* clutch-pack LSD: cap = preload + lock*|input| */
+    double diff_viscous;           /* viscous-coupling LSD between the axle halves: T = diff_viscous * (w_L - w_R), N m s/rad */
     double awd_front_split, center_lock;
     /* aero */
     double cda, cla_front, cla_rear;  /* m^2; lift areas positive = downforce */
@@ -132,6 +154,9 @@ typedef struct {
                               across the axle, so road discontinuities become ramps that enter the contact continuously (the belt
                               cannot wrap features finer than this anyway; default 25 mm) */
     double gravity;
+    int solver;            /* DC_SOLVER_REDUCED (0, legacy reduced-coordinate core) or DC_SOLVER_MULTIBODY (1) */
+    int mb_pad;
+    dc_mb_params mb;       /* multibody-only parameters (masses of the individual parts, column, valve, bushings) */
 } dc_car_params;
 
 /* ---------------- road ---------------- */
@@ -274,6 +299,7 @@ DC_API void   dc_driver_command(dc_driver* d, const dc_driver_cmd* c);
 /* call once per host tick before dc_set_input/dc_step: overwrites io's steering fields (unless OFF) and pedals (unless PED_OFF) */
 DC_API void   dc_driver_update(dc_driver* d, const dc_car* car, double dt, dc_input* io);
 DC_API void   dc_driver_get_state(const dc_driver* d, dc_driver_state* s);
+enum { DC_SOLVER_REDUCED = 0, DC_SOLVER_MULTIBODY = 1 };
 enum { DC_DBG_NO_DAMPING = 1, DC_DBG_NO_FRICTION = 2, DC_DBG_NO_AERO = 4, DC_DBG_FREEZE_STEER = 8, DC_DBG_ENGINE_OFF = 16, DC_DBG_NO_PROJECTION = 32 };
 #ifdef __cplusplus
 }

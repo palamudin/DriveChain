@@ -299,6 +299,7 @@ void dc_tyre_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc
     double sx = t->ex_star / t->sig_x;
     double Fx, Fy, Mz, lam;
     brush(st, nrows, sx, sy, &Fx, &Fy, &Mz, &lam);
+    Mz *= T->trail_factor > 0 ? T->trail_factor : 1.0;   /* pressure-distribution trail correction (measured ~1/4 contact length) */
     double eps = 1e-6;
     double Fx2, Fy2, Mz2, l2;
     brush(st, nrows, sx + eps / t->sig_x, sy, &Fx2, &Fy2, &Mz2, &l2);
