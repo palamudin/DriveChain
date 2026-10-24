@@ -1,0 +1,23 @@
+{
+ "ok": true,
+ "duration": 8.0,
+ "ticks": 8000,
+ "rms_lat_err": 0.5675,
+ "max_lat_err": 1.0931,
+ "max_head_err_deg": 6.336,
+ "max_column_nm": 2.885,
+ "max_hand_nm": 2.592,
+ "saturated_frac": 0.0,
+ "max_beta_deg": 1.576,
+ "max_yaw_rate_dps": 22.468,
+ "max_sw_deg": 53.285,
+ "max_sw_rate_dps": 258.38,
+ "max_ay": 6.599,
+ "distance": 131.83,
+ "offtrack_frac": 0.0,
+ "spin": 0,
+ "takeover_ticks": 0,
+ "manoeuvre": "lane_change",
+ "tag": "lane_change",
+ "speed_kmh": 60
+}

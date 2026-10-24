@@ -2,7 +2,7 @@
 CC ?= gcc
 CFLAGS ?= -O2 -std=c11 -Wall -Wextra -Wno-unused-parameter -Wno-misleading-indentation -fPIC -Icore/include -Icore/src
 LDLIBS = -lm
-CORE_SRC = core/src/dc_kin.c core/src/dc_params.c core/src/dc_tyre.c core/src/dc_car.c core/src/dc_road.c core/src/dc_out.c
+CORE_SRC = core/src/dc_kin.c core/src/dc_params.c core/src/dc_tyre.c core/src/dc_car.c core/src/dc_road.c core/src/dc_out.c core/src/dc_driver.c
 CORE_OBJ = $(CORE_SRC:core/src/%.c=build/%.o)
 
 all: build/libdrivechain.a build/libdrivechain.so build/dc_tests
@@ -35,7 +35,7 @@ clean:
 
 # ---- raylib test drive (Linux). raylib is compiled from source by tools/build_raylib.sh into build-deps/linux
 RAYLIB_SRC ?= /workspace/deps/raylib-5.5/src
-DEMO_SRC = demo/main.c demo/sim.c demo/track.c demo/audio.c demo/input.c demo/cfg.c demo/objload.c
+DEMO_SRC = demo/main.c demo/sim.c demo/track.c demo/audio.c demo/input.c demo/cfg.c demo/objload.c demo/drvproto.c demo/net.c
 build-deps/linux/libraylib.a:
 	tools/build_raylib.sh $(RAYLIB_SRC) build-deps/linux gcc ar linux
 build/drivechain_demo: $(DEMO_SRC) demo/*.h build/libdrivechain.a build-deps/linux/libraylib.a
@@ -53,3 +53,13 @@ drivetest: build/drivetest
 fishtest: build/drivetest
 	mkdir -p results/fishtail/check && ./build/drivetest fishcheck "$(or $(DC_CAR),cars/mx5_na.ini)" results/fishtail/check | tee results/fishtail/check/fishcheck.txt
 .PHONY: drivetest fishtest
+
+# headless lockstep host for the JSON-lines driver protocol (agent / Python / CI driving)
+DH_SRC = tools/drvhost.c demo/drvproto.c demo/net.c demo/sim.c demo/track.c demo/audio.c demo/input.c demo/cfg.c
+build/drvhost: $(DH_SRC) demo/*.h build/libdrivechain.a
+	$(CC) -O2 -std=gnu11 -Wall -Wno-misleading-indentation -Wno-unused-parameter -DDEMO_NO_SDL -Icore/include -o $@ $(DH_SRC) build/libdrivechain.a -lm -lpthread
+drvhost: build/drvhost
+# driver-interface regression: scripted manoeuvres through the Python client against drvhost
+drvtest: build/drvhost
+	python3 tools/dcdrive.py selftest --out results/driver
+.PHONY: drvhost drvtest

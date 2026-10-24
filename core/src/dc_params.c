@@ -255,6 +255,7 @@ int dc_abi_size(int which) {
     switch (which) {
     case 0: return (int)sizeof(dc_car_params); case 1: return (int)sizeof(dc_input); case 2: return (int)sizeof(dc_telemetry);
     case 3: return (int)sizeof(dc_wheel_telem); case 4: return (int)sizeof(dc_xform); case 5: return (int)sizeof(dc_seg);
+    case 6: return (int)sizeof(dc_driver_params); case 7: return (int)sizeof(dc_driver_cmd); case 8: return (int)sizeof(dc_driver_state);
     default: return -1;
     }
 }

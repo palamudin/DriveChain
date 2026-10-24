@@ -44,6 +44,20 @@ int sim_init(sim_t* S, cfg_t* cfg, track_t* trk, audio_t* audio, char* err, int 
     S->auto_speed_cap = cfg_num(cfg, "autopilot.speed_cap", 33);
     S->autopilot = cfg_int(cfg, "autopilot.enabled", 0);
     S->auto_straight = cfg_num(cfg, "autopilot.straight_speed", 0);
+    {   /* plug-in driver defaults (overridable per command over the protocol) */
+        dc_driver_params dp; dc_driver_default_params(&dp);
+        dp.arm_k = cfg_num(cfg, "driver.arm_k", dp.arm_k); dp.arm_d = cfg_num(cfg, "driver.arm_d", dp.arm_d);
+        dp.arm_tmax = cfg_num(cfg, "driver.arm_tmax", dp.arm_tmax); dp.delay = cfg_num(cfg, "driver.delay", dp.delay);
+        dp.bandwidth_hz = cfg_num(cfg, "driver.bandwidth_hz", dp.bandwidth_hz);
+        dp.preview_time = cfg_num(cfg, "driver.preview_time", dp.preview_time); dp.catch_gain = cfg_num(cfg, "driver.catch_gain", dp.catch_gain);
+        dp.predict = cfg_num(cfg, "driver.predict", dp.predict); dp.lat_ki = cfg_num(cfg, "driver.lat_ki", dp.lat_ki);
+        dp.yaw_damp = cfg_num(cfg, "driver.yaw_damp", dp.yaw_damp);
+        S->drv = dc_driver_create(&dp);
+        S->drv_takeover_enabled = cfg_int(cfg, "driver.takeover", 1);
+        S->drv_takeover_stick = cfg_num(cfg, "driver.takeover_stick", 0.25);
+        S->drv_takeover_wheel = cfg_num(cfg, "driver.takeover_wheel_deg", 45) * M_PI / 180;
+        S->drv_takeover_pedal = cfg_num(cfg, "driver.takeover_pedal", 0.15);
+    }
     input_open(cfg, &S->dev);
     if (S->auto_clutch < 0) S->auto_clutch = !(S->dev.kind == 1 && S->dev.hgear != -99);   /* H-shifter rigs: manual clutch */
     S->gear = 1;
@@ -62,6 +76,19 @@ void sim_reset_at(sim_t* S, double x, double y, double yaw, double speed) {
     double pos[3] = {x, y, h + 0.01};
     dc_reset(S->car, pos, yaw, speed);
     S->kb_sw = 0;
+}
+int sim_rebuild_car(sim_t* S) {
+    dc_xform ch[DC_PART_COUNT]; dc_get_parts(S->car, ch, DC_PART_COUNT);
+    dc_telemetry t0; dc_get_telemetry(S->car, &t0);
+    double q0 = ch[0].quat[0], q1 = ch[0].quat[1], q2 = ch[0].quat[2], q3 = ch[0].quat[3];
+    double yaw = atan2(2 * (q0 * q3 + q1 * q2), 1 - 2 * (q2 * q2 + q3 * q3));
+    if (!make_car(S)) return 0;
+    sim_reset_at(S, ch[0].pos[0], ch[0].pos[1], yaw, t0.vx); return 1;
+}
+void sim_driver_engage(sim_t* S, int on) {
+    if (!S->drv) return;
+    if (on && !S->drv_on) dc_driver_reset(S->drv);
+    S->drv_on = on; if (on) S->drv_takeover = 0;
 }
 void sim_reset_on_track(sim_t* S, double s, double d, double speed) {
     double x, y, yaw; track_point(S->trk, s, d, &x, &y, &yaw);
@@ -138,6 +165,8 @@ void sim_tick(sim_t* S, double dt) {
     }
     if (C->puncture != S->ctl_seen.puncture) { S->ctl_seen.puncture = C->puncture; dc_puncture(S->car, (C->puncture - 1) & 3, 2.0); }
     if (C->autopilot != S->ctl_seen.autopilot) { S->ctl_seen.autopilot = C->autopilot; S->autopilot = !S->autopilot; }
+    if (C->drv_toggle != S->ctl_seen.drv_toggle) { S->ctl_seen.drv_toggle = C->drv_toggle; sim_driver_engage(S, !S->drv_on); }
+    if (S->ext_hook) S->ext_hook(S, 0);
     if (C->pause) { S->snap.paused = 1; return; }
     S->snap.paused = 0;
 
@@ -182,13 +211,27 @@ void sim_tick(sim_t* S, double dt) {
     if (S->ext_steer) { in.steer_mode = S->ext_in.steer_mode; in.steer_torque = S->ext_in.steer_torque; in.steer_target = S->ext_in.steer_target;
                         in.hands_k = S->ext_in.hands_k; in.hands_d = S->ext_in.hands_d; in.hands_tmax = S->ext_in.hands_tmax; }
     if (S->ext_pedals) { in.throttle = S->ext_in.throttle; in.brake = S->ext_in.brake; in.handbrake = S->ext_in.handbrake; }
+    /* ---- plug-in driver + live human takeover ---- */
+    int drv_ped = 0;
+    if (S->drv && S->drv_on) {
+        int human = C->kb_left || C->kb_right || C->kb_up || C->kb_down;
+        if (D->kind == 2) human |= fabs(D->steer) > S->drv_takeover_stick;
+        if (D->kind == 1) human |= fabs(D->steer * S->rotation_rad * 0.5 - t.sw_angle) > S->drv_takeover_wheel;   /* wheel held away from the sim rim */
+        if (D->kind) human |= D->throttle > S->drv_takeover_pedal || D->brake > S->drv_takeover_pedal;
+        if (human && S->drv_takeover_enabled) { S->drv_on = 0; S->drv_takeover = 1; }   /* human input above already mapped into `in` */
+        else {
+            dc_driver_command(S->drv, &S->drv_cmd);
+            dc_driver_update(S->drv, S->car, dt, &in);
+            drv_ped = S->drv_cmd.pedal_mode != DC_PED_OFF;
+        }
+    }
     /* ---- gearbox ---- */
     int up = C->shift_up - S->ctl_seen.shift_up + D->shift_up, dn = C->shift_down - S->ctl_seen.shift_down + D->shift_down;
     S->ctl_seen.shift_up = C->shift_up; S->ctl_seen.shift_down = C->shift_down; S->dev.shift_up = S->dev.shift_down = 0;
     if (D->kind == 1 && D->hgear != -99) {
         if (D->hgear != S->gear) S->gear = D->hgear;
     } else {
-        if (S->autopilot) {   /* autopilot auto-shifts */
+        if (S->autopilot || drv_ped) {   /* autopilot / plug-in driver auto-shift */
             if (t.engine_rpm > 6600 && S->gear < S->P.ngears && S->shift_timer_ms <= 0) up = 1;
             if (t.engine_rpm < 2600 && S->gear > 1 && S->shift_timer_ms <= 0) dn = 1;
         }
@@ -196,7 +239,7 @@ void sim_tick(sim_t* S, double dt) {
         if (dn > 0 && S->gear > -1) { S->gear--; S->shift_timer_ms = 160; }
     }
     if (S->shift_timer_ms > 0) S->shift_timer_ms -= (int)(dt * 1000 + 0.5);
-    if (S->auto_clutch || S->autopilot) {
+    if (S->auto_clutch || S->autopilot || drv_ped) {
         double c = S->shift_timer_ms > 0 ? 1.0 : 0.0;
         if (S->shift_timer_ms > 0 && S->shift_timer_ms < 60) c = S->shift_timer_ms / 60.0;
         /* launch / anti-stall: slip the clutch below ~1.6x idle */
@@ -240,7 +283,10 @@ void sim_tick(sim_t* S, double dt) {
     N->gear_req = S->gear; N->assist = S->P.assist; N->autopilot = S->autopilot;
     N->device_kind = S->dev.kind; N->has_ffb = S->dev.has_ffb; snprintf(N->device, sizeof N->device, "%s", S->dev.name);
     for (int a = 0; a < 8; a++) N->raw_axis[a] = S->dev.axis[a];
+    N->drv_on = S->drv_on; N->drv_takeover = S->drv_takeover; N->drv_mode = S->drv_cmd.steer_mode; N->drv_clients = S->ext_clients;
+    if (S->drv) dc_driver_get_state(S->drv, &N->drv_st);
     N->raw_buttons = S->dev.buttons_raw; N->raw_naxes = S->dev.naxes; N->hgear = S->dev.hgear;
+    if (S->ext_hook) S->ext_hook(S, 1);
     if (S->steps_acc >= 2000) { N->us_per_substep = S->us_acc / S->steps_acc; N->rt_factor = 1e6 / (N->us_per_substep * S->P.substep_hz); S->us_acc = 0; S->steps_acc = 0; }
 }
-void sim_shutdown(sim_t* S) { input_close(); if (S->car) dc_destroy(S->car); S->car = NULL; }
+void sim_shutdown(sim_t* S) { input_close(); if (S->car) dc_destroy(S->car); S->car = NULL; if (S->drv) dc_driver_destroy(S->drv); S->drv = NULL; }

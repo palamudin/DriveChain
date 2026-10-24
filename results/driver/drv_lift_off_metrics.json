@@ -1,0 +1,23 @@
+{
+ "ok": true,
+ "duration": 8.0,
+ "ticks": 8000,
+ "rms_lat_err": 0.746,
+ "max_lat_err": 2.1587,
+ "max_head_err_deg": 7.374,
+ "max_column_nm": 2.452,
+ "max_hand_nm": 2.939,
+ "saturated_frac": 0.0,
+ "max_beta_deg": 2.019,
+ "max_yaw_rate_dps": 30.528,
+ "max_sw_deg": 83.722,
+ "max_sw_rate_dps": 213.54,
+ "max_ay": 7.932,
+ "distance": 90.42,
+ "offtrack_frac": 0.0,
+ "spin": 0,
+ "takeover_ticks": 0,
+ "manoeuvre": "lift_off",
+ "tag": "lift_off",
+ "speed_kmh": 55
+}

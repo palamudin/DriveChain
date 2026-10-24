@@ -1,0 +1,23 @@
+{
+ "ok": true,
+ "duration": 14.0,
+ "ticks": 14000,
+ "rms_lat_err": 0.2705,
+ "max_lat_err": 0.4816,
+ "max_head_err_deg": 3.787,
+ "max_column_nm": 2.621,
+ "max_hand_nm": 5.281,
+ "saturated_frac": 0.0,
+ "max_beta_deg": 1.576,
+ "max_yaw_rate_dps": 24.583,
+ "max_sw_deg": 103.377,
+ "max_sw_rate_dps": 399.48,
+ "max_ay": 4.756,
+ "distance": 154.32,
+ "offtrack_frac": 0.0,
+ "spin": 0,
+ "takeover_ticks": 0,
+ "manoeuvre": "skidpad",
+ "tag": "skidpad",
+ "speed_kmh": 40
+}

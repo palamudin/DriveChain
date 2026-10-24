@@ -202,7 +202,7 @@ DC_API void   dc_default_params(dc_car_params* p);
 DC_API int    dc_load_params(const char* path, dc_car_params* p, char* err, int errlen); /* 1 ok */
 DC_API int    dc_save_params(const char* path, const dc_car_params* p);  /* writes every parameter as INI, 1 ok */
 DC_API int    dc_set_param(dc_car_params* p, const char* section, const char* key, const char* value); /* section "car"/"front"/"rear"; 1 ok */
-DC_API int    dc_abi_size(int which); /* sizeof: 0 params, 1 input, 2 telemetry, 3 wheel_telem, 4 xform, 5 seg (managed-side layout check) */
+DC_API int    dc_abi_size(int which); /* sizeof: 0 params, 1 input, 2 telemetry, 3 wheel_telem, 4 xform, 5 seg, 6 driver_params, 7 driver_cmd, 8 driver_state (managed-side layout check) */
 DC_API dc_car* dc_create(const dc_car_params* p);
 DC_API void   dc_destroy(dc_car* c);
 DC_API void   dc_set_road(dc_car* c, dc_road_fn fn, void* user);
@@ -222,6 +222,57 @@ DC_API int    dc_travel_limits(const dc_car* c, int corner, double* droop, doubl
 DC_API double dc_ffb_torque(const dc_car* c);       /* column torque N m (same as telemetry) */
 DC_API const dc_car_params* dc_params(const dc_car* c);
 DC_API void   dc_debug_flags(dc_car* c, int flags);
+
+/* ---------------- driver model (optional; the "interface plugin") ----------------
+   A deterministic, allocation-free-per-step human/robot driver that writes the steering and pedal fields of a
+   dc_input. The hands are a finite-strength impedance on the rim (the core's DC_STEER_ANGLE PD with arm_k/arm_d/
+   arm_tmax), driven by a voluntary command that passes through a pure transport delay and a bandwidth limit, so
+   the road can overpower the arms and self-steer still emerges. Command sources: a held angle / torque, a
+   sine (scripted manoeuvres), a closed-loop path follower (preview pure pursuit + yaw damping + slip catch),
+   hands-off, or a locked rim. Used by the demo, the headless host (tools/drvhost.c), Python and Unity alike. */
+enum { DC_DRV_OFF = 0, DC_DRV_HANDS_OFF = 1, DC_DRV_TORQUE = 2, DC_DRV_ANGLE = 3, DC_DRV_PATH = 4, DC_DRV_LOCKED = 5 };
+enum { DC_PED_OFF = 0, DC_PED_DIRECT = 1, DC_PED_SPEED = 2 };
+#define DC_DRV_HIST 1024
+typedef struct {
+    double arm_k, arm_d, arm_tmax;      /* arm impedance on the rim: N m/rad, N m s/rad, max hand torque N m (strong adult 15-25) */
+    double delay;                       /* s: transport delay on the voluntary command (human 0.15-0.25; robot 0) */
+    double bandwidth_hz;                /* first-order limit on the voluntary command, Hz (0 = none) */
+    double rim_rate_max;                /* rad/s cap on the commanded rim-angle rate (0 = none) */
+    double preview_time, preview_min;   /* PATH: look-ahead distance L = max(preview_min, preview_time * v) */
+    double yaw_damp;                    /* PATH: s; road-wheel target -= yaw_damp * (r - v * kappa_path) */
+    double catch_gain;                  /* PATH: 0..1; adds catch_gain * (front-axle sideslip) to the road-wheel target (countersteer) */
+    double speed_kp, speed_ki, brake_kp;/* SPEED pedals: throttle PI (1/(m/s), 1/m), brake P (1/(m/s)) */
+    double lock_frac;                   /* fraction of the steering lock the driver may use */
+    double lat_ki;                      /* PATH: slow lateral-error trim, rad road-wheel per (m s); models the driver
+                                           re-aiming against arm compliance / understeer (0 = pure pursuit only) */
+    double predict;                     /* PATH: internal-model anticipation; aims from the pose predicted
+                                           predict*(delay + 1/(2 pi bandwidth)) s ahead (0 = none, 1 = full) */
+} dc_driver_params;
+typedef struct {
+    int steer_mode, pedal_mode;         /* DC_DRV_*, DC_PED_* */
+    double steer_target;                /* ANGLE: rim angle, rad (+ = left) */
+    double steer_torque;                /* TORQUE: hand torque on the rim, N m (clipped to +-arm_tmax) */
+    double wave_amp, wave_freq, wave_t0;/* ANGLE/TORQUE: adds wave_amp*sin(2 pi f (t - t0)) (rad or N m) for t >= t0 */
+    double path_offset;                 /* PATH: m, + = left of the path */
+    double throttle, brake, handbrake;  /* DIRECT pedals 0..1 */
+    double speed;                       /* SPEED: target m/s */
+} dc_driver_cmd;
+typedef struct {
+    double time, rim_cmd, rim_cmd_delayed, lat_err, head_err, path_s, kappa_path, beta, preview_dist;
+    int saturated, path_index;          /* saturated: |hand torque| at arm_tmax this update */
+} dc_driver_state;
+typedef struct dc_driver dc_driver;
+DC_API void   dc_driver_default_params(dc_driver_params* p);
+DC_API dc_driver* dc_driver_create(const dc_driver_params* p);
+DC_API void   dc_driver_destroy(dc_driver* d);
+DC_API void   dc_driver_set_params(dc_driver* d, const dc_driver_params* p);
+DC_API void   dc_driver_get_params(const dc_driver* d, dc_driver_params* p);
+DC_API void   dc_driver_reset(dc_driver* d);                       /* clear delay line / integrators / path search */
+DC_API void   dc_driver_set_path(dc_driver* d, const double* xy, int n, int closed); /* xy[2n] world points (caller keeps alive) */
+DC_API void   dc_driver_command(dc_driver* d, const dc_driver_cmd* c);
+/* call once per host tick before dc_set_input/dc_step: overwrites io's steering fields (unless OFF) and pedals (unless PED_OFF) */
+DC_API void   dc_driver_update(dc_driver* d, const dc_car* car, double dt, dc_input* io);
+DC_API void   dc_driver_get_state(const dc_driver* d, dc_driver_state* s);
 enum { DC_DBG_NO_DAMPING = 1, DC_DBG_NO_FRICTION = 2, DC_DBG_NO_AERO = 4, DC_DBG_FREEZE_STEER = 8, DC_DBG_ENGINE_OFF = 16, DC_DBG_NO_PROJECTION = 32 };
 #ifdef __cplusplus
 }
