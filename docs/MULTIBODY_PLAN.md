@@ -1,6 +1,6 @@
 # Multibody plan: one coupled solve with joint reactions
 
-Status: design proposal. No code has been written for it yet. The research basis and the audit are in [RESEARCH_FINDINGS.md](RESEARCH_FINDINGS.md); audit items A1–A11 are referred to below.
+Status: Phases 0–2 implemented and validated (see [MULTIBODY.md](MULTIBODY.md)); parts of Phase 3 (column, U-joints, torsion bar, rack friction) and Phase 6 (engine, clutch, diff and brakes as bodies and rows in the solve) are in. Open: valve pressure states, implicit tyre, bushings, half-shaft bodies, retiring the reduced core. The research basis and the audit are in [RESEARCH_FINDINGS.md](RESEARCH_FINDINGS.md); audit items A1–A11 are referred to below.
 
 ## 1. Principle
 
