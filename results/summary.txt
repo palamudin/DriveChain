@@ -39,16 +39,16 @@
        step steer 80 km/h, sw 40 deg in 0.15 s: yaw rate ss 17.49 deg/s, ay ss 0.652 g, 90% rise 0.229 s (from 50% sw), overshoot 4.5 %
 [PASS] step steer: stable + well damped   overshoot 4.5 %, t90 0.229 s
 --- handsoff
-       hands-off: peak |beta| 39.6 deg; wheel self-steered to -479.3 deg (countersteer, first at t=1.89 s while yaw rate still +); final r -0.00 deg/s, beta -0.00 deg, sw -0.0 deg
-[PASS] hands-off: emergent countersteer   min sw -479.3 deg
-[PASS] hands-off: recovers + self-centres r -0.00 deg/s, beta -0.00 deg, sw -0.0 deg at t=9 s
+       hands-off: peak |beta| 71.4 deg; wheel self-steered to -489.6 deg (countersteer, first at t=1.89 s while yaw rate still +); final r 0.16 deg/s, beta 0.03 deg, sw 1.1 deg
+[PASS] hands-off: emergent countersteer   min sw -489.6 deg
+[PASS] hands-off: recovers + self-centres r 0.16 deg/s, beta 0.03 deg, sw 1.1 deg at t=9 s
        comparison, hands clamped at 90 deg: peak |beta| 39.3 deg, final r 16.9 deg/s (keeps rotating)
        comparison, hands off with MANUAL rack: peak |beta| 23.3 deg, min sw -370.2 deg, final r -0.00 deg/s, beta -0.00 deg (hydraulic valve boosts the wheel-inertia torque -> slower self-steer)
 --- kerb
-       kerb (25 mm sharp rumble, 60 km/h): fan envelope peak Fz 6411 N, max dFz/dt 1875 kN/s, |FFB| peak 2.33 N m
-                                            single-ray      peak Fz 8322 N, max dFz/dt 11437 kN/s, |FFB| peak 2.43 N m
+       kerb (25 mm sharp rumble, 60 km/h): fan envelope peak Fz 6411 N, max dFz/dt 1875 kN/s, |FFB| peak 2.26 N m
+                                            single-ray      peak Fz 8322 N, max dFz/dt 11437 kN/s, |FFB| peak 2.35 N m
 [PASS] kerb: envelope removes edge spikes dFz/dt ratio 0.16, peak ratio 0.77
-[PASS] kerb: FFB shows the hit            column torque peak 2.33 N m on the kerb vs 0.000 N m on smooth tarmac before it
+[PASS] kerb: FFB shows the hit            column torque peak 2.26 N m on the kerb vs 0.000 N m on smooth tarmac before it
 --- puncture
        puncture FR (tau 1 s) at 80 km/h: pressure 0 kPa at 8 s, patch length 108 -> 275 mm, rim contact force peak 237 N, column torque peak 0.94 N m, lateral drift -14.54 m
 [PASS] puncture: patch grows + rim contacts patch x2.56, rim 237 N
@@ -56,10 +56,10 @@
        assist off/on: parking peak driver torque 34.9 / 5.4 N m; 20 m/s 45deg sine peak 7.37 / 2.07 N m
 [PASS] assist: reduces effort             parking ratio 0.15, road ratio 0.28
 --- perf
-       perf default 3x13 rays flat     55.15 us/substep -> 9x real time at 2000 Hz (one core)
-[PASS] perf: >= 5x real time at substep rate (< 100 us) 55.15 us/substep, 9.1x real time
-       perf 1x7 rays flat              28.75 us/substep -> 17x real time at 2000 Hz (one core)
-       perf 3x13 rays rough terrain    82.32 us/substep -> 6x real time at 2000 Hz (one core)
---- audit
-[PASS] newton3: worst residual all tests  |sum m a - F_ext|/mg = 8.34e-16, |sum dL/dt - T_ext| = 7.27e-10 N m
+       perf default 3x13 rays flat     51.84 us/substep -> 10x real time at 2000 Hz (one core)
+[PASS] perf: >= 5x real time at substep rate (< 100 us) 51.84 us/substep, 9.6x real time
+       perf 1x7 rays flat              27.59 us/substep -> 18x real time at 2000 Hz (one core)
+       perf 3x13 rays rough terrain    78.36 us/substep -> 6x real time at 2000 Hz (one core)
+[PASS] newton3: worst residual all tests  |sum m a - F_ext|/mg = 8.64e-16, |sum dL/dt - T_ext| = 7.08e-10 N m
 FAILURES: 0
+ILURES: 0
