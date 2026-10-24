@@ -30,7 +30,7 @@ void dc_default_params(dc_car_params* p) {
         A->type = DC_SUSP_DWB; A->nlinks = 5; A->rack_link = 4; A->lower_arm_a = 2; A->lower_arm_b = 3;
         default_tyre(&A->tyre);
         A->unsprung_mass = 30; set3(A->upright_inertia, 0.6, 0.5, 0.6);
-        A->damp_fast_bump = 0; A->droop_rate = 200e3;
+        A->damp_fast_bump = 0; A->droop_rate = 1.0e6;   /* damper top-out (rebound) bumper: stiff */
         A->bumpstop_rate = 40e3;
     }
     dc_axle_params* F = &p->axle[0];
@@ -60,7 +60,7 @@ void dc_default_params(dc_car_params* p) {
     R->static_camber_deg = -1.2; R->static_toe_deg = 0.1;
     R->wheel_rate = 17500; R->damp_bump = 1700; R->damp_fast_bump = 1150; R->damp_bump_thr = 0.03;
     R->damp_reb = 5500; R->damp_fast_reb = 1300; R->damp_reb_thr = 0.06;
-    R->bumpstop_up = 0.070; R->bumpstop_dn = 0.150; R->arb = 4000;
+    R->bumpstop_up = 0.070; R->bumpstop_dn = 0.120; R->arb = 4000;
     R->brake_torque = 450; R->handbrake_torque = 400;
 
     p->steer_ratio = 15.0; p->steer_lock_deg = 504;
@@ -129,7 +129,7 @@ static const fld axle_f[] = {
     AF("droop_rate", droop_rate, 1), AF("arb", arb, 1), AF("unsprung_mass", unsprung_mass, 1),
     AF("upright_inertia", upright_inertia, 3), AF("brake_torque", brake_torque, 1), AF("handbrake_torque", handbrake_torque, 1),
     TF("tyre_radius", radius), TF("tyre_rim_radius", rim_radius), TF("tyre_width", width), TF("tyre_spin_inertia", spin_inertia),
-    TF("tyre_kz_ref", kz_ref), TF("tyre_pressure_ref", pressure_ref), TF("tyre_kz_per_pa", kz_per_pa), TF("tyre_cz", cz),
+    TF("tyre_kz_ref", kz_ref), TF("tyre_pressure_ref", pressure_ref), TF("tyre_kz_per_pa", kz_per_pa), TF("tyre_kz_flat", kz_flat), TF("tyre_cz", cz),
     TF("tyre_pressure", pressure), TF("tyre_k_rim", k_rim), TF("tyre_c_rim", c_rim), TF("tyre_rim_pinch", rim_pinch),
     TF("tyre_mu_x", mu_x), TF("tyre_mu_y", mu_y), TF("tyre_fz0", fz0), TF("tyre_ls_exp_x", ls_exp_x), TF("tyre_ls_exp_y", ls_exp_y),
     TF("tyre_falloff_level", falloff_level), TF("tyre_falloff_speed", falloff_speed), TF("tyre_patch_factor", patch_factor),

@@ -30,8 +30,7 @@ static double lut_eval(const dc_car_params* p, double rpm) {
 }
 
 static double kz_of(const dc_tyre_params* T, double p) {
-    double k = T->kz_ref + T->kz_per_pa * (p - T->pressure_ref);
-    return k < 0.04 * T->kz_ref ? 0.04 * T->kz_ref : k;
+    return dc_tyre_kz(T, p);
 }
 
 static v3 rack_point(const dc_car* c) {   /* rack COM in chassis frame (between the inner tie-rod joints) */
@@ -96,6 +95,33 @@ DC_API dc_car* dc_create(const dc_car_params* pin) {
         if (fabs(d) > 1e-9) c->r_p = 1.0 / (P->steer_ratio * d);
     }
     c->rack_max = fabs(c->r_p) * P->steer_lock_deg * M_PI / 180.0;
+    /* valid travel range of each linkage. A multi-link/DWB can pass through a toggle (rank loss of the link
+       constraint Jacobian) inside the configured droop/bump travel; the dynamics would then see unbounded
+       Jacobians. Scan by continuation (also at full lock for steered corners) and, if needed, pull the stop
+       in so it engages >= 20 mm before the linkage degenerates (|d(rot)/ds| > 3 rad/m or solve failure). */
+    c->kin_warn = 0;
+    for (int i = 0; i < 4; i++) {
+        const dc_axle_params* A = &P->axle[i / 2];
+        c->s_dn[i] = A->bumpstop_dn; c->s_up[i] = A->bumpstop_up;
+        int nr = c->K[i].steered ? 3 : 1;
+        for (int dir = -1; dir <= 1; dir += 2) {
+            double lim = (dir < 0 ? A->bumpstop_dn : A->bumpstop_up) + 0.06, bad = 1e9;
+            for (int ir = 0; ir < nr; ir++) {
+                double r = ir == 0 ? 0 : (ir == 1 ? c->rack_max : -c->rack_max);
+                dc_pose p = c->pose[i];
+                for (double s = 0; s <= lim + 1e-9; s += 0.002) {
+                    int ok = dc_kin_solve(&c->K[i], dir * s, r, &p, 1);
+                    if (!ok || vlen(p.Jw[0]) > 3.0 || vlen(p.Jp[0]) > 3.0) { if (s < bad) bad = s; break; }
+                }
+            }
+            double* st = dir < 0 ? &c->s_dn[i] : &c->s_up[i];
+            double need = dir < 0 ? *st : *st + 0.04;      /* bump side: progressive stop needs ~40 mm of room */
+            if (bad < need + 0.02) {
+                double v = bad - 0.02 - (dir < 0 ? 0 : 0.04); if (v < 0.01) v = 0.01;
+                *st = v; c->kin_warn |= 1 << i;
+            }
+        }
+    }
     c->I_sw = P->sw_inertia + P->column_inertia;
     c->I_pin = 2e-4;
     c->col_axis = vnorm(V3(-0.94, 0, 0.34));
@@ -312,13 +338,13 @@ static void internal_forces(dc_car* c, step_scratch* S, double* pe_out, double* 
         S->Fspring_ax[i] = Fs; S->Fdamp_ax[i] = Fd;
         /* bump stop (progressive) and droop stop, wheel units on the travel coordinate */
         double s = c->s[i], Fb = 0;
-        if (s > A->bumpstop_up) {
-            double x = s - A->bumpstop_up, x0 = 0.01;
+        if (s > c->s_up[i]) {
+            double x = s - c->s_up[i], x0 = 0.01;
             Fb = A->bumpstop_rate * x * (1 + x / x0);
             pe += A->bumpstop_rate * (0.5 * x * x + x * x * x / (3 * x0));
             if (!nodamp && c->sd[i] > 0) { double fd = 0.1 * sqrt(A->bumpstop_rate * (1 + x / x0) * c->m_c[i]) * 2 * c->sd[i]; Fb += fd; diss += fd * c->sd[i]; }
-        } else if (s < -A->bumpstop_dn) {
-            double x = s + A->bumpstop_dn;   /* negative */
+        } else if (s < -c->s_dn[i]) {
+            double x = s + c->s_dn[i];   /* negative */
             Fb = A->droop_rate * x;
             pe += 0.5 * A->droop_rate * x * x;
             if (!nodamp && c->sd[i] < 0) { double fd = 0.2 * sqrt(A->droop_rate * c->m_c[i]) * 2 * c->sd[i]; Fb += fd; diss += fd * c->sd[i]; }
@@ -803,4 +829,11 @@ DC_API int dc_step(dc_car* c, double dt) {
     int n = 0;
     while (c->acc_dt >= c->h - 1e-12 && n < 200) { dc_substep(c); c->acc_dt -= c->h; n++; }
     return n;
+}
+
+int dc_travel_limits(const dc_car* c, int i, double* dn, double* up) {
+    if (i < 0 || i > 3) return 0;
+    if (dn) *dn = c->s_dn[i];
+    if (up) *up = c->s_up[i];
+    return (c->kin_warn >> i) & 1;
 }

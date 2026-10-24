@@ -121,7 +121,7 @@ void dc_tyre_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc
     const int single = T->n_rays == 1;   /* classic single-ray "WheelCollider" baseline (comparison only) */
     const double span = T->ray_span_deg * M_PI / 180.0, dw = c->P.road_resolve > 1e-4 ? c->P.road_resolve : 0.025;
     double p = S->pressure;
-    double kz = T->kz_ref + T->kz_per_pa * (p - T->pressure_ref); if (kz < 0.04 * T->kz_ref) kz = 0.04 * T->kz_ref;
+    double kz = dc_tyre_kz(T, p);
     const double dlim = fmax(R - Rr, 0.01);
     /* sidewall progression is pressure-borne: a flat tyre folds onto the rim instead of stiffening */
     const double prog = 0.5 * fmin(fmax(p / T->pressure_ref, 0.0), 1.5);

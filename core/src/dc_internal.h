@@ -49,6 +49,8 @@ struct dc_car {
     int dbg;
     /* derived constants */
     double m_s, m_c[4]; v3 I_s_body, I_c_body[4];
+    double s_dn[4], s_up[4];       /* effective droop / bump-stop travel (stops pulled inside the linkage's valid range) */
+    int kin_warn;                  /* bit i: corner i stops were pulled in (linkage toggles inside configured travel) */
     double r_p, rack_max, r_k_b[2];  /* pinion radius, rack travel, brush stiffness per axle */
     double static_fz[4];
     v3 col_axis;                     /* steering column axis (chassis frame) */

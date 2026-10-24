@@ -41,6 +41,8 @@ typedef struct {
     double radius, rim_radius, width;      /* m */
     double spin_inertia;                   /* kg m^2 (tyre+rim+disc about axle) */
     double kz_ref, pressure_ref, kz_per_pa;/* vertical rate at reference pressure, d(rate)/d(pressure) */
+    double kz_flat;                        /* carcass-only rate at 0 gauge (N/m); 0 = plain linear law.
+                                              Below pressure_ref/2 the rate blends linearly to this value. */
     double cz;                             /* radial damping N s/m */
     double pressure;                       /* gauge pressure, Pa (hot/operating) */
     double k_rim, c_rim, rim_pinch;        /* rim bottoming: stiffness, damping, rubber thickness kept under rim */
@@ -213,6 +215,9 @@ DC_API int    dc_get_parts(const dc_car* c, dc_xform* out, int max);
 DC_API int    dc_get_segments(const dc_car* c, dc_seg* out, int max);
 DC_API void   dc_puncture(dc_car* c, int wheel, double leak_time_const); /* exponential leak, s */
 DC_API void   dc_set_pressure(dc_car* c, int wheel, double pa);
+/* effective droop/bump-stop travel of a corner (m); returns 1 if the configured stops were pulled in because the
+   linkage degenerates (toggle) inside the configured travel. */
+DC_API int    dc_travel_limits(const dc_car* c, int corner, double* droop, double* bump);
 DC_API double dc_ffb_torque(const dc_car* c);       /* column torque N m (same as telemetry) */
 DC_API const dc_car_params* dc_params(const dc_car* c);
 DC_API void   dc_debug_flags(dc_car* c, int flags);

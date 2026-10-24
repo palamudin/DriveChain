@@ -21,6 +21,13 @@ static double AUD_F = 0, AUD_T = 0;   /* worst Newton-3 residuals seen in any dy
 #define D2R (M_PI / 180.0)
 #define R2D (180.0 / M_PI)
 
+static const char* RDIR(void) { const char* r = getenv("DC_RESULTS"); return r && *r ? r : "results"; }
+/* car under test: defaults, or the car file named by $DC_CAR (e.g. DC_CAR=private/miata_ac.ini) */
+static void car_params(dc_car_params* P) {
+    dc_default_params(P);
+    const char* f = getenv("DC_CAR");
+    if (f && *f) { char e[256]; if (!dc_load_params(f, P, e, sizeof e)) { fprintf(stderr, "DC_CAR: %s\n", e); exit(2); } }
+}
 static void check(const char* name, int ok, const char* fmt, ...) {
     char buf[512]; va_list ap; va_start(ap, fmt); vsnprintf(buf, sizeof buf, fmt, ap); va_end(ap);
     fprintf(SUM, "[%s] %-34s %s\n", ok ? "PASS" : "FAIL", name, buf);
@@ -32,7 +39,7 @@ static void note(const char* fmt, ...) {
     fprintf(SUM, "       %s\n", buf); printf("       %s\n", buf);
 }
 static FILE* csv(const char* name, const char* header) {
-    char p[256]; snprintf(p, sizeof p, "results/%s", name);
+    char p[256]; snprintf(p, sizeof p, "%s/%s", RDIR(), name);
     FILE* f = fopen(p, "w"); if (!f) { perror(p); exit(1); }
     fprintf(f, "%s\n", header); return f;
 }
@@ -90,7 +97,7 @@ static dc_car* mk(dc_car_params* P, road_t* rd) {
 
 /* ================= 0. kinematics: camber/toe/caster vs travel; Ackermann ================= */
 static void test_kinematics(void) {
-    dc_car_params P; dc_default_params(&P); dc_car* c = mk(&P, NULL);
+    dc_car_params P; car_params(&P); dc_car* c = mk(&P, NULL);
     FILE* f = csv("kin_travel.csv", "axle,travel_mm,camber_deg,toe_deg,caster_deg,kpi_deg,scrub_mm,trail_mm,spring_len_mm,motion_ratio,track_change_mm");
     for (int ax = 0; ax < 2; ax++) {
         int i = ax * 2; dc_kin* K = &c->K[i];
@@ -149,7 +156,7 @@ static void test_kinematics(void) {
 
 /* ================= 1. static settle vs analytic ================= */
 static void test_static(void) {
-    dc_car_params P; dc_default_params(&P);
+    dc_car_params P; car_params(&P);
     for (int pass = 0; pass < 3; pass++) {
         dc_car* c = mk(&P, NULL);
         double pos[3] = {0, 0, 0.0};
@@ -204,7 +211,7 @@ static void test_static(void) {
 
 /* ================= 2. momentum / energy ================= */
 static void test_conservation(void) {
-    dc_car_params P; dc_default_params(&P);
+    dc_car_params P; car_params(&P);
     P.rack_friction = 0; P.column_friction = 0; P.assist = 0; P.torsion_c = 0;
     for (int a = 0; a < 2; a++) { P.axle[a].brake_torque = 0; }
     const char* names[2] = {"cons_flat.csv", "cons_rough.csv"};
@@ -225,6 +232,11 @@ static void test_conservation(void) {
             if (n == 0) { E0 = E; p0x = T.momentum[0]; p0y = T.momentum[1]; L0 = T.ang_momentum[2]; }
             dE = fmax(dE, fabs(E - E0) / E0);
             if (T.time <= 6.0) dE6 = dE;
+            if (pass && getenv("DC_PROBE") && T.time > atof(getenv("DC_PROBE")) && T.time < atof(getenv("DC_PROBE")) + 0.1 && n % 4 == 0) {
+                printf("t %.4f E %.0f PE %.0f rack %.4f sw %.1f |", T.time, E, T.potential, T.rack_pos, T.sw_angle * 57.3);
+                for (int w = 0; w < 4; w++) printf(" [%d tr %.3f fz %.0f rim %.0f bs %.0f sp %.0f defl %.3f]", w, T.w[w].travel, T.w[w].fz, T.w[w].rim_force, T.w[w].bumpstop_force, T.w[w].spring_force, T.w[w].deflection);
+                printf("\n");
+            }
             dP = fmax(dP, fmax(fabs(T.momentum[0] - p0x), fabs(T.momentum[1] - p0y)));
             dL = fmax(dL, fabs(T.ang_momentum[2] - L0));
             double F = sqrt(T.resid_force[0] * T.resid_force[0] + T.resid_force[1] * T.resid_force[1] + T.resid_force[2] * T.resid_force[2]);
@@ -272,7 +284,7 @@ static void rig_point(dc_car* c, double Fz, double alpha, double kappa, double g
     *Fx = t.Fx; *Fy = t.Fy; *Mz = t.Mz_brush + t.Mt; *tp = t.tp; *al_tr = atan(S->ey / t.sig_y);
 }
 static void test_tyre_rig(void) {
-    dc_car_params P; dc_default_params(&P); dc_car* c = mk(&P, NULL);
+    dc_car_params P; car_params(&P); dc_car* c = mk(&P, NULL);
     const dc_tyre_params* T = &P.axle[0].tyre;
     FILE* f = csv("tyre_lateral.csv", "Fz,alpha_deg,Fy,Mz,trail_mm,mu");
     double loads[3] = {0.5 * T->fz0, T->fz0, 2 * T->fz0};
@@ -310,7 +322,7 @@ static void test_tyre_rig(void) {
     rig_point(c, T->fz0, 0, 0, -3 * D2R, 15, &Fx, &Fyc, &Mz, &tp, &at);
     /* the brush curve is a plateau after full sliding: report the first slip angle reaching 99.5 % of the peak */
     double a995 = 0, asl = 0, mzpk = 0;
-    { FILE* g = fopen("results/tyre_lateral.csv", "r"); char ln[256]; double fz, al, fy, mz, tr, mu;
+    { char gp[256]; snprintf(gp, sizeof gp, "%s/tyre_lateral.csv", RDIR()); FILE* g = fopen(gp, "r"); char ln[256]; double fz, al, fy, mz, tr, mu;
       if (g) { if (fgets(ln, sizeof ln, g)) {} while (fgets(ln, sizeof ln, g)) if (sscanf(ln, "%lf,%lf,%lf,%lf,%lf,%lf", &fz, &al, &fy, &mz, &tr, &mu) == 6 && fabs(fz - loads[1]) < 1) {
           if (a995 == 0 && fy >= 0.995 * pkFy[1]) a995 = al;
           if (fabs(mz) > mzpk) mzpk = fabs(mz); else if (asl == 0 && fabs(mz) < 0.005 * mzpk) asl = al;   /* full sliding: Mz -> 0 */
@@ -350,7 +362,7 @@ static void test_tyre_rig(void) {
 
 /* ================= 3b. skidpad ================= */
 static void test_skidpad(void) {
-    dc_car_params P; dc_default_params(&P); dc_car* c = mk(&P, NULL);
+    dc_car_params P; car_params(&P); dc_car* c = mk(&P, NULL);
     double R0 = 40, pos[3] = {0, 0, 0}; dc_reset(c, pos, 0, 8);
     FILE* f = csv("skidpad.csv", "t,v,ay_g,sw_deg,delta_deg,beta_deg,r,radius,fz0,fz1,fz2,fz3,alpha_f_deg,alpha_r_deg,col_torque,mz0,mz1");
     double h = 1.0 / P.substep_hz, L = c->K[0].hub0.x - c->K[2].hub0.x, ie = 0; pi_t sp = {0};
@@ -396,7 +408,7 @@ static void test_skidpad(void) {
 
 /* ================= 4. step steer ================= */
 static void test_step_steer(void) {
-    dc_car_params P; dc_default_params(&P); dc_car* c = mk(&P, NULL);
+    dc_car_params P; car_params(&P); dc_car* c = mk(&P, NULL);
     double pos[3] = {0, 0, 0}, V = 80 / 3.6; dc_reset(c, pos, 0, V);
     FILE* f = csv("step_steer.csv", "t,sw_deg,r_degs,ay_g,beta_deg,col_torque,driver_torque,fz0,fz1,fz2,fz3,roll_deg");
     double h = 1.0 / P.substep_hz; pi_t sp = {0}; dc_input in = {0}; dc_telemetry T; memset(&T, 0, sizeof T);
@@ -432,7 +444,7 @@ static void test_hands_off(void) {
     const char* nm[3] = {"handsoff.csv", "handsoff_held.csv", "handsoff_manual.csv"};
     double res[3][4];
     for (int pass = 0; pass < 3; pass++) {
-        dc_car_params P; dc_default_params(&P); if (pass == 2) P.assist = 0; dc_car* c = mk(&P, NULL);
+        dc_car_params P; car_params(&P); if (pass == 2) P.assist = 0; dc_car* c = mk(&P, NULL);
         double pos[3] = {0, 0, 0}, V = 22; dc_reset(c, pos, 0, V);
         FILE* f = csv(nm[pass], "t,sw_deg,r_degs,beta_deg,alpha_f_deg,alpha_r_deg,col_torque,mz0,mz1,ay_g,v");
         double h = 1.0 / P.substep_hz; pi_t sp = {0}; dc_input in = {0}; dc_telemetry T; memset(&T, 0, sizeof T);
@@ -475,7 +487,7 @@ static void test_kerb(void) {
     const char* nm[2] = {"kerb_fan.csv", "kerb_single.csv"};
     double pk[2][4];
     for (int pass = 0; pass < 2; pass++) {
-        dc_car_params P; dc_default_params(&P);
+        dc_car_params P; car_params(&P);
         if (pass == 1) for (int a = 0; a < 2; a++) { P.axle[a].tyre.n_rays = 1; P.axle[a].tyre.n_rows = 1; }
         road_t rd = {1}; dc_car* c = mk(&P, &rd);
         double pos[3] = {0, 0, 0}, V = 60 / 3.6; dc_reset(c, pos, 0, V);
@@ -506,7 +518,7 @@ static void test_kerb(void) {
 
 /* ================= 7. puncture ================= */
 static void test_puncture(void) {
-    dc_car_params P; dc_default_params(&P); dc_car* c = mk(&P, NULL);
+    dc_car_params P; car_params(&P); dc_car* c = mk(&P, NULL);
     double pos[3] = {0, 0, 0}, V = 22; dc_reset(c, pos, 0, V);
     FILE* f = csv("puncture.csv", "t,pressure_kpa,fz1,defl1_mm,patch1_mm,rim1,y,r_degs,col_torque,sw_deg,fx1,omega_ratio");
     double h = 1.0 / P.substep_hz; pi_t sp = {0}; dc_input in = {0}; dc_telemetry T; memset(&T, 0, sizeof T);
@@ -535,7 +547,7 @@ static void test_puncture(void) {
 static void test_assist(void) {
     double park[2] = {0, 0}, road[2] = {0, 0};
     for (int as = 0; as < 2; as++) {
-        dc_car_params P; dc_default_params(&P); P.assist = as; dc_car* c = mk(&P, NULL);
+        dc_car_params P; car_params(&P); P.assist = as; dc_car* c = mk(&P, NULL);
         double pos[3] = {0, 0, 0}; dc_reset(c, pos, 0, 0);
         char nm[64]; snprintf(nm, sizeof nm, "assist_%s.csv", as ? "on" : "off");
         FILE* f = csv(nm, "phase,t,sw_deg,driver_torque,col_torque,assist_force,ay_g,speed");
@@ -572,7 +584,7 @@ static double now_s(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &
 static void test_perf(void) {
     FILE* f = csv("perf.csv", "config,us_per_substep,realtime_factor_at_hz");
     for (int cfg = 0; cfg < 3; cfg++) {
-        dc_car_params P; dc_default_params(&P); road_t rd = {2};
+        dc_car_params P; car_params(&P); road_t rd = {2};
         if (cfg == 1) for (int a = 0; a < 2; a++) { P.axle[a].tyre.n_rays = 7; P.axle[a].tyre.n_rows = 1; }
         dc_car* c = mk(&P, cfg == 2 ? &rd : NULL);
         double pos[3] = {0, 0, 0}; dc_reset(c, pos, 0, 20);
@@ -594,7 +606,7 @@ static void test_perf(void) {
 }
 
 int main(int argc, char** argv) {
-    SUM = fopen("results/summary.txt", "w");
+    { char sp[256]; snprintf(sp, sizeof sp, "%s/summary.txt", RDIR()); SUM = fopen(sp, "w"); }
     if (!SUM) { perror("results/summary.txt (run from repo root)"); return 1; }
     const char* only = argc > 1 ? argv[1] : NULL;
 #define RUN(n, fn) if (!only || strstr(only, n)) { printf("--- %s\n", n); fprintf(SUM, "--- %s\n", n); fn(); fflush(SUM); }

@@ -18,9 +18,9 @@
 [PASS] conserve: yaw ang. momentum Lz     max |dLz| = 2.359e-08 (L0 = 1053.0, 2.2e-11 rel)
 [PASS] conserve: energy drift (flat)      max |dE|/E0 = 2.16e-04 over 10 s (E0 = 130417 J)
 [PASS] newton3: residuals (flat)          max |sum m a - F_ext| = 1.16e-11 N, |sum dL/dt - T_ext| = 1.10e-09 N m
-[PASS] conserve: energy (rough, 6 s)      max |dE|/E0 = 6.53e-04 over 6 s on +-2 cm rough terrain, undamped & frictionless
-       conserve: rough 20 s (undamped resonance builds to wheel-lift/droop-stop/bump-stop slams): max |dE|/E0 = 3.12e-02, projection work -267.2 J
-[PASS] newton3: residuals (rough)         max |sum m a - F_ext| = 4.50e-10 N, |sum dL/dt - T_ext| = 6.98e-08 N m
+[PASS] conserve: energy (rough, 6 s)      max |dE|/E0 = 1.58e-03 over 6 s on +-2 cm rough terrain, undamped & frictionless
+       conserve: rough 20 s (undamped resonance builds to wheel-lift/droop-stop/bump-stop slams): max |dE|/E0 = 1.15e-02, projection work 21.8 J
+[PASS] newton3: residuals (rough)         max |sum m a - F_ext| = 4.74e-11 N, |sum dL/dt - T_ext| = 6.82e-09 N m
 --- tyre
        tyre @Fz0=1800: peak Fy/Fz 1.138 at 9.75 deg (99.5% of peak at 7.50 deg, full sliding (Mz->0) at 7.75 deg; target cfg mu_y 1.150, peak 8.50 deg); |Mz| peaks at 2.00 deg
        tyre load sensitivity: mu 1.338 / 1.138 / 0.967 at 0.5/1/2 Fz0 -> fitted exponent 0.766 (cfg 0.750)
@@ -56,10 +56,10 @@
        assist off/on: parking peak driver torque 34.9 / 5.4 N m; 20 m/s 45deg sine peak 7.37 / 2.07 N m
 [PASS] assist: reduces effort             parking ratio 0.15, road ratio 0.28
 --- perf
-       perf default 3x13 rays flat     60.84 us/substep -> 8x real time at 2000 Hz (one core)
-[PASS] perf: >= 5x real time at substep rate (< 100 us) 60.84 us/substep, 8.2x real time
-       perf 1x7 rays flat              31.11 us/substep -> 16x real time at 2000 Hz (one core)
-       perf 3x13 rays rough terrain    83.65 us/substep -> 6x real time at 2000 Hz (one core)
+       perf default 3x13 rays flat     55.15 us/substep -> 9x real time at 2000 Hz (one core)
+[PASS] perf: >= 5x real time at substep rate (< 100 us) 55.15 us/substep, 9.1x real time
+       perf 1x7 rays flat              28.75 us/substep -> 17x real time at 2000 Hz (one core)
+       perf 3x13 rays rough terrain    82.32 us/substep -> 6x real time at 2000 Hz (one core)
 --- audit
 [PASS] newton3: worst residual all tests  |sum m a - F_ext|/mg = 8.34e-16, |sum dL/dt - T_ext| = 7.27e-10 N m
 FAILURES: 0
