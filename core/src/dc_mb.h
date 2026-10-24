@@ -82,6 +82,9 @@ typedef struct {
     double W[64 * 64], ub[64], lb_[64], hb[64];
     int ready;
     int shake;                        /* 1: projection also corrects velocity (SHAKE/RATTLE-like, energy-consistent) */
+    void (*phi_cb)(void* user);       /* called after the position update, before projection: refresh CUSTOM rows' phi */
+    void* cb_user;
+    int pgs_iters;                    /* box-LCP Gauss-Seidel iteration cap (default 400) */
     /* stats */
     double pgs_res; int fact_fail;
 } mb_world;

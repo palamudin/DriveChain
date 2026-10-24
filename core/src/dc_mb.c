@@ -8,7 +8,7 @@
 
 static const v3 AX[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
 
-mb_world* mb_create(void) { mb_world* W = (mb_world*)calloc(1, sizeof(mb_world)); if (W) W->shake = 1; return W; }
+mb_world* mb_create(void) { mb_world* W = (mb_world*)calloc(1, sizeof(mb_world)); if (W) { W->shake = 1; W->pgs_iters = 400; } return W; }
 void mb_destroy(mb_world* W) {
     if (!W) return;
     free(W->nbr); free(W->nbr_blk); free(W->blkpos); free(W->blk); free(W->L); free(W->D); free(W->Dinv);
@@ -461,7 +461,7 @@ void mb_solve(mb_world* W) {
         }
         /* projected Gauss-Seidel on the small dense Schur complement (exact box LCP at convergence) */
         double res = 0;
-        for (int it = 0; it < 200; it++) {
+        for (int it = 0; it < W->pgs_iters; it++) {
             res = 0;
             for (int s = 0; s < nbx; s++) {
                 mb_joint* J = &W->Jt[W->box_j[s]]; int r = W->box_r[s];
@@ -502,6 +502,7 @@ void mb_integrate(mb_world* W, int project) {
         B->R = qtom(B->q);
     }
     if (!project) return;
+    if (W->phi_cb) W->phi_cb(W->cb_user);
     /* post-stabilisation: one Gauss-Newton projection with the factorised system:  [A J^T; J -E][dx; nu] = [0; -phi] */
     double* x = W->z; memset(x, 0, sizeof(double) * W->N);
     double Jt[6][MB_JB][6], phi[6];
