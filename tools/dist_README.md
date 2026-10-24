@@ -46,7 +46,23 @@ The console window prints the joysticks it found, which one it picked, and wheth
 - Keep `bind = 127.0.0.1`.
 
 ## Proving ground spots
-Keys **1–9** teleport to: start, skidpad, pave, undulations, oval, slalom, bumps (single-wheel bumps/potholes and camber change), ruts, bumpy_corner.
+You spawn at the **start hub**: a painted box on the flat dynamics pad inside the proving-ground loop, with a green "1 START HUB" sign. Every spot has a numbered blue sign.
+
+| Key | Spot | What is there |
+|---|---|---|
+| 1 | hub | start hub on the dynamics pad (default spawn) |
+| 2 | start | start of straight 1 (eastbound) |
+| 3 | skidpad | R 40 m skidpad ring |
+| 4 | pave | 200 m of granite setts (cobbles) |
+| 5 | undulations | long-wave (25 m, ±90 mm) and short (9 m, ±35 mm) undulations, then a diagonal warp |
+| 6 | oval | entry to the 6° banked east turn |
+| 7 | slalom | 12 cones, 18 m spacing |
+| 8 | bumps | single-wheel bumps, potholes and a camber change |
+| 9 | ruts | tramline ruts |
+| 0 | bumpy_corner | bumpy banked west turn |
+
+- The list is shown on screen for ~10 s at start; **F1** shows or hides it.
+- Choose the spawn in `demo.ini`: `[start] spot = hub` (any name above). Delete the `spot` line to use `s`/`d` (metres along the loop / lateral offset) instead.
 
 ## Gearbox and clutch
 - **H-shifter:** set `gear1_button` … `gear7_button` and `reverse_button`. If no gear button is held, the box is in neutral.

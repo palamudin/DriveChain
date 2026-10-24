@@ -63,8 +63,8 @@ int sim_init(sim_t* S, cfg_t* cfg, track_t* trk, audio_t* audio, char* err, int 
     S->gear = 1;
     if (cfg_str(cfg, "start.x", NULL))
         sim_reset_at(S, cfg_num(cfg, "start.x", 0), cfg_num(cfg, "start.y", 0), cfg_num(cfg, "start.yaw_deg", 0) * M_PI / 180, cfg_num(cfg, "start.speed", 0));
-    else if (cfg_str(cfg, "start.spot", NULL) && track_spot_by_name(trk, cfg_str(cfg, "start.spot", "")) >= 0) {
-        double x, y, yaw; track_spot(trk, track_spot_by_name(trk, cfg_str(cfg, "start.spot", "")), &x, &y, &yaw);
+    else if (track_spot_by_name(trk, cfg_str(cfg, "start.spot", cfg_str(cfg, "start.s", NULL) ? "" : "hub")) >= 0) {   /* default: proving-ground start hub */
+        double x, y, yaw; track_spot(trk, track_spot_by_name(trk, cfg_str(cfg, "start.spot", cfg_str(cfg, "start.s", NULL) ? "" : "hub")), &x, &y, &yaw);
         sim_reset_at(S, x, y, yaw, cfg_num(cfg, "start.speed", 0));
     }
     else sim_reset_on_track(S, cfg_num(cfg, "start.s", 30), cfg_num(cfg, "start.d", 0), cfg_num(cfg, "start.speed", 0));

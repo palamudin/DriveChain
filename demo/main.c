@@ -325,7 +325,7 @@ static void bar(int x, int y, int w, int h, double v, Color c, const char* lab) 
     DrawRectangle(x, y, w, h, (Color){0, 0, 0, 120}); DrawRectangle(x, y + (int)(h * (1 - fmin(fmax(v, 0), 1))), w, (int)(h * fmin(fmax(v, 0), 1)), c);
     DrawText(lab, x + w / 2 - MeasureText(lab, 12) / 2, y + h + 3, 12, RAYWHITE);
 }
-static const char* surf_name(int s) { static const char* n[] = {"tarmac", "kerb", "grass", "rough", "sausage", "paint"}; return s >= 0 && s < 6 ? n[s] : "?"; }
+static const char* surf_name(int s) { static const char* n[] = {"tarmac", "kerb", "grass", "rough", "sausage", "paint", "pave", "pad"}; return s >= 0 && s < 8 ? n[s] : "?"; }
 static void draw_hud(const sim_snap* V, const dc_car_params* P, int sw_, int sh_, double fps, const char* cam, int full) {
     const dc_telemetry* t = &V->t; char b[512]; int x = 12, y = 10;
     DrawRectangle(0, 0, 410, full ? 405 : 120, (Color){0, 0, 0, 140});
@@ -379,9 +379,24 @@ static void draw_hud(const sim_snap* V, const dc_car_params* P, int sw_, int sh_
         DrawLine(x0, gy + gh / 2 - (int)(H_sw[i0] * gh / 2 / 6.0), x1, gy + gh / 2 - (int)(H_sw[i1] * gh / 2 / 6.0), SKYBLUE);
     }
     DrawText("FFB N m (y) / steer (b)", gx, gy + gh + 2, 10, RAYWHITE);
-    DrawText("keys: arrows/WASD drive  A/Z or Q/E shift  C cam  F2 x-ray  F3 hud  F4 forces  H assist  P puncture  R reset  O autopilot  G plug-in driver  Space handbrake  LShift clutch",
+    DrawText("keys: 1-9,0 spots  F1 spot list  arrows/WASD drive  A/Z or Q/E shift  C cam  F2 x-ray  F3 hud  F4 forces  H assist  P puncture  R reset  O autopilot  G plug-in driver  Space handbrake  LShift clutch",
              10, sh_ - 18, 12, (Color){230, 230, 230, 200});
     (void)sw_;
+}
+
+static const char* spot_label(int i);
+/* spot list overlay: shown at start for ~10 s (fades), F1 toggles */
+static int HELP_ON = 1, HELP_STICKY = 0; static double HELP_T0 = 0;
+static void draw_spot_help(int sw_, int sh_, float a) {
+    int w = 360, h = 30 + 22 * TRK_NSPOT + 26, x = sw_ - w - 16, y = 70; (void)sh_;
+    DrawRectangle(x, y, w, h, (Color){10, 20, 30, (unsigned char)(200 * a)});
+    DrawText("PROVING GROUND  -  teleport keys", x + 12, y + 8, 18, (Color){255, 220, 120, (unsigned char)(255 * a)});
+    for (int i = 0; i < TRK_NSPOT; i++) {
+        double px, py, pyaw; if (!track_spot(&TRK, i, &px, &py, &pyaw)) continue;
+        char b[96]; snprintf(b, sizeof b, "%d   %s", i < 9 ? i + 1 : 0, spot_label(i));
+        DrawText(b, x + 16, y + 34 + 22 * i, 18, (Color){240, 240, 240, (unsigned char)(255 * a)});
+    }
+    DrawText("F1 show/hide   R reset   G plug-in driver", x + 12, y + h - 24, 14, (Color){180, 220, 255, (unsigned char)(255 * a)});
 }
 
 /* ---------------- physics thread ---------------- */
@@ -451,6 +466,48 @@ static Camera3D make_cam(int mode, const sim_snap* V, const dc_car_params* P, do
     return cam;
 }
 
+/* ---------------- proving-ground signage: a numbered board per teleport spot (key 1..9, 0) ---------------- */
+static RenderTexture2D SIGN_RT[TRK_NSPOT]; static double SIGN_P[TRK_NSPOT][3]; static int NSIGN = 0;
+static const char* spot_label(int i) {
+    static const char* L[TRK_NSPOT] = {"START HUB", "START STRAIGHT", "SKIDPAD R40", "PAVE", "UNDULATIONS", "BANKED OVAL", "SLALOM", "BUMPS / POTHOLES", "RUTS", "BUMPY CORNER"};
+    return L[i];
+}
+static void build_signs(void) {
+    if (TRK.layout != TRACK_PROVING) return;
+    for (int i = 0; i < TRK_NSPOT; i++) {
+        double x, y, yaw; if (!track_spot(&TRK, i, &x, &y, &yaw)) continue;
+        double off = i == 0 ? 7.0 : (i == 2 || i == 6 ? 6.0 : TRK.half_w + TRK.kerb_w + 3.0), ahead = i == 0 ? 14.0 : 12.0;
+        double sx = x + cos(yaw) * ahead + sin(yaw) * off, sy = y + sin(yaw) * ahead - cos(yaw) * off;   /* right of the spot, ahead */
+        SIGN_P[i][0] = sx; SIGN_P[i][1] = sy; SIGN_P[i][2] = track_height(&TRK, sx, sy, NULL, NULL, NULL, NULL);
+        SIGN_RT[i] = LoadRenderTexture(512, 128);
+        BeginTextureMode(SIGN_RT[i]);
+        ClearBackground(i == 0 ? (Color){20, 90, 40, 255} : (Color){20, 50, 110, 255});
+        DrawRectangleLinesEx((Rectangle){4, 4, 504, 120}, 6, RAYWHITE);
+        char b[64]; snprintf(b, sizeof b, "%d", i < 9 ? i + 1 : 0);
+        DrawText(b, 24, 22, 84, YELLOW);
+        DrawText(spot_label(i), 100, i == 0 ? 18 : 40, 44, RAYWHITE);
+        if (i == 0) DrawText("PROVING GROUND   keys 1-9,0   F1 list", 100, 76, 26, (Color){220, 255, 220, 255});
+        EndTextureMode();
+        NSIGN = i + 1;
+    }
+}
+static void draw_signs(Camera3D cam) {
+    for (int i = 0; i < NSIGN; i++) {
+        const double* p = SIGN_P[i]; float h = i == 0 ? 3.6f : 3.0f, w = i == 0 ? 6.0f : 4.4f;
+        DrawCylinder(R3(p[0], p[1], p[2]), 0.06f, 0.06f, h - w / 8, 8, (Color){200, 200, 200, 255});
+        DrawBillboardRec(cam, SIGN_RT[i].texture, (Rectangle){0, 0, 512, -128}, R3(p[0], p[1], p[2] + h), (Vector2){w, w / 4}, WHITE);
+    }
+    if (TRK.layout == TRACK_PROVING) {   /* painted start box + corner poles at the hub */
+        double x, y, yaw; track_spot(&TRK, 0, &x, &y, &yaw);
+        double z = track_height(&TRK, x, y, NULL, NULL, NULL, NULL) + 0.01;
+        Color wc = (Color){235, 235, 235, 255};
+        DrawCube(R3(x - 4, y, z), 0.15f, 0.01f, 5.0f, wc); DrawCube(R3(x + 5, y, z), 0.15f, 0.01f, 5.0f, wc);
+        DrawCube(R3(x + 0.5, y + 2.5, z), 9.0f, 0.01f, 0.15f, wc); DrawCube(R3(x + 0.5, y - 2.5, z), 9.0f, 0.01f, 0.15f, wc);
+        for (int k = 0; k < 4; k++) { double px = x + (k & 1 ? 5 : -4), py = y + (k & 2 ? 2.5 : -2.5);
+            DrawCylinder(R3(px, py, z), 0.05f, 0.05f, 1.2f, 8, k < 2 ? (Color){255, 200, 0, 255} : (Color){0, 200, 80, 255}); }
+    }
+}
+
 static void draw_scene(Camera3D cam, const sim_snap* V, const dc_car_params* P, int xray, int forces, int camode) {
     float vp[3] = {cam.position.x, cam.position.y, cam.position.z}; SetShaderValue(LIT, LOC_VIEW, vp, SHADER_UNIFORM_VEC3);
     BeginMode3D(cam); rlDisableBackfaceCulling();   /* raylib re-enables culling in some draw calls; terrain winding must not matter */
@@ -465,6 +522,7 @@ static void draw_scene(Camera3D cam, const sim_snap* V, const dc_car_params* P, 
         DrawCylinder(R3(TRK.cone_x[i], TRK.cone_y[i], z + 0.03), 0.025f, 0.17f, 0.68f, 10, (Color){245, 110, 20, 255});
         DrawCylinder(R3(TRK.cone_x[i], TRK.cone_y[i], z + 0.36), 0.09f, 0.11f, 0.12f, 10, (Color){240, 240, 240, 255});
     }
+    draw_signs(cam);
     draw_car(V, P, xray);
     if (xray || !CM.ok || camode == CAM_WHEEL) { if (xray) rlDisableDepthTest(); draw_links(V); rlEnableDepthTest(); }
     if (forces) { rlDisableDepthTest(); draw_forces(V, P); rlEnableDepthTest(); }
@@ -489,6 +547,7 @@ int main(int argc, char** argv) {
     audio_init(&AUD, 44100, 1000);
     AUD.master = (float)cfg_num(&CFG, "audio.master", 0.8); AUD.engine_gain = (float)cfg_num(&CFG, "audio.engine", 1.0);
     AUD.tyre_gain = (float)cfg_num(&CFG, "audio.tyres", 1.0); AUD.road_gain = (float)cfg_num(&CFG, "audio.road", 1.0); AUD.wind_gain = (float)cfg_num(&CFG, "audio.wind", 1.0);
+    if (headless && (getenv("DEMO_SPOT") || !cfg_str(&CFG, "start.spot", NULL))) cfg_set(&CFG, "start.spot", getenv("DEMO_SPOT") ? getenv("DEMO_SPOT") : "start");   /* autopilot shots start on the straight */
     if (headless) { cfg_set(&CFG, "input.device", "keyboard"); if (!getenv("DEMO_MANUAL")) cfg_set(&CFG, "autopilot.enabled", "1"); }
     if (!sim_init(&SIM, &CFG, &TRK, &AUD, err, sizeof err)) { fprintf(stderr, "car init failed: %s\n", err); return 1; }
     const dc_car_params* P = dc_params(SIM.car);
@@ -516,7 +575,7 @@ int main(int argc, char** argv) {
     LOC_VIEW = GetShaderLocation(LIT, "viewPos"); LOC_SUN = GetShaderLocation(LIT, "sunDir"); LOC_FOG = GetShaderLocation(LIT, "fogDen");
     Vector3 sun = Vector3Normalize((Vector3){-0.45f, -0.8f, -0.35f}); SetShaderValue(LIT, LOC_SUN, &sun, SHADER_UNIFORM_VEC3);
     float fog = 0.0022f; SetShaderValue(LIT, LOC_FOG, &fog, SHADER_UNIFORM_FLOAT);
-    double tw0 = GetTime(); build_world(); printf("[demo] world: %d chunks in %.1f s\n", NCH, GetTime() - tw0); fflush(stdout);
+    double tw0 = GetTime(); build_world(); build_signs(); HELP_T0 = GetTime(); for (int i = 0; i < TRK_NSPOT; i++) { double a_, b_, c_; if (track_spot(&TRK, i, &a_, &b_, &c_)) printf("[demo] key %d -> %s\n", i < 9 ? i + 1 : 0, spot_label(i)); } printf("[demo] world: %d chunks in %.1f s\n", NCH, GetTime() - tw0); fflush(stdout);
     if (load_carmesh(cfg_str(&CFG, "car.mesh_dir", ""))) printf("[demo] car mesh loaded (%d body meshes)\n", CM.body.meshCount);
     else printf("[demo] no car mesh -> placeholder components\n");
 
@@ -561,7 +620,7 @@ int main(int argc, char** argv) {
         if (IsKeyPressed(KEY_E) || IsKeyPressed(KEY_PAGE_UP)) C->shift_up++;
         if (IsKeyPressed(KEY_Q) || IsKeyPressed(KEY_PAGE_DOWN) || IsKeyPressed(KEY_Z)) C->shift_down++;
         if (IsKeyPressed(KEY_R)) C->reset++;
-        for (int k = 0; k < TRK_NSPOT; k++) if (IsKeyPressed(KEY_ONE + k)) { C->spot = k; C->spot_req++; }
+        for (int k = 0; k < TRK_NSPOT; k++) if (IsKeyPressed(k < 9 ? KEY_ONE + k : KEY_ZERO)) { C->spot = k; C->spot_req++; }
         if (IsKeyPressed(KEY_P)) C->puncture++;
         if (IsKeyPressed(KEY_H)) C->toggle_assist++;
         if (IsKeyPressed(KEY_O)) C->autopilot++;
@@ -578,6 +637,7 @@ int main(int argc, char** argv) {
             printf("[trace] t %.1f s %.0f d %+.1f v %.1f gear %d rpm %.0f ay %+.2f sw %+.0f\n", VIEW.sim_time, s_, d_, VIEW.t.speed * 3.6, VIEW.t.gear, VIEW.t.engine_rpm, VIEW.t.ay / 9.81, VIEW.t.sw_angle * 57.3); }
         pthread_mutex_unlock(&MTX);
         if (IsKeyPressed(KEY_C)) { camode = (camode + 1) % CAM_N; CHASE_INIT = 0; }
+        if (IsKeyPressed(KEY_F1)) { int vis = HELP_ON && (HELP_STICKY || GetTime() < HELP_T0 + 12.0); if (vis) HELP_ON = 0; else { HELP_ON = 1; HELP_STICKY = 1; } }
         if (IsKeyPressed(KEY_F2)) xray = !xray;
         if (IsKeyPressed(KEY_F3)) hud = (hud + 1) % 3;
         if (IsKeyPressed(KEY_F4)) forces = !forces;
@@ -620,6 +680,8 @@ int main(int argc, char** argv) {
             draw_scene(cam, &VIEW, P, xray, forces, cur_cam);
         }
         if (hud) draw_hud(&VIEW, P, sw, sh, GetFPS(), CAMN[cur_cam], hud == 1);
+        { double now_ = GetTime(), a = HELP_ON ? (HELP_STICKY ? 1.0 : fmin(1.0, fmax(0.0, (HELP_T0 + 12.0 - now_) / 2.0))) : 0.0;
+          if (a > 0 && (!headless || getenv("DEMO_HELP"))) draw_spot_help(sw, sh, (float)a); }
         EndDrawing();
         if (take) {
             Image im = LoadImageFromScreen(); ExportImage(im, take->file); UnloadImage(im);

@@ -304,17 +304,21 @@ void track_point(const track_t* T, double s, double d, double* x, double* y, dou
     *x = px - ty * d; *y = py + tx * d; if (yaw) *yaw = atan2(ty, tx);
 }
 
-static const char* SPOTN[TRK_NSPOT] = {"start", "skidpad", "pave", "undulations", "oval", "slalom", "bumps", "ruts", "bumpy_corner"};
+static const char* SPOTN[TRK_NSPOT] = {"hub", "start", "skidpad", "pave", "undulations", "oval", "slalom", "bumps", "ruts", "bumpy_corner"};
+/* proving-ground start hub: on the flat dynamics pad (inside the loop), facing east toward the skidpad / slalom */
+#define HUB_X 95.0
+#define HUB_Y 80.0
 const char* track_spot(const track_t* T, int i, double* x, double* y, double* yaw) {
     if (i < 0 || i >= TRK_NSPOT) return NULL;
-    if (T->layout != TRACK_PROVING) { if (i) return NULL; track_point(T, T->start_s, 0, x, y, yaw); return SPOTN[0]; }
+    if (T->layout != TRACK_PROVING) { if (i > 1) return NULL; track_point(T, T->start_s, 0, x, y, yaw); return SPOTN[i]; }
     switch (i) {
-    case 1: *x = T->skid_cx; *y = T->skid_cy - T->skid_r; *yaw = 0; break;   /* on the ring, driving CCW */
-    case 5: *x = T->cone_x[0] - 60; *y = T->cone_y[0]; *yaw = 0; break;
+    case 0: *x = HUB_X; *y = HUB_Y; *yaw = 0; break;
+    case 2: *x = T->skid_cx; *y = T->skid_cy - T->skid_r; *yaw = 0; break;   /* on the ring, driving CCW */
+    case 6: *x = T->cone_x[0] - 60; *y = T->cone_y[0]; *yaw = 0; break;
     default: {
-        static const double ss[TRK_NSPOT] = {20, 0, 60, 300, 560, 0, 0, 0, 0};
+        static const double ss[TRK_NSPOT] = {0, 20, 0, 60, 300, 560, 0, 0, 0, 0};
         double s = ss[i];
-        if (i == 6) s = T->s_str2 + 60; if (i == 7) s = T->s_str2 + 410; if (i == 8) s = T->s_arc2 + 10;
+        if (i == 7) s = T->s_str2 + 60; if (i == 8) s = T->s_str2 + 410; if (i == 9) s = T->s_arc2 + 10;
         track_point(T, s, 0, x, y, yaw);
     } }
     return SPOTN[i];

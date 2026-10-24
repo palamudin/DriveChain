@@ -72,7 +72,7 @@ The demo's proving layout includes:
 - crossfall/camber change, ruts and a bumpy corner
 - a banked oval, a skidpad and a slalom
 
-Keys 1–9 teleport to the spots: start, skidpad, pave, undulations, oval, slalom, bumps, ruts, bumpy_corner. Screenshots are in results/shots/ (gitignored, because they render the private mesh).
+The demo spawns at the start hub on the dynamics pad (signposted; `[start] spot` in demo.ini). Keys 1–9 and 0 teleport to the spots: hub, start, skidpad, pave, undulations, oval, slalom, bumps, ruts, bumpy_corner. The list shows on the HUD for ~10 s at start, and F1 toggles it. Screenshots are in results/shots/ (gitignored, because they render the private mesh).
 
 ## Driving it from code
 See docs/DRIVER_INTERFACE.md. A bot, script or Python drives through finite-strength hands on the rim and pedals, over JSON lines (stdin lockstep host, demo TCP port or Unity bridge). The human can take over at any time.

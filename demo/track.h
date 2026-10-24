@@ -7,7 +7,7 @@
 enum { SURF_TARMAC = 0, SURF_KERB = 1, SURF_GRASS = 2, SURF_ROUGH = 3, SURF_SAUSAGE = 4, SURF_LINE = 5, SURF_PAVE = 6, SURF_PAD = 7 };
 enum { TRACK_CIRCUIT = 0, TRACK_PROVING = 1 };
 #define TRK_MAXCONE 64
-#define TRK_NSPOT 9
+#define TRK_NSPOT 10   /* keys 1..9, 0 */
 typedef struct {
     int n; double ds, length;
     double px[TRK_MAXS], py[TRK_MAXS], tx[TRK_MAXS], ty[TRK_MAXS], curv[TRK_MAXS], s[TRK_MAXS];
