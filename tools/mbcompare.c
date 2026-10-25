@@ -64,7 +64,7 @@ static double yaw_of(void) { dc_xform x[DC_PART_COUNT]; dc_get_parts(C, x, DC_PA
 static void pos_of(double* x, double* y) { dc_xform p[DC_PART_COUNT]; dc_get_parts(C, p, DC_PART_COUNT); *x = p[0].pos[0]; *y = p[0].pos[1]; }
 static void csv_open(const char* dir, const char* name) {
     char fn[512]; snprintf(fn, sizeof fn, "%s/%s.csv", dir, name); CSV = fopen(fn, "w");
-    fprintf(CSV, "t,x,y,yaw,speed,ay,yaw_rate,beta,sw,column_torque,rack_force,fz0,fz1,fz2,fz3,alpha0,alpha2,travel0,travel1,travel2,travel3,steer0,steer1\n");
+    fprintf(CSV, "t,x,y,yaw,speed,ay,yaw_rate,beta,sw,column_torque,rack_force,fz0,fz1,fz2,fz3,alpha0,alpha2,travel0,travel1,travel2,travel3,steer0,steer1,fx0,fy0,fx1,fy1,fx2,fy2,fx3,fy3,aks0,aks1,aks2,aks3,kss2,kss3\n");
 }
 static void csv_row(void) {
     double x, y; pos_of(&x, &y);
@@ -72,6 +72,10 @@ static void csv_row(void) {
             SIMT, x, y, yaw_of(), T.speed, T.ay, T.yaw_rate, atan2(T.vy, fmax(fabs(T.vx), 0.5)), T.sw_angle, T.column_torque, T.rack_force,
             T.w[0].fz, T.w[1].fz, T.w[2].fz, T.w[3].fz, T.w[0].slip_angle, T.w[2].slip_angle,
             T.w[0].travel, T.w[1].travel, T.w[2].travel, T.w[3].travel, T.w[0].steer, T.w[1].steer);
+    fseek(CSV, -1, SEEK_CUR);
+    for (int k = 0; k < 4; k++) fprintf(CSV, ",%.1f,%.1f", T.w[k].fx, T.w[k].fy);
+    for (int k = 0; k < 4; k++) fprintf(CSV, ",%.5f", T.w[k].slip_angle_ss);
+    fprintf(CSV, ",%.4f,%.4f\n", T.w[2].slip_ratio_ss, T.w[3].slip_ratio_ss);
 }
 #define SUM(name, val, unit) printf("%-10s %-28s %12.4f %s\n", tag, name, (double)(val), unit)
 static const char* tag = "run";
@@ -181,7 +185,7 @@ static void m_handsoff(const char* dir) {
     for (int i = 0; i < 40; i++) { tick(0); csv_row(); }
     cmd.handbrake = 0; cmd.throttle = 1.0; dc_driver_command(D, &cmd);
     for (int i = 0; i < 12; i++) { tick(0); csv_row(); }
-    cmd.steer_mode = DC_DRV_HANDS_OFF; cmd.throttle = 0.7; dc_driver_command(D, &cmd);
+    cmd.steer_mode = DC_DRV_HANDS_OFF; cmd.throttle = getenv("HO_THR") ? atof(getenv("HO_THR")) : 0.7; dc_driver_command(D, &cmd);
     double sw_min = 1e9, beta_max = 0, corr_n = 0, corr_e = 0, bf_min = 1e9;
     for (int i = 0; i < 360; i++) { tick(0); csv_row();
         double beta = atan2(T.vy, fmax(fabs(T.vx), 0.5));

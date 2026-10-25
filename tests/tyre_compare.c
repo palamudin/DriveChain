@@ -67,7 +67,7 @@ int main(int argc, char** argv) {
         for (int g = 0; g < 2; g++) for (int l = 0; l < 4; l++) {
             if (g && l != 1) continue;
             double gam = g ? -3 * D2R : 0, pk = 0, pka = 0, mzpk = 0, mzpka = 0, Cy = 0, tp0 = 0, Fy0 = 0;
-            for (int k = 0; k <= 60; k++) {
+            for (int k = 0; k <= 80; k++) {
                 double al = 0.25 * k * D2R; dc_tc t; rig(c, loads[l], al, 0, gam, 15, &t, 1500);
                 double Mz = t.Mz_brush + t.Mt;
                 fprintf(f, "%.0f,%.1f,%.3f,%.2f,%.3f,%.2f,%.4f,%.4f,%.4f\n", loads[l], gam * R2D, al * R2D, t.Fy, Mz, t.tp * 1000, t.Fy / loads[l], t.sig_y, t.a_eff);
@@ -82,7 +82,7 @@ int main(int argc, char** argv) {
         fclose(f);
         snprintf(path, sizeof path, "%s/long_%s.csv", od, nm[m]); f = fopen(path, "w");
         fprintf(f, "Fz,kappa,Fx\n"); double pk = 0, pkk = 0, Cx = 0;
-        for (int k = -40; k <= 40; k++) { double kap = 0.01 * k; dc_tc t; rig(c, fref, 0, kap, 0, 15, &t, 1500);
+        for (int k = -60; k <= 60; k++) { double kap = 0.01 * k; dc_tc t; rig(c, fref, 0, kap, 0, 15, &t, 1500);
             fprintf(f, "%.0f,%.3f,%.2f\n", fref, kap, t.Fx); if (t.Fx > pk) { pk = t.Fx; pkk = kap; } if (k == 1) Cx = t.Fx / 0.01; }
         fclose(f);
         fprintf(S, "  long @fref: C_kappa %.0f N (%.1f norm), peak mu_x %.3f at kappa %.2f\n", Cx, Cx / fref, pk / fref, pkk);

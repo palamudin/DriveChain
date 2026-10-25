@@ -81,6 +81,7 @@ typedef struct {
     double tm_crr;                         /* rolling resistance coefficient (0.012) */
     double tm_k_rim, tm_c_rim;             /* rim-flange pinch stiffness / damping (1.2e6, 1500) */
     double tm_shape;                       /* 0: TARMAC linear-plastic brush (faithful); 1: brush (Fiala) saturation of the tread slip */
+    double tm_damp_mode;                   /* 0: TARMAC damping on slip velocity (faithful); 1: damping on the bristle deflection rate (LuGre) */
 } dc_tyre_params;
 
 typedef struct {

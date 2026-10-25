@@ -132,6 +132,7 @@ void dc_tyre_tm_init(dc_car* c) {
         /* parameters (defaults documented in drivechain.h) */
         B->kz_mode = T->tm_kz_mode;
         B->shape = T->tm_shape;
+        B->damp_mode = T->tm_damp_mode;
         B->kappa = T->tm_contact_ratio > 0 ? T->tm_contact_ratio : 0.8;
         B->roll = T->tm_carcass_roll > 0 ? T->tm_carcass_roll : 0.6;
         B->cz = T->tm_cz > 0 ? T->tm_cz : 300;
@@ -422,10 +423,21 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
     }
     t->by_new = byn; t->ey_new = 0;   /* belt shift is in Pc already: no extra n x (ey Fx) moment */
     t->ex_star = ex_star;
-    t->Fy = B->ky * byn + cd * sly;
-    t->Fx_star = B->kx * ex_star + cd * slx;
-    t->D = h * t->Re / Dx;
-    t->kx = B->kx + cd * Dx / h;
+    if (B->damp_mode > 0.5) {
+        /* option (tyre_tm_damp_mode = 1, not in TARMAC): damp the bristle deflection RATE, F = K b + c db/dt
+           (LuGre sigma1 term, Canudas de Wit et al. 1995; Deur et al. 2004). At standstill db/dt = s, identical to TARMAC;
+           in steady rolling db/dt = 0, so the damper adds no steady force: the cornering stiffness is K sigma (not
+           K sigma + c V) and the brush curve is not truncated by a viscous share of the mu N cap. */
+        t->Fy = B->ky * byn + cd * (byn - by) / h;
+        t->Fx_star = B->kx * ex_star + cd * (ex_star - bx) / h;
+        t->D = h * t->Re / Dx;
+        t->kx = B->kx + cd / h;
+    } else {
+        t->Fy = B->ky * byn + cd * sly;
+        t->Fx_star = B->kx * ex_star + cd * slx;
+        t->D = h * t->Re / Dx;
+        t->kx = B->kx + cd * Dx / h;
+    }
     if (t->grip <= 0) { t->Fy = 0; t->Fx_star = 0; t->kx = 0; }
     double Fm = hypot(t->Fx_star, t->Fy), cap = mu * N;
     t->lam = cap > 0 ? Fm / cap : 0;
