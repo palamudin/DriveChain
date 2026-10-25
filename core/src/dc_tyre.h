@@ -11,6 +11,7 @@ typedef struct {
     double Re, arm_x, Vcx, Vsy, Vr, sig_x, sig_y, Ctot, Cxtot;
     double ey_new, by_new, ex_star, D, Fx_star, kx, Fy, Mz_brush, mu_eff, lam;
     double phi_new, Mt, kt, grip, camber_l, rr_e, tp;   /* kt: tread-twist stiffness this step */
+    double sCx[DC_MAX_ROWS], sCy[DC_MAX_ROWS], smu[DC_MAX_ROWS];   /* brush strips this step (carcass_store = 1) */
     double Fx;                       /* final */
     v3 F, tau;                       /* final world force and torque about wheel centre */
     double Trest;                    /* axial torque except Fx term */

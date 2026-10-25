@@ -83,6 +83,8 @@ typedef struct {
     double tm_shape;                       /* 0: TARMAC linear-plastic brush (faithful); 1: brush (Fiala) saturation of the tread slip */
     double tm_damp_mode;                   /* 0: TARMAC damping on slip velocity (faithful); 1: damping on the bristle deflection rate (LuGre) */
     double tm_slide_exp;                   /* sliding decay shape: floor + (1-floor) exp(-(v/vs)^exp); 0 or 1: TARMAC exponential (faithful), 2: Stribeck/Gaussian (docs/TYRE_DATA.md) */
+    double carcass_store;                  /* envelope (brush) model energy book-keeping only, no effect on forces: 0 (default) = 1/2 k e^2;
+                                              1 = proposal propS: work of the brush force along the deflection ray (docs/MULTIBODY.md) */
 } dc_tyre_params;
 
 typedef struct {

@@ -90,6 +90,32 @@ static void brush(const strip* s, int n, double sx, double sy, double* Fx, doubl
     }
 }
 
+/* carcass_store = 1 (proposal propS): elastic store = work of the brush force along the straight deflection ray
+   0 -> (ex, ey), per strip in closed form. Strip r carries F(th) = th (1 - lam + lam^2/3), lam = th / (3 mu N), and
+   mu N once saturated, along the fixed direction (tx, ty)/th, tx = Cx ex/sig_x, ty = Cy ey/sig_y (camber offset
+   excluded: it is not a carcass deflection). With g = (tx ex + ty ey)/th the ray work is
+     g th (1/2 - lam/3 + lam^2/12)                     lam < 1
+     g (th/(4 lam^2) + mu N (1 - 1/lam))               lam >= 1.
+   At small slip this is 1/2 kx ex^2 + 1/2 ky ey^2 (kx = Cx/sig_x); in partial sliding it is less, because the force
+   is. With de/dt = -V_slip - (Vr/sig) e, dE/dt = F de/dt, so the tread-relaxation term F Vr e/sig >= 0 is the only
+   loss and the store is passive for pure slip (combined slip: the brush field is exactly a gradient only when
+   kx = ky). The default 1/2 k e^2 overstates the store once the brush slides, so carcass unloading in partial
+   sliding can show up in the audit as created energy. Energy book-keeping only: forces do not depend on it. */
+static double brush_store(const dc_tc* t, double ex, double ey) {
+    if (!t->contact) return 0;
+    double sx = ex / t->sig_x, sy = ey / t->sig_y, E = 0;
+    for (int r = 0; r < t->nrows; r++) {
+        if (t->N[r] <= 0) continue;
+        double tx = t->sCx[r] * sx, ty = t->sCy[r] * sy, th = sqrt(tx * tx + ty * ty);
+        if (th < 1e-12) continue;
+        double cap = 3 * t->smu[r] * t->N[r], g = (tx * ex + ty * ey) / th;
+        if (cap <= 1e-12) continue;
+        double lam = th / cap;
+        E += lam < 1 ? g * th * (0.5 - lam / 3 + lam * lam / 12) : g * (th / (4 * lam * lam) + t->smu[r] * t->N[r] * (1 - 1 / lam));
+    }
+    return E;
+}
+
 void dc_tyre_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc* t) {
     const dc_tyre_params* T = &c->P.axle[i / 2].tyre;
     if (T->model == DC_TYRE_TARMAC) { dc_tyre_tm_phaseA(c, i, cw, a, vc, wc, h, t); return; }
@@ -346,6 +372,7 @@ void dc_tyre_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc
         double muy = st[r].mu * mfac;
         double mux = T->mu_x * pow(ratio, T->ls_exp_x - 1) * t->grip * cmb * mfac;
         st[r].mu = sqrt(mux * muy);   /* single friction circle per strip (anisotropy via Cx/Cy) */
+        t->sCx[r] = st[r].Cx; t->sCy[r] = st[r].Cy; t->smu[r] = st[r].mu;
     }
     t->mu_eff = mu_avg * mfac;
     /* carcass states */
@@ -423,7 +450,8 @@ void dc_tyre_phaseB(dc_car* c, int i, v3 cw, v3 a, double omega_new, double h, d
         if (lam > 1) { ex /= lam; ey /= lam; }
         S->ex = ex; S->ey = ey; S->phi = t->phi_new;
         double scale = 0.35 + 0.65 * fmin(S->pressure / T->pressure_ref, 1.5);
-        t->pe += 0.5 * T->carcass_kx * scale * ex * ex + 0.5 * T->carcass_ky * scale * ey * ey;
+        t->pe += T->carcass_store > 0 ? brush_store(t, ex, ey)
+                                      : 0.5 * T->carcass_kx * scale * ex * ex + 0.5 * T->carcass_ky * scale * ey * ey;
         t->pe += 0.5 * t->kt * t->phi_new * t->phi_new;
     }
     (void)a;
@@ -434,6 +462,7 @@ double dc_tyre_shear_store(const dc_car* c, int i, const dc_tc* t) {
     const dc_tyre_params* T = &c->P.axle[i / 2].tyre;
     double tw = t->contact ? 0.5 * t->kt * S->phi * S->phi : 0;
     if (T->model == DC_TYRE_TARMAC) { const dc_tm_tab* B = &c->tm[i / 2]; return 0.5 * B->kx * S->ex * S->ex + 0.5 * B->ky * S->ey * S->ey + tw; }
+    if (T->carcass_store > 0) return brush_store(t, S->ex, S->ey) + tw;
     double scale = 0.35 + 0.65 * fmin(S->pressure / T->pressure_ref, 1.5);
     return 0.5 * T->carcass_kx * scale * S->ex * S->ex + 0.5 * T->carcass_ky * scale * S->ey * S->ey + tw;
 }
