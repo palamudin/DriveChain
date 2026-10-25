@@ -179,12 +179,31 @@ def m_slalom(dc, speed_kmh=50, seconds=12.0, **_):
     dc.drive(steer="path", pedals="speed", speed_kmh=speed_kmh)
     return seconds
 
-def m_lift_off(dc, speed_kmh=60, seconds=8.0, **_):
-    """lift-off oversteer on the skidpad: path-hold at speed, then throttle snapped shut (catch ability)"""
-    dc.reset(spot="skidpad", speed_kmh=speed_kmh)
+def m_lift_off(dc, speed_kmh=55, seconds=8.0, ramp_s=8.0, hold_s=4.0, **_):
+    """lift-off oversteer on the skidpad: path-hold at speed, then throttle snapped shut (catch ability).
+    Entry: start at 30 km/h on the circle and ramp the speed target to speed_kmh over ramp_s, then hold hold_s, so the
+    lift happens from a settled steady state (a reset at full speed straight onto the circle starts a turn-in transient
+    the path driver is still oscillating from 4 s later; at 58-60 km/h that transient alone spun the car before the lift,
+    in both cores and with both tyres). The circle is R = 40 m: 55 km/h is 0.60 g, 60 km/h 0.71 g, against the ~0.78 g
+    skidpad limit of mx5_na.
+    pre_lift_* record the last second of the hold (|beta| max, sw range); pre_lift_ok = 0 flags an unsettled entry so a
+    pre-lift loss is never read as a lift-off spin."""
+    v0 = min(30.0, speed_kmh)
+    dc.reset(spot="skidpad", speed_kmh=v0)
     dc.path_circle(dir=1)
-    dc.drive(steer="path", pedals="speed", speed_kmh=speed_kmh)
-    dc.step(seconds=4.0) if dc.lockstep else time.sleep(4.0)
+    dc.drive(steer="path", pedals="speed", speed_kmh=v0)
+    if not dc.lockstep:
+        dc.drive(steer="path", pedals="speed", speed_kmh=speed_kmh); time.sleep(ramp_s + hold_s); dc.extra = {}
+    else:
+        n = max(1, int(round(ramp_s / 0.25)))
+        for k in range(1, n + 1):
+            dc.drive(steer="path", pedals="speed", speed_kmh=v0 + (speed_kmh - v0) * k / n); dc.step(seconds=0.25)
+        dc.step(seconds=max(0.0, hold_s - 1.0))
+        b, sw = [], []
+        for _ in range(10):
+            dc.step(seconds=0.1); g = dc.get(); b.append(abs(g["beta_deg"])); sw.append(g["sw_deg"])
+        dc.extra = dict(pre_lift_beta_deg=round(max(b), 3), pre_lift_sw_range_deg=round(max(sw) - min(sw), 2),
+                        pre_lift_ok=int(max(b) < 5.0 and max(sw) - min(sw) < 20.0))
     dc.metrics_reset()
     dc.drive(pedals="direct", throttle=0.0, brake=0.0)
     return seconds
@@ -214,7 +233,7 @@ def run_manoeuvre(dc, name, out=None, tag=None, **kw):
     csv = os.path.join(out, f"drv_{tag}.csv") if out else None
     if csv: os.makedirs(out, exist_ok=True)
     frames = dc.run(seconds, every=0.01, log=os.path.abspath(csv) if (csv and dc.lockstep) else None)
-    m = dc.metrics(); m["manoeuvre"] = name; m["tag"] = tag; m.update({k: v for k, v in kw.items() if isinstance(v, (int, float, str))})
+    m = dc.metrics(); m.update(getattr(dc, "extra", None) or {}); dc.extra = None; m["manoeuvre"] = name; m["tag"] = tag; m.update({k: v for k, v in kw.items() if isinstance(v, (int, float, str))})
     if out:
         with open(os.path.join(out, f"drv_{tag}_metrics.json"), "w") as f: json.dump(m, f, indent=1)
         if not dc.lockstep:   # live: log the sampled frames ourselves
