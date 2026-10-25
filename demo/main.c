@@ -10,6 +10,7 @@
 #include "meshtrack.h"
 #include <dirent.h>
 #include <pthread.h>
+#include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -56,6 +57,7 @@ static cfg_t CFG; static track_t TRK; static audio_t AUD; static sim_t SIM;
 static pthread_mutex_t MTX = PTHREAD_MUTEX_INITIALIZER;
 static sim_snap VIEW;              /* render copy */
 static volatile int RUN = 1;
+static int RENDER_WAIT;            /* render thread is waiting for MTX: the physics thread yields between ticks */
 static int g_threaded = 1;
 
 /* ---------------- frames: physics (x fwd, y left, z up) -> raylib (X, Y up, Z) = (x, z, -y) ---------------- */
@@ -543,14 +545,20 @@ static void* phys_thread(void* arg) {
 #endif
     double t0 = wall(), sim = 0; const double dt = 0.001;
     while (RUN) {
-        double now = wall() - t0; int n = 0;
-        while (sim < now && n < 50) {
+        /* fixed-step catch-up, bounded by wall time (not tick count): one batch never holds the CPU for more than
+           ~8 ms, the render thread gets MTX between any two ticks (mutexes are not fair, notably on Windows), and a
+           backlog beyond 50 ms is dropped, so an over-budget step degrades to slow motion instead of starving the
+           frame loop (the old loop could run 50 slow ticks back to back and freeze the picture). */
+        double now = wall() - t0, wend = wall() + 0.008;
+        while (sim < now && RUN) {
+            while (__atomic_load_n(&RENDER_WAIT, __ATOMIC_ACQUIRE) && RUN) sched_yield();
             pthread_mutex_lock(&MTX);
             sim_tick(&SIM, dt);
             pthread_mutex_unlock(&MTX);
-            sim += dt; n++;
+            sim += dt;
+            if (wall() > wend) break;
         }
-        if (n >= 50) sim = now;     /* fell behind (debugger, heavy load): drop time instead of spiralling */
+        if (now - sim > 0.05) sim = now;   /* behind: drop time instead of spiralling */
         struct timespec ts = {0, 300000}; nanosleep(&ts, NULL);
     }
     return NULL;
@@ -772,7 +780,9 @@ int main(int argc, char** argv) {
     while (!WindowShouldClose()) {
         double now = GetTime(), dt = now - last; last = now;
         /* ---- keyboard -> physics control ---- */
+        __atomic_store_n(&RENDER_WAIT, 1, __ATOMIC_RELEASE);
         pthread_mutex_lock(&MTX);
+        __atomic_store_n(&RENDER_WAIT, 0, __ATOMIC_RELEASE);
         sim_ctl* C = &SIM.ctl;
         C->kb_left = IsKeyDown(KEY_LEFT) || IsKeyDown(KEY_A); C->kb_right = IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D);
         C->kb_up = IsKeyDown(KEY_UP) || IsKeyDown(KEY_W); C->kb_down = IsKeyDown(KEY_DOWN) || IsKeyDown(KEY_S);
