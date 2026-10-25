@@ -5,7 +5,7 @@ import numpy as np
 DROP = re.compile(r"damage|blur|light_beam|int_|_int|cockpit|steer|gauge|arrow_|needle|cinture|belt|seat|carpet|dash|gear|handbrake|"
                   r"interior|button|white_circle|mirror_middle|bulb|szelepsapka|collider", re.I)
 
-def load(path, offset=(0, 0, 0), frame="ac", exterior=True):
+def load(path, offset=(0, 0, 0), frame="yup", exterior=True):
     V, F, G, g = [], [], [], "default"
     for ln in open(path, errors="replace"):
         if ln.startswith("v "): V.append([float(t) for t in ln.split()[1:4]])
@@ -15,7 +15,7 @@ def load(path, offset=(0, 0, 0), frame="ac", exterior=True):
             idx = [i - 1 if i > 0 else len(V) + i for i in idx]
             for k in range(1, len(idx) - 1): F.append((idx[0], idx[k], idx[k + 1])); G.append(g)
     V = np.array(V); F = np.array(F); G = np.array(G)
-    if frame == "ac": V = V[:, [2, 0, 1]]     # AC model (x left, y up, z fwd) -> physics (x fwd, y left, z up)
+    if frame == "yup": V = V[:, [2, 0, 1]]     # y-up model (x left, y up, z fwd) -> physics (x fwd, y left, z up)
     V = V + np.asarray(offset, float)
     if exterior:
         k = np.array([not DROP.search(x) for x in G]); F, G = F[k], G[k]

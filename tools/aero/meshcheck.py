@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """meshcheck.py - aero suitability check of a car OBJ (prints aggregate numbers only; never copies geometry).
 
-usage: meshcheck.py <car.obj> [--offset dx,dy,dz] [--frame ac|phys] [--cell 0.01]
+usage: meshcheck.py <car.obj> [--offset dx,dy,dz] [--frame yup|phys] [--cell 0.01]
 
 Reports, for the exterior aero surface (drops damage/blur/light-beam/interior/gauge groups):
   - bounding box, ground plane (lowest tyre vertex), wheelbase-ish extents
@@ -12,13 +12,13 @@ Reports, for the exterior aero surface (drops damage/blur/light-beam/interior/ga
   - underbody: fraction of the plan-view footprint whose lowest surface is a real underbody surface,
     and the clearance histogram (detail of the floor drives lift; a missing floor makes CFD lift meaningless)
   - cockpit: is there a roof/top over the cabin (open roadster vs closed)?
-Frame 'ac': model +X left, +Y up, +Z forward -> physics x fwd, y left, z up (as tools/prep_car_mesh.py).
+Frame 'yup': model +X left, +Y up, +Z forward -> physics x fwd, y left, z up (as tools/prep_car_mesh.py).
 """
 import sys, argparse, re
 import numpy as np
 
 ap = argparse.ArgumentParser()
-ap.add_argument("obj"); ap.add_argument("--offset", default="0,0,0"); ap.add_argument("--frame", default="ac")
+ap.add_argument("obj"); ap.add_argument("--offset", default="0,0,0"); ap.add_argument("--frame", default="yup")
 ap.add_argument("--cell", type=float, default=0.01)
 a = ap.parse_args()
 off = np.array([float(t) for t in a.offset.split(",")])
@@ -36,7 +36,7 @@ for ln in open(a.obj, errors="replace"):
         idx = [i - 1 if i > 0 else len(V) + i for i in idx]
         for k in range(1, len(idx) - 1): F.append((idx[0], idx[k], idx[k + 1])); G.append(gname)
 V = np.array(V); F = np.array(F); G = np.array(G)
-if a.frame == "ac": V = V[:, [2, 0, 1]]
+if a.frame == "yup": V = V[:, [2, 0, 1]]
 V = V + off
 keep = np.array([not DROP.search(g) for g in G])
 Fe, Ge = F[keep], G[keep]

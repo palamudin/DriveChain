@@ -475,7 +475,7 @@ panel:
 8. **Scope.** Should the reaction side (wake/slipstream for other cars) be in scope?
 
 ## 11. Tool reference
-* `python3 tools/aero/meshcheck.py <obj> --offset=dx,dy,dz [--frame ac|phys]`: frontal
+* `python3 tools/aero/meshcheck.py <obj> --offset=dx,dy,dz [--frame yup|phys]`: frontal
   area, topology, underbody clearance (aggregates only).
 * `python3 tools/aero/newtonian.py <obj> --offset=... [--yaw deg] [--cpmax 2]`:
   Newtonian falsification.
