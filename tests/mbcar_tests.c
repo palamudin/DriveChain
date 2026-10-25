@@ -22,7 +22,8 @@ static int g_bush = 0;
 static int g_carrier = 0;  /* 1: carrier-inertia driveline (docs/CARRIER.md proposal values) */  /* 1: arm pivots as compliant bushings (docs/BUSHINGS.md estimates) */
 static int g_rmount = 0;  /* 1: rack housing on a compliant mount (propR estimate, docs/BUSHINGS.md) */
 static int g_jf = -1;   /* >= 0 overrides mb.jf (joint friction switch) */
-static int g_tyre = -1;  /* >= 0 overrides the tyre model on both axles (energy-audit section) */
+static int g_tyre = -1;
+static double g_cstore = 0;  /* tyre carcass_store on both axles (energy-audit section) */  /* >= 0 overrides the tyre model on both axles (energy-audit section) */
 static double g_road_h = 0;  /* uniform road height (energy-audit heave step) */
 static double flat_road(void* u, double x, double y, double* nx, double* ny, double* nz, double* g) {
     (void)u; (void)x; (void)y; *nx = 0; *ny = 0; *nz = 1; *g = 1; return g_road_h;
@@ -35,6 +36,7 @@ static dc_car* make(const char* ini, double v0, int steer_mode) {
     if (g_bush) for (int a = 0; a < 2; a++) { p.mb.bush_kr[a] = 2e6; p.mb.bush_ka[a] = 5e5; p.mb.bush_kt[a] = 300; }
     if (g_rmount) { p.mb.rack_mount_k = 8e6; p.mb.rack_mount_c = 1.9e4; }
     if (g_tyre >= 0) { p.axle[0].tyre.model = g_tyre; p.axle[1].tyre.model = g_tyre; }
+    p.axle[0].tyre.carcass_store = p.axle[1].tyre.carcass_store = g_cstore;
     dc_car* c = dc_create(&p); double z[3] = {0, 0, 0}; dc_reset(c, z, 0, v0);
     dc_input in; memset(&in, 0, sizeof in); in.gear = 0; in.steer_mode = steer_mode; dc_set_input(c, &in);
     return c;
@@ -68,14 +70,22 @@ static void joint_n3(dc_car* c, double* fmaxr, double* tmaxr, double* fref) {
 /* section 6: minimum per-step dissipation over three carcass load/unload manoeuvres. Steps right after a
    change of input are included; only the road teleport step (external work not in W_in) is skipped. */
 static void energy_audit(const char* ini) {
-    const char* nm[2] = {"brush", "TARMAC"};
+    const char* nm[3] = {"brush", "TARMAC", "brush carcass_store=1"};
     /* J per 10 ms step. TARMAC keeps an O(h) residual of explicit start-of-step lane forces (heave: -0.0125 J mx5_na,
        -0.048 J hatch_fwd at h = 10 ms, halves at 5 ms, -0.0015 J with friction off), so it gets a gross-failure bound */
-    const double tolv[2] = {-1e-3, -7.5e-2};
-    for (int ty = 0; ty < 2; ty++) {
+    const double tolv[3] = {-1e-3, -7.5e-2, -1e-3};
+    double traj[3][3] = {{0}};
+    for (int ty = 0; ty < 3; ty++) {
         const double tol = tolv[ty];
-        g_tyre = ty; double dmin = 1e9; const char* where = "-"; dc_telemetry t; dc_input in; dc_car* c;
+        g_tyre = ty == 2 ? 0 : ty; g_cstore = ty == 2; double dmin = 1e9; const char* where = "-"; dc_telemetry t; dc_input in; dc_car* c;
 #define DSTEP(tag) do { double d0_ = t.dissipated; dc_step(c, 0.01); dc_get_telemetry(c, &t); if (t.dissipated - d0_ < dmin) { dmin = t.dissipated - d0_; where = tag; } } while (0)
+        if (ty == 2) {   /* (a0) carcass_store = 1 only: full throttle straight from the reset (driveline shock; the default
+                            1/2 k e^2 store reports ~ -2 J on hatch_fwd here as the sliding brush unloads) */
+            c = make(ini, 8, DC_STEER_ANGLE); dc_set_road(c, flat_road, NULL); g_road_h = 0; dc_get_telemetry(c, &t);
+            memset(&in, 0, sizeof in); in.gear = 2; in.throttle = 1; in.steer_mode = DC_STEER_ANGLE; in.hands_k = 60; in.hands_d = 3; in.hands_tmax = 30; dc_set_input(c, &in);
+            for (int k = 0; k < 100; k++) DSTEP("shock");
+            dc_destroy(c);
+        }
         /* (a) drive then lift-off at 8 m/s: longitudinal carcass store builds and releases */
         c = make(ini, 8, DC_STEER_ANGLE); dc_set_road(c, flat_road, NULL); g_road_h = 0; dc_get_telemetry(c, &t);
         memset(&in, 0, sizeof in); in.gear = 2; in.throttle = 0.2; in.steer_mode = DC_STEER_ANGLE; in.hands_k = 60; in.hands_d = 3; in.hands_tmax = 30; dc_set_input(c, &in);
@@ -91,6 +101,7 @@ static void energy_audit(const char* ini) {
         in.hands_k = 60; in.hands_d = 3; in.hands_tmax = 30; dc_set_input(c, &in);
         for (int k = 0; k < 200; k++) DSTEP("steer");
         in.steer_target = 0; dc_set_input(c, &in); for (int k = 0; k < 200; k++) DSTEP("release");
+        traj[ty][0] = t.speed; traj[ty][1] = t.yaw_rate; traj[ty][2] = t.ay;
         dc_destroy(c);
         /* (c) braked at rest, 30 mm road step under all four wheels: heave bounce */
         c = make(ini, 0, DC_STEER_ANGLE); dc_set_road(c, flat_road, NULL); dc_get_telemetry(c, &t);
@@ -102,7 +113,9 @@ static void energy_audit(const char* ini) {
 #undef DSTEP
         CHECK(dmin > tol, "energy audit (%s tyre): min per-step dissipation %.2e J (at %s) > %.1e J, no step creates energy", nm[ty], dmin, where, tol);
     }
-    g_tyre = -1;
+    CHECK(traj[2][0] == traj[0][0] && traj[2][1] == traj[0][1] && traj[2][2] == traj[0][2],
+          "carcass_store = 1 is book-keeping only: steer/release trajectory bit-identical (v %.6f yaw %.6f ay %.6f)", traj[2][0], traj[2][1], traj[2][2]);
+    g_tyre = -1; g_cstore = 0;
 }
 int main(int argc, char** argv) {
     const char* ini = argc > 1 ? argv[1] : "cars/mx5_na.ini";
