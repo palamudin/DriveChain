@@ -43,6 +43,10 @@ typedef struct sim_s {
     int gp_mode; double gp_k, gp_d, gp_tmax, gp_deadzone, gp_grip_t, gp_grip;
     double auto_line, auto_ay, auto_speed_cap, auto_straight;
     double us_acc; long long steps_acc;
+    double tick_dt;                       /* host tick (physics.tick_hz; 1 kHz when unset, 240 Hz in demo.ini) */
+    double tick_step_us; int tick_n, threads;
+    double shift_left_s;                  /* shift timer remainder below 1 ms (non-ms ticks) */
+    double perf_t, perf_wall, perf_step, perf_worst; long long perf_sub, perf_ticks; int perf_log;
     sim_snap snap;
     /* external driver (headless harness / tests): when ext_steer / ext_pedals are set, these fields of ext_in replace
        the device mapping for that channel. The demo never sets them. */
@@ -56,7 +60,7 @@ typedef struct sim_s {
     void (*ext_hook)(struct sim_s* S, int phase); void* ext_ctx; int ext_clients;
 } sim_t;
 int  sim_init(sim_t* S, cfg_t* cfg, track_t* trk, audio_t* audio, char* err, int errlen);
-void sim_tick(sim_t* S, double dt);         /* one physics tick (dt = 1 ms) incl. input + FFB + audio */
+void sim_tick(sim_t* S, double dt);         /* one physics tick (dt = S->tick_dt) incl. input + FFB + audio */
 void sim_reset_on_track(sim_t* S, double s, double d, double speed);
 void sim_reset_at(sim_t* S, double x, double y, double yaw, double speed);
 void sim_shutdown(sim_t* S);

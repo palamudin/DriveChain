@@ -1,5 +1,5 @@
 /* main.c - DriveChain raylib 3D test drive.
-   Physics on its own thread (1 kHz ticks, 2 kHz core substeps), rendering at whatever the GPU does (vsync optional),
+   Physics on its own thread (physics.tick_hz ticks x physics.substeps core substeps; demo.ini: 240 Hz x 4), rendering at whatever the GPU does (vsync optional),
    SDL2 wheel/pedals/H-shifter + constant-force FFB, procedural audio, debug overlays, headless screenshot mode. */
 #include "raylib.h"
 #include "rlgl.h"
@@ -543,7 +543,7 @@ static void* phys_thread(void* arg) {
 #ifdef _WIN32
     timeBeginPeriod(1);
 #endif
-    double t0 = wall(), sim = 0; const double dt = 0.001;
+    double t0 = wall(), sim = 0; const double dt = SIM.tick_dt;   /* physics.tick_hz (240 Hz in demo.ini) */
     while (RUN) {
         /* fixed-step catch-up, bounded by wall time (not tick count): one batch never holds the CPU for more than
            ~8 ms, the render thread gets MTX between any two ticks (mutexes are not fair, notably on Windows), and a
@@ -711,7 +711,7 @@ int main(int argc, char** argv) {
       scan_maps(lay); set_map_title();
       if (TRK.layout == TRACK_MESH && !cfg_str(&CFG, "start.spot", NULL)) cfg_set(&CFG, "start.spot", "start"); }
     char err[256] = "";
-    audio_init(&AUD, 44100, 1000);
+    { double thz = cfg_num(&CFG, "physics.tick_hz", 1000); audio_init(&AUD, 44100, thz < 30 ? 30 : thz); }   /* one audio frame per physics tick */
     AUD.master = (float)cfg_num(&CFG, "audio.master", 0.8); AUD.engine_gain = (float)cfg_num(&CFG, "audio.engine", 1.0);
     AUD.tyre_gain = (float)cfg_num(&CFG, "audio.tyres", 1.0); AUD.road_gain = (float)cfg_num(&CFG, "audio.road", 1.0); AUD.wind_gain = (float)cfg_num(&CFG, "audio.wind", 1.0);
     if (headless && (getenv("DEMO_SPOT") || !cfg_str(&CFG, "start.spot", NULL))) cfg_set(&CFG, "start.spot", getenv("DEMO_SPOT") ? getenv("DEMO_SPOT") : "start");   /* autopilot shots start on the straight */
@@ -798,8 +798,8 @@ int main(int argc, char** argv) {
         if (IsKeyPressed(KEY_PAUSE) || IsKeyPressed(KEY_F5)) C->pause = !C->pause;
         if (IsKeyPressed(KEY_F6) && !headless) switch_map(C);
         if (headless) {   /* synchronous fixed-step physics for reproducible shots */
-            int n = (int)(shot_dt / 0.001 + 0.5);
-            for (int k = 0; k < n; k++) sim_tick(&SIM, 0.001);
+            static double hacc = 0; hacc += shot_dt;   /* whole host ticks per frame; the remainder carries over */
+            while (hacc >= SIM.tick_dt - 1e-12) { sim_tick(&SIM, SIM.tick_dt); hacc -= SIM.tick_dt; }
             if (wavbuf) { int fr = (int)(shot_dt * 44100 + 0.5); if (wavn + fr <= wavcap) { audio_render(&AUD, wavbuf + 2 * wavn, fr); wavn += fr; } }
             dt = shot_dt;
         }

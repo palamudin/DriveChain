@@ -5,6 +5,17 @@ DriveChain has a C core with a Unity frontend (P/Invoke) and a raylib test drive
 - **Numerics:** double precision, deterministic, symplectic Euler at 2 kHz with a 12-DOF Cholesky solve. There is no heap use in the step.
 - **Conservation:** Newton-3 and energy accounting are checked every run.
 
+## Speed settings
+- **Library:** the mechanics rate is `substep_hz`; the default stays 2000. Host calls to `dc_step(car, dt)` run as many substeps as `dt` covers.
+  `dc_set_threads(car, n)` (1-4, default 1) spreads each step over n cores, and results are bit-identical for any n. With n > 1 the road callback must be thread-safe.
+- **Test drive (demo.ini `[physics]`):**
+  - `tick_hz = 240`: inputs, FFB and audio update once per tick.
+  - `substeps = 4`: mechanics steps per tick; 1 / 2 / 4 / 8 = 240 / 480 / 960 / 1920 Hz.
+  - `threads = 4`.
+  - `perf_log = 1` prints the cost per simulated second.
+  - Lower `substeps` is cheaper. 480 Hz is the lowest rate that matches the 1920 Hz handling results for the reference car.
+- Costs and convergence tables: docs/PERFORMANCE.md.
+
 ## What is modelled
 - **Tyre:** brush model with combined slip, load sensitivity, pneumatic trail, a relaxation length (σ = Cα/ky ≈ 0.23 m) and a carcass/rim puncture model.
 - **Suspension:** double wishbone, MacPherson and multilink from hardpoints. Bump steer, camber gain and Ackermann all emerge from the geometry.

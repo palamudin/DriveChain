@@ -1,8 +1,18 @@
 # DriveChain test drive — Windows x64
 
-A physically based steering, suspension and tyre core (C, double precision, 2 kHz) driven by a raylib 3D test drive.
-Physics runs on its own 1 kHz thread (2 kHz core substeps), separate from rendering. Input and force feedback go through SDL2.
-Performance options (`[physics]` in demo.ini): `substep_hz` sets the mechanics rate (2000 by default; 480 already converges for the reference car at about a quarter of the cost), and `threads` (1-4, default 1) splits the per-wheel tyre/road contact and part of the solver across worker threads with bit-identical results, e.g. `--set physics.threads=4 --set physics.substep_hz=480`. Timings: docs/PERFORMANCE.md.
+A physically based steering, suspension and tyre core (C, double precision) driven by a raylib 3D test drive.
+Physics runs on its own thread, separate from rendering. Input and force feedback go through SDL2.
+
+## Speed and quality settings (`[physics]` in demo.ini)
+| setting | default | what it does |
+|---|---|---|
+| `tick_hz` | 240 | How often per second the physics thread reads your inputs and updates force feedback and sound. |
+| `substeps` | 4 | How many mechanics steps run inside each tick. 1 / 2 / 4 / 8 = 240 / 480 / 960 / 1920 steps per second. More steps are more accurate but cost more CPU. |
+| `threads` | 4 | How many CPU cores share each step (1-4). The driving is exactly the same for any value; more threads just finish sooner. Use 1 or 2 on a 2-core PC. |
+| `perf_log` | 0 | Set to 1 to print the physics cost to the console once per simulated second. |
+
+Rough guide: 2 substeps (480 Hz) is the lowest setting that still matches the 1920 Hz results within tolerance in our handling tests. Use it on a slow PC. 4 (960 Hz) is the default, and 8 (1920 Hz) is the reference. If the on-screen `x RT` figure drops below about 1.5, lower `substeps` or raise `threads`.
+Change a setting without editing the file: `drivechain_demo.exe --set physics.substeps=2 --set physics.threads=2`.
 
 > PRIVATE BUILD: `assets/miata_mesh` and `cars/miata_ac.ini` come from a third-party mod and are only for your own testing.
 > Do not redistribute this zip.

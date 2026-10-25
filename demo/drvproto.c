@@ -170,10 +170,10 @@ int proto_handle(proto_t* P, const char* L, char* o, int max) {
     if (!jstr(L, "cmd", cmd, sizeof cmd)) { snprintf(o, max, "{\"ok\":false,\"error\":\"missing cmd\"}"); return 0; }
     if (!strcmp(cmd, "hello") || !strcmp(cmd, "info")) {
         const track_t* T = S->trk;
-        int n = snprintf(o, max, "{\"ok\":true,\"protocol\":%d,\"name\":\"drivechain\",\"lockstep\":%d,\"tick_dt\":0.001,\"substep_hz\":%.0f,"
+        int n = snprintf(o, max, "{\"ok\":true,\"protocol\":%d,\"name\":\"drivechain\",\"lockstep\":%d,\"tick_dt\":%g,\"substep_hz\":%.0f,"
             "\"layout\":\"%s\",\"map\":\"%s\",\"track_length\":%.2f,\"half_width\":%.2f,\"s_arc1\":%.2f,\"s_str2\":%.2f,\"s_arc2\":%.2f,"
             "\"skidpad\":[%.3f,%.3f,%.3f],\"steer_ratio\":%.3f,\"steer_lock_deg\":%.2f,\"wheelbase\":%.4f,\"assist\":%d,\"spots\":[",
-            PROTO_VERSION, P->lockstep, S->P.substep_hz, T->layout == TRACK_PROVING ? "proving" : T->layout == TRACK_MESH ? "mesh" : "circuit", track_layout_name(T), T->length, T->half_w,
+            PROTO_VERSION, P->lockstep, S->tick_dt, S->P.substep_hz, T->layout == TRACK_PROVING ? "proving" : T->layout == TRACK_MESH ? "mesh" : "circuit", track_layout_name(T), T->length, T->half_w,
             T->s_arc1, T->s_str2, T->s_arc2, T->skid_cx, T->skid_cy, T->skid_r, S->P.steer_ratio, S->P.steer_lock_deg,
             S->P.axle[0].hub[0] - S->P.axle[1].hub[0], S->P.assist);
         for (int i = 0; i < TRK_NSPOT; i++) {
@@ -233,8 +233,8 @@ int proto_handle(proto_t* P, const char* L, char* o, int max) {
     if (!strcmp(cmd, "gear")) { if (jnum(L, "gear", &v)) S->gear = (int)v; snprintf(o, max, "{\"ok\":true,\"gear\":%d}", S->gear); return 0; }
     if (!strcmp(cmd, "step")) {
         if (!P->lockstep) { snprintf(o, max, "{\"ok\":false,\"error\":\"step is only valid on a lockstep host (drvhost); the demo runs in real time\"}"); return 0; }
-        double n = 1; jnum(L, "n", &n); if (jnum(L, "seconds", &v)) n = v / 0.001 + 0.5;
-        for (long k = 0; k < (long)n; k++) sim_tick(S, 0.001);
+        double n = 1; jnum(L, "n", &n); if (jnum(L, "seconds", &v)) n = v / S->tick_dt + 0.5;
+        for (long k = 0; k < (long)n; k++) sim_tick(S, S->tick_dt);
         proto_telemetry(P, o, max); return 0;
     }
     if (!strcmp(cmd, "get")) { proto_telemetry(P, o, max); return 0; }
@@ -291,7 +291,7 @@ void proto_hook(sim_t* S, int phase) {
     M->max_col = fmax(M->max_col, fabs(t.column_torque)); M->max_hand = fmax(M->max_hand, fabs(t.driver_torque));
     M->max_beta = fmax(M->max_beta, fabs(beta) * DEG); M->max_r = fmax(M->max_r, fabs(t.yaw_rate) * DEG);
     M->max_sw = fmax(M->max_sw, fabs(t.sw_angle) * DEG); M->max_swr = fmax(M->max_swr, fabs(t.sw_rate) * DEG); M->max_ay = fmax(M->max_ay, fabs(t.ay));
-    M->dist += fabs(t.speed) * 0.001; M->sat += ds.saturated; M->takeover_ticks += S->drv_takeover;
+    M->dist += fabs(t.speed) * S->tick_dt; M->sat += ds.saturated; M->takeover_ticks += S->drv_takeover;
     dc_xform chp[DC_PART_COUNT]; dc_get_parts(S->car, chp, DC_PART_COUNT); dc_xform ch = chp[DC_PART_CHASSIS];
     double d = 0, s = 0; int surf = 0; track_height(S->trk, ch.pos[0], ch.pos[1], &surf, NULL, &d, &s);
     if (surf == SURF_GRASS || surf == SURF_ROUGH || surf == SURF_GRAVEL) M->offtrack++;   /* chassis over grass / rough / gravel = off the road */

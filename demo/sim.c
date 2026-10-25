@@ -14,7 +14,7 @@ static int make_car(sim_t* S) {
     S->car = dc_create(&S->P);
     if (!S->car) return 0;
     dc_set_road(S->car, track_road_fn, S->trk); dc_set_road_flags(S->car, DC_ROAD_HEIGHT_ONLY | DC_ROAD_STATIC);   /* tracks are static */
-    { int nt = (int)cfg_num(S->cfg, "physics.threads", 1); if (nt > 1) dc_set_threads(S->car, nt); }   /* opt-in step worker threads (track_road_fn is pure) */
+    { int nt = (int)cfg_num(S->cfg, "physics.threads", 1); S->threads = nt > 1 ? dc_set_threads(S->car, nt) : 1; }   /* opt-in step worker threads (track_road_fn is pure) */
     return 1;
 }
 
@@ -24,7 +24,12 @@ int sim_init(sim_t* S, cfg_t* cfg, track_t* trk, audio_t* audio, char* err, int 
     dc_default_params(&S->P);
     const char* carini = cfg_str(cfg, "car.ini", "");
     if (*carini && !dc_load_params(carini, &S->P, err, errlen)) return 0;
-    S->P.substep_hz = cfg_num(cfg, "physics.substep_hz", S->P.substep_hz);
+    /* host tick and mechanics rate: physics.tick_hz (default 1000) x physics.substeps; an explicit physics.substep_hz wins */
+    { double thz = cfg_num(cfg, "physics.tick_hz", 1000); if (thz < 30) thz = 30; S->tick_dt = 1.0 / thz;
+      int ns = cfg_int(cfg, "physics.substeps", 0);
+      if (ns > 0) S->P.substep_hz = thz * ns;
+      S->P.substep_hz = cfg_num(cfg, "physics.substep_hz", S->P.substep_hz);
+      S->perf_log = cfg_int(cfg, "physics.perf_log", 0); }
     int as = cfg_int(cfg, "car.assist", -1); if (as >= 0) S->P.assist = as;
     int so = cfg_int(cfg, "car.solver", -1); if (so >= 0) S->P.solver = so;   /* --set car.solver=0 -> legacy core */
     if (!make_car(S)) { snprintf(err, errlen, "dc_create failed"); return 0; }
@@ -135,11 +140,30 @@ static void autopilot(sim_t* S, const dc_telemetry* t, const dc_xform* ch, dc_in
     if (fabs(t->ay) > 0.8 * S->auto_ay * 1.3) in->throttle *= 0.5;
     /* recovery: autopilot that left the circuit (or spun) is put back on the centre line, like a marshal would */
     if (fabs(d) > T->half_w + T->kerb_w + 4 || (v < 2 && S->sim_time > 5)) {
-        if (++S->auto_off_ms > 2500) { S->auto_off_ms = 0; sim_reset_on_track(S, s, 0, 8); S->gear = 1; }
+        if (++S->auto_off_ms * S->tick_dt > 2.5 + 0.5 * S->tick_dt) {   /* 2.5 s off the road (auto_off_ms counts ticks) */ S->auto_off_ms = 0; sim_reset_on_track(S, s, 0, 8); S->gear = 1; }
     } else S->auto_off_ms = 0;
 }
 
+static void sim_tick_body(sim_t* S, double dt);
 void sim_tick(sim_t* S, double dt) {
+    double w0 = now_us();
+    sim_tick_body(S, dt);
+    if (!S->perf_log) return;
+    double w = now_us() - w0;
+    S->perf_wall += w; S->perf_ticks++; if (w > S->perf_worst) S->perf_worst = w;
+    S->perf_sub += S->tick_n; S->perf_step += S->tick_step_us;
+    S->perf_t += dt;
+    if (S->perf_t >= 1.0 - 1e-9) {
+        double simms = S->perf_t * 1000;
+        printf("[perf] t %6.1f s  v %5.1f km/h  tick %.0f Hz x %.2f sub (%.0f Hz) threads %d  whole tick %6.1f us/ms  dc_step %6.1f us/ms  worst tick %6.0f us\n",
+               S->sim_time, fabs(S->snap.t.speed) * 3.6, 1.0 / dt, (double)S->perf_sub / S->perf_ticks, S->P.substep_hz, S->threads,
+               S->perf_wall / simms, S->perf_step / simms, S->perf_worst);
+        fflush(stdout);
+        S->perf_t = S->perf_wall = S->perf_step = S->perf_worst = 0; S->perf_sub = S->perf_ticks = 0;
+    }
+}
+static void sim_tick_body(sim_t* S, double dt) {
+    S->tick_n = 0; S->tick_step_us = 0;
     sim_ctl* C = &S->ctl;
     /* one-shot requests */
     if (C->toggle_assist != S->ctl_seen.toggle_assist) {
@@ -241,7 +265,8 @@ void sim_tick(sim_t* S, double dt) {
         if (up > 0 && S->gear < S->P.ngears) { S->gear = S->gear < 0 ? 0 : S->gear + 1; S->shift_timer_ms = 160; }
         if (dn > 0 && S->gear > -1) { S->gear--; S->shift_timer_ms = 160; }
     }
-    if (S->shift_timer_ms > 0) S->shift_timer_ms -= (int)(dt * 1000 + 0.5);
+    if (S->shift_timer_ms > 0) { double ms = dt * 1000 + S->shift_left_s; int k = (int)ms; S->shift_left_s = ms - k; S->shift_timer_ms -= k; }
+    else S->shift_left_s = 0;
     if (S->auto_clutch || S->autopilot || drv_ped) {
         double c = S->shift_timer_ms > 0 ? 1.0 : 0.0;
         if (S->shift_timer_ms > 0 && S->shift_timer_ms < 60) c = S->shift_timer_ms / 60.0;
@@ -255,7 +280,8 @@ void sim_tick(sim_t* S, double dt) {
     dc_set_input(S->car, &in);
     double t0 = now_us();
     int n = dc_step(S->car, dt);
-    S->us_acc += now_us() - t0; S->steps_acc += n;
+    S->tick_step_us = now_us() - t0; S->tick_n = n;
+    S->us_acc += S->tick_step_us; S->steps_acc += n;
     S->sim_time += dt;
     dc_get_telemetry(S->car, &t);
     /* ---- FFB ---- */
