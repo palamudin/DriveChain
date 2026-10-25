@@ -95,6 +95,7 @@ typedef struct {
     double W[MB_MAXBOX * MB_MAXBOX], ub[MB_MAXBOX], lb_[MB_MAXBOX], hb[MB_MAXBOX];
     int box_of[MB_MAXJ];              /* first box slot of a box joint this step (-1 none) */
     int box_dropped;                  /* box rows dropped because MB_MAXBOX was exceeded (must stay 0) */
+    double pgs_vtol, pgs_vres;        /* PGS stops when the velocity complementarity residual < pgs_vtol (m/s | rad/s) */
     int ready;
     int shake;                        /* 1: projection also corrects velocity (SHAKE/RATTLE-like, energy-consistent) */
     void (*phi_cb)(void* user);       /* called after the position update, before projection: refresh CUSTOM rows' phi */

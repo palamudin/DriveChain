@@ -15,10 +15,11 @@
 static int fails = 0;
 #define CHECK(cond, ...) do { int ok_ = (cond); printf("  %-4s ", ok_ ? "ok" : "FAIL"); printf(__VA_ARGS__); printf("\n"); if (!ok_) fails++; } while (0)
 
+static int g_jf = -1;   /* >= 0 overrides mb.jf (joint friction switch) */
 static dc_car* make(const char* ini, double v0, int steer_mode) {
     dc_car_params p; char err[256]; dc_default_params(&p);
     if (!dc_load_params(ini, &p, err, sizeof err)) { printf("load %s: %s\n", ini, err); return NULL; }
-    p.solver = DC_SOLVER_MULTIBODY;
+    p.solver = DC_SOLVER_MULTIBODY; if (g_jf >= 0) p.mb.jf = g_jf;
     dc_car* c = dc_create(&p); double z[3] = {0, 0, 0}; dc_reset(c, z, 0, v0);
     dc_input in; memset(&in, 0, sizeof in); in.gear = 0; in.steer_mode = steer_mode; dc_set_input(c, &in);
     return c;
@@ -60,7 +61,16 @@ int main(int argc, char** argv) {
     for (int k = 0; k < 400; k++) { dc_step(c, 0.01); dc_get_telemetry(c, &t); if (k > 50 && t.dissipated < dprev - 1e-2) mono = 0; dprev = t.dissipated; dmin = fmin(dmin, t.dissipated); }
     double sfz = t.w[0].fz + t.w[1].fz + t.w[2].fz + t.w[3].fz, mg = c->P.mass * c->P.gravity;
     CHECK(fabs(sfz - mg) < 1e-3 * mg, "static: sum Fz %.2f N = m g %.2f N (err %.2e)", sfz, mg, fabs(sfz - mg) / mg);
-    CHECK(fabs(t.w[0].fz - t.w[1].fz) < 2 && fabs(t.w[2].fz - t.w[3].fz) < 2, "static: left/right symmetric (F %.1f/%.1f, R %.1f/%.1f N)", t.w[0].fz, t.w[1].fz, t.w[2].fz, t.w[3].fz);
+    /* with joint friction the settle drop locks in a small diagonal warp (stiction band, cf. corner-weighting practice
+       of settling the car before reading scales); bound it at 1 % of the corner load. Geometry symmetry: jf = 0. */
+    CHECK(fabs(t.w[0].fz - t.w[1].fz) < 0.01 * mg / 4 && fabs(t.w[2].fz - t.w[3].fz) < 0.01 * mg / 4, "static: left/right warp within the joint-friction band (F %.1f/%.1f, R %.1f/%.1f N)", t.w[0].fz, t.w[1].fz, t.w[2].fz, t.w[3].fz);
+    {
+        g_jf = 0; dc_car* c0 = make(ini, 0, DC_STEER_ANGLE); g_jf = -1; dc_telemetry t0;
+        for (int k = 0; k < 400; k++) dc_step(c0, 0.01);
+        dc_get_telemetry(c0, &t0);
+        CHECK(fabs(t0.w[0].fz - t0.w[1].fz) < 2 && fabs(t0.w[2].fz - t0.w[3].fz) < 2, "static (jf=0): left/right symmetric (F %.1f/%.1f, R %.1f/%.1f N)", t0.w[0].fz, t0.w[1].fz, t0.w[2].fz, t0.w[3].fz);
+        dc_destroy(c0);
+    }
     double rf = sqrt(t.resid_force[0]*t.resid_force[0]+t.resid_force[1]*t.resid_force[1]+t.resid_force[2]*t.resid_force[2]);
     double rt = sqrt(t.resid_torque[0]*t.resid_torque[0]+t.resid_torque[1]*t.resid_torque[1]+t.resid_torque[2]*t.resid_torque[2]);
     CHECK(rf < 1e-3 && rt < 2.0, "static: momentum residual |dP/dt - F_ext| %.2e N, |dL/dt - M_ext| %.2e N m", rf, rt);

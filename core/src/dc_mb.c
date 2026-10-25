@@ -8,7 +8,7 @@
 
 static const v3 AX[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
 
-mb_world* mb_create(void) { mb_world* W = (mb_world*)calloc(1, sizeof(mb_world)); if (W) { W->shake = 1; W->pgs_iters = 400; } return W; }
+mb_world* mb_create(void) { mb_world* W = (mb_world*)calloc(1, sizeof(mb_world)); if (W) { W->shake = 1; W->pgs_iters = 400; W->pgs_vtol = 1e-8; } return W; }
 void mb_destroy(mb_world* W) {
     if (!W) return;
     free(W->nbr); free(W->nbr_blk); free(W->blkpos); free(W->blk); free(W->L); free(W->D); free(W->Dinv);
@@ -512,6 +512,10 @@ int mb_fric_source(mb_world* W, int fj, int j, int r0, int nr, double c, v3 ax) 
     return k;
 }
 
+#ifdef DC_MB_TRACE   /* debug: 1 = early/periodic sweeps, 2 = last sweeps of capped steps (link-time global) */
+extern int mb_trace;
+int mb_trace = 0;
+#endif
 void mb_solve(mb_world* W) {
     assemble(W);
     factor(W);
@@ -586,7 +590,36 @@ void mb_solve(mb_world* W) {
                 double dd = fabs(nl - W->hb[s]) * sqrt(d); if (dd > res) res = dd;
                 W->hb[s] = nl;
             }
-            if (res < 1e-13) break;
+            /* velocity-level complementarity residual. Statically indeterminate friction (e.g. two stuck ball joints in
+               one closed loop) has non-unique impulses: GS then moves along the null space at constant |dlam| while every
+               velocity is converged, so the impulse change alone cannot terminate. Velocities are the physics. */
+            double vres = 0;
+            for (int s = 0; s < nbx; s++) {
+                int jj = W->box_j[s]; mb_joint* J = &W->Jt[jj];
+                double u = W->ub[s] - J->t[W->box_r[s]]; for (int t2 = 0; t2 < nbx; t2++) u += W->W[s * MB_MAXBOX + t2] * W->hb[t2];
+                double v;
+                if (J->cone && J->nsrc > 0) {   /* group: stuck -> |v| ; sliding -> v must be anti-parallel to lam */
+                    int n = 0; double vv[6], ll[6], ln = 0, vl = 0, v2 = 0;
+                    while (s + n < nbx && W->box_j[s + n] == jj && n < 6) {
+                        double un = W->ub[s + n] - J->t[W->box_r[s + n]]; for (int t2 = 0; t2 < nbx; t2++) un += W->W[(s + n) * MB_MAXBOX + t2] * W->hb[t2];
+                        vv[n] = un; ll[n] = W->hb[s + n]; ln += ll[n] * ll[n]; vl += vv[n] * ll[n]; v2 += vv[n] * vv[n]; n++;
+                    }
+                    ln = sqrt(ln);
+                    if (ln < J->bound * (1 - 1e-9) || ln == 0) v = sqrt(v2);
+                    else { double a = vl / ln; v = sqrt(fmax(0, v2 - a * a)) + fmax(0, a); }
+                    s += n - 1;
+                } else {
+                    double lo = J->nsrc > 0 ? -J->bound : J->lo[W->box_r[s]], hi = J->nsrc > 0 ? J->bound : J->hi[W->box_r[s]], l = W->hb[s];
+                    v = l >= hi ? fmax(0, u) : (l <= lo ? fmax(0, -u) : fabs(u));
+                    (void)u;
+                }
+                if (v > vres) vres = v;
+            }
+            W->pgs_vres = vres;
+#ifdef DC_MB_TRACE
+            if ((mb_trace == 1 && (it < 10 || it % 50 == 0)) || (mb_trace == 2 && it >= W->pgs_iters - 3)) fprintf(stderr, "  pgs it %d res %.3e vres %.3e nbx %d\n", it, res, vres, nbx);
+#endif
+            if (res < 1e-12 || vres < W->pgs_vtol) break;
         }
         W->pgs_res = res; W->pgs_it = it;
         memcpy(W->x, W->r, sizeof(double) * N);

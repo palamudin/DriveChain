@@ -780,6 +780,8 @@ void dc_mbcar_step(dc_car* c) {
     T->rack_force = Frack;
     T->engine_rpm = c->we * 30 / M_PI; T->clutch_slip = (c->we - c->wg) * 30 / M_PI; T->gear = c->in.gear;
     T->dissipated = c->dissipated; T->engine_running = c->engine_on; T->proj_work = 0;
+    T->rack_fric_force = m->steer ? W->Jt[m->j_rfric].lam[0] / h : 0; T->col_fric_torque = m->steer ? W->Jt[m->j_cfric].lam[0] / h : 0;
+    T->pgs_iters = W->pgs_it; T->box_rows = W->nbox; T->box_dropped = W->box_dropped;
     for (int i = 0; i < 4; i++) {
         dc_wheel_telem* Wt = &T->w[i]; dc_tc* t = &m->tc[i]; const dc_kin* k = &c->K[i]; dc_pose* p = &c->pose[i];
         Wt->fz = t->Ntot; Wt->fx = t->Fx; Wt->fy = t->Fy; Wt->mz = t->Mz_brush + t->Mt - t->ey_new * t->Fx;

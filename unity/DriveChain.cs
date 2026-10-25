@@ -104,6 +104,8 @@ namespace DriveChain
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)] public double[] resid_force;
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)] public double[] resid_torque;
         public int engine_running, pad2; public double proj_work;
+        public double rack_fric_force, col_fric_torque;
+        public int pgs_iters, box_rows, box_dropped, pad3;
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 4)] public WheelTelemetry[] w;
     }
 

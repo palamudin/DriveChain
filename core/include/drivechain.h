@@ -252,6 +252,8 @@ typedef struct {
     double resid_force[3], resid_torque[3];   /* Σ m a - ΣF_ext, ΣdL/dt - ΣT_ext over ALL bodies+rotors (Newton-3 audit) */
     int engine_running, pad2;
     double proj_work;           /* cumulative KE change from the momentum projection (J), reported for honesty */
+    double rack_fric_force, col_fric_torque;  /* MB core: rack friction force on the rack (N), column bearing friction torque (N m) */
+    int pgs_iters, box_rows, box_dropped, pad3; /* MB core: box-LCP sweeps, active box rows, rows dropped by MB_MAXBOX (should be 0) */
     dc_wheel_telem w[4];
 } dc_telemetry;
 
