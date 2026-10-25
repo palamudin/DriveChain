@@ -10,19 +10,26 @@
   ok   cornering: car actually corners, ay and yaw agree (ay 4.88, v*r 5.34)
   ok   cornering: knuckle pose = corner kinematics at the solved travel/rack (pos 3.68e-12 m, rot 2.49e-11)
   ok   cornering: Newton-3 per joint (rel |sum F| 0.00e+00, |sum M| 1.17e-11 m)
-  ok   cornering: dissipation non-decreasing (28431.9 J after 5 s)
+  ok   cornering: dissipation non-decreasing (28385.6 J after 5 s)
   ok   cornering: momentum residual 1.58e-03 N
   ok   self-centring: hands off at 88 deg (column 2.31 N m) -> -6.4 deg after 1.5 s
        bushings: 8 arm pivots compliant
   ok   bushed static: 8 of 8 arm pivots bushed, sum Fz = m g (err 1.65e-04)
-  ok   bushed static: dissipation >= 0 and non-decreasing (min 71 J)
+  ok   bushed static: dissipation >= 0 and non-decreasing (min 70.8 J)
   ok   bushed static: Newton-3 per joint 0.00e+00 N, 1.44e-12 N m
        bushed cornering: ay 4.22 m/s^2, yaw 0.302 rad/s, max pose departure from rigid kinematics 0.90 mm
   ok   bushed cornering: Newton-3 per joint (rel 0.00e+00, 2.73e-11 m)
   ok   bushed cornering: dissipation non-decreasing, momentum residual 2.74e-03 N
   ok   bushed cornering: bush deflection visible but small (0.90 mm)
+  ok   rack mount: housing is its own body (6) on joint 0
+       rack mount: ay 4.81 m/s^2, housing shift -0.129 mm, k x -1031 N vs tie-rod rack force -993 N
+  ok   rack mount: |k x| matches the rack force within 10% (quasi-static)
+  ok   rack mount cornering: Newton-3 per joint (rel 0.00e+00, 1.05e-11 m)
+  ok   rack mount cornering: dissipation non-decreasing, momentum residual 1.79e-03 N
   ok   carrier: reset KE adds 1/2 I_d wc^2 + 1/2 I_go (fd wc)^2 = 490.66 J (got 490.66 J, wc 69.2 rad/s)
   ok   carrier: ratio chain holds (carrier = wheel mean, propshaft = fd x carrier), rel err 2.97e-07
   ok   carrier: Newton-3 per joint under drive and in neutral (rel 0.00e+00, 1.32e-11 m)
   ok   carrier: dissipation non-decreasing, momentum residual 5.80e-04 N
+  ok   energy audit (brush tyre): min per-step dissipation -2.80e-05 J (at heave) > -1.0e-03 J, no step creates energy
+  ok   energy audit (TARMAC tyre): min per-step dissipation -1.25e-02 J (at heave) > -7.5e-02 J, no step creates energy
 === ALL PASS ===
