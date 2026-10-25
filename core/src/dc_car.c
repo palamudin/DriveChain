@@ -897,8 +897,7 @@ DC_API void dc_substep(dc_car* c) {
         W->force_world[0] = t->F.x; W->force_world[1] = t->F.y; W->force_world[2] = t->F.z;
         W->contact[0] = t->p.x; W->contact[1] = t->p.y; W->contact[2] = t->p.z;
         W->normal[0] = t->n.x; W->normal[1] = t->n.y; W->normal[2] = t->n.z;
-        W->slip_angle = t->contact ? atan(c->ty[i].ey / t->sig_y) : 0;
-        W->slip_ratio = t->contact ? c->ty[i].ex / t->sig_x : 0;
+        dc_tyre_telem_slip(c, i, t, h, &W->slip_angle, &W->slip_ratio);   /* relaxed kinematic slip */
         W->slip_angle_ss = t->slip_angle_ss; W->slip_ratio_ss = t->slip_ratio_ss;
         W->patch_half_len = t->a_eff; W->deflection = t->delta_eff; W->pressure = c->ty[i].pressure; W->rim_force = t->Fr;
         W->mu = t->mu_eff; W->sliding = fmin(t->lam, 1.0);

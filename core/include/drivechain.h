@@ -226,7 +226,7 @@ typedef struct {
     double fz, fx, fy, mz;             /* contact-frame forces on the tyre from the road (N, N m) */
     double force_world[3];             /* total contact force, world */
     double contact[3], normal[3];      /* effective contact point & road plane normal, world */
-    double slip_angle, slip_ratio;     /* transient (from carcass deflection) */
+    double slip_angle, slip_ratio;     /* transient: kinematic slip relaxed over the relaxation length (does not saturate in a slide) */
     double slip_angle_ss, slip_ratio_ss; /* kinematic steady-state */
     double patch_half_len, deflection, pressure, rim_force;
     double mu, sliding;                /* effective peak mu, 0..1 sliding fraction (brush lambda) */

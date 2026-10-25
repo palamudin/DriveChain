@@ -20,6 +20,8 @@ typedef struct {
 void dc_tyre_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc* t);
 void dc_tyre_phaseB(dc_car* c, int i, v3 cw, v3 a, double omega_new, double h, dc_tc* t, int commit);
 /* TARMAC tyre (tyre_model = 1): same interface, dispatched from dc_tyre_phaseA/B */
+/* telemetry only (no effect on forces): advance the reported transient slip of wheel i one step h */
+void dc_tyre_telem_slip(dc_car* c, int i, const dc_tc* t, double h, double* slip_angle, double* slip_ratio);
 void dc_tyre_tm_init(dc_car* c);
 void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc* t);
 void dc_tyre_tm_phaseB(dc_car* c, int i, v3 cw, v3 a, double omega_new, double h, dc_tc* t, int commit);

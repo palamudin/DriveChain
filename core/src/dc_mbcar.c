@@ -788,8 +788,7 @@ void dc_mbcar_step(dc_car* c) {
         Wt->force_world[0] = t->F.x; Wt->force_world[1] = t->F.y; Wt->force_world[2] = t->F.z;
         Wt->contact[0] = t->p.x; Wt->contact[1] = t->p.y; Wt->contact[2] = t->p.z;
         Wt->normal[0] = t->n.x; Wt->normal[1] = t->n.y; Wt->normal[2] = t->n.z;
-        Wt->slip_angle = t->contact ? atan(c->ty[i].ey / t->sig_y) : 0;
-        Wt->slip_ratio = t->contact ? c->ty[i].ex / t->sig_x : 0;
+        dc_tyre_telem_slip(c, i, t, h, &Wt->slip_angle, &Wt->slip_ratio);   /* relaxed kinematic slip */
         Wt->slip_angle_ss = t->slip_angle_ss; Wt->slip_ratio_ss = t->slip_ratio_ss;
         Wt->patch_half_len = t->a_eff; Wt->deflection = t->delta_eff; Wt->pressure = c->ty[i].pressure; Wt->rim_force = t->Fr;
         Wt->mu = t->mu_eff; Wt->sliding = fmin(t->lam, 1.0);

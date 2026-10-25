@@ -39,6 +39,7 @@ typedef struct {
     double pressure, leak_tau;
     double omega, angle;       /* absolute spin about spindle axis, render angle */
     double delta_row[DC_MAX_ROWS];
+    double a_tr, k_tr;         /* TARMAC telemetry only: relaxation-length transient slip (rad, -), no effect on forces */
 } dc_tyre_state;
 
 /* TARMAC tyre: per-axle constant tables (ray fan, flat-volume inversion, derived parameters), built by dc_tyre_tm_init */

@@ -422,3 +422,19 @@ void dc_tyre_phaseB(dc_car* c, int i, v3 cw, v3 a, double omega_new, double h, d
     }
     (void)a;
 }
+
+/* Reported transient slip (telemetry only, both cores, every tyre model).
+   The carcass/belt deflection states are plastically capped at mu N / k, so deflection / sigma saturates at
+   mu Fz / C_alpha (~1-3 deg) in any slide and is not a slip angle. Report the standard relaxation-length transient
+   slip instead: d(alpha)/dt = |Vx| / sigma (alpha_ss - alpha) (Pacejka 2012 s7.2.1; SAE J670 "transient slip"),
+   integrated implicitly (unconditionally stable). In the linear range this equals deflection / sigma; in a slide it
+   follows the kinematic slip with the relaxation lag. Airborne it relaxes to 0 like the tread. Reset clears it. */
+void dc_tyre_telem_slip(dc_car* c, int i, const dc_tc* t, double h, double* slip_angle, double* slip_ratio) {
+    dc_tyre_state* S = &c->ty[i];
+    if (!t->contact) { S->a_tr /= (1 + h * 60); S->k_tr /= (1 + h * 60); *slip_angle = 0; *slip_ratio = 0; return; }
+    double vr = fmax(fabs(t->Vcx), 0.5);
+    double gy = h * vr / fmax(t->sig_y, 1e-3), gx = h * vr / fmax(t->sig_x, 1e-3);
+    S->a_tr += gy / (1 + gy) * (t->slip_angle_ss - S->a_tr);
+    S->k_tr += gx / (1 + gx) * (t->slip_ratio_ss - S->k_tr);
+    *slip_angle = S->a_tr; *slip_ratio = S->k_tr;
+}

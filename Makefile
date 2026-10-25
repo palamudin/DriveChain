@@ -33,6 +33,11 @@ build/mbcar_tests: tests/mbcar_tests.c build/libdrivechain.a
 	$(CC) -O2 -std=gnu11 -Icore/include -o $@ $< build/libdrivechain.a -lm
 build/mbcar_smoke: tests/mbcar_smoke.c build/libdrivechain.a
 	$(CC) -O2 -std=gnu11 -Icore/include -o $@ $< build/libdrivechain.a -lm
+build/reset_tests: tests/reset_tests.c build/libdrivechain.a
+	$(CC) -O2 -std=gnu11 -Icore/include -o $@ $< build/libdrivechain.a -lm
+resettest: build/reset_tests
+	./build/reset_tests cars/mx5_na.ini cars/hatch_fwd.ini | tee results/reset_summary.txt
+.PHONY: resettest
 mbcartest: build/mbcar_tests build/mbcar_smoke
 	./build/mbcar_tests cars/mx5_na.ini
 .PHONY: mbcartest
@@ -40,10 +45,11 @@ mbtest: build/mb_tests
 	./build/mb_tests | tee results/mb/phase0_summary.txt
 .PHONY: mbtest
 
-test: build/dc_tests build/mb_tests build/mbcar_tests
+test: build/dc_tests build/mb_tests build/mbcar_tests build/reset_tests
 	./build/dc_tests | tee results/summary.txt
 	mkdir -p results/mb && ./build/mb_tests | tee results/mb/phase0_summary.txt
 	./build/mbcar_tests cars/mx5_na.ini | tee results/mb/phase12_summary.txt
+	./build/reset_tests cars/mx5_na.ini cars/hatch_fwd.ini | tee results/reset_summary.txt
 	python3 tests/plot.py results
 	$(MAKE) crashtest
 	$(MAKE) fishtest
