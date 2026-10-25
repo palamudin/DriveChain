@@ -405,12 +405,22 @@ panel:
   * bridge and cutting exits;
   * the wake of an overtaken truck.
 
-### 7.2 Coupling
-* Sampling must be at the panel positions, not at the CG. A crosswind gust that reaches
-  the nose first then produces the physical yaw moment transient.
-* **The game's existing wind force on the car must be removed** when this model is
-  active. This aero model *is* the wind force on the car, so keeping both double-counts
-  it (open question Q1).
+### 7.2 Coupling: wind is air, not a force
+* The user confirmed how the host game treats wind (2026-10-25).
+  * **Today:** the game applies wind as a physicalised force on the car (direction,
+    magnitude, application point, so it produces torque and/or vertical load). Drag is
+    generalised from a simplified mesh. In the user's words, wind is "air with force
+    applied continuously when active".
+  * **In drivechain-aero, wind enters only as the air-velocity field `w(x,t)`** inside
+    the per-panel relative velocity `u_i = v_point,i − w(r_i,t)`.
+  * There is **no separate wind force**. Every wind-induced force and moment comes out
+    of the same panel load evaluation that produces drag and lift:
+    * side force;
+    * yaw and roll moments;
+    * changes in lift and balance;
+    * extra or reduced drag.
+* Sampling is at the panel positions, not at the CG. A crosswind gust that reaches the
+  nose first then produces the physical yaw-moment transient.
 
 ### 7.3 Ground-frame shear vs moving-ground CFD
 * The CFD map assumes a uniform onflow over a moving ground (wind-tunnel convention).
@@ -427,6 +437,46 @@ panel:
 * Measured admittance can deviate from the simple low-pass shape at some k (Passmore et
   al. 2001; Sims-Williams 2011 [S]; magnitudes to be extracted from the papers). The
   filter design therefore follows the CFD/literature result, not a fixed form.
+
+---
+
+### 7.5 Integration contract with the host game
+**The host supplies, each aero tick (240 Hz):**
+1. **Wind velocity, minimum level.** A uniform world-frame vector `w0` (m/s), meaning
+   the air velocity relative to the ground. It is zero in calm air.
+2. **Wind velocity, optional level.** A field/gust callback `w(x, t)`, sampled by
+   drivechain at the panel points (or a coarse subset). It is batched as
+   `host_wind_sample(const float *pts_world, int n, double t, float *w_out)`.
+   * It can carry the near-ground profile, turbulence, gust fronts and obstacle/vehicle
+     wakes.
+   * If it is absent, drivechain may synthesise profile and turbulence from §7.1 using
+     host-supplied `U10`, direction and terrain `z0`. That is optional.
+3. **Air density ρ** (kg/m³) from the host's weather system. Alternatively the host
+   supplies p and T, and drivechain computes `ρ = p/(R·T)` (R = 287.05 J/(kg·K) for dry
+   air). The default is 1.2 only when the host supplies nothing [U].
+4. **Ground height/normal under the car**, if it differs from the existing contact
+   ground query. This sets the ride-height state for the map.
+
+**drivechain returns, or applies internally:**
+* the aero wrench on the chassis body and on each unsprung body;
+* diagnostics: Cd, CL, CLF, CLR, CS, β, q_ref and the energy term `Win_aero`.
+
+**The host must disable, for any car running drivechain-aero:**
+* its own direct wind force on that car;
+* its mesh-based drag (and any lift) on that car.
+
+Otherwise wind and drag are counted twice.
+
+* **Recommended host-side switch:** one per-vehicle flag, `aero_owner = drivechain`. With
+  this flag set, the host stops applying aerodynamic forces to the car and only provides
+  the air state (`w`, ρ).
+* The host's wind may keep acting on *other* objects (debris, flags, non-drivechain
+  props) as before.
+
+**Units and frames:**
+* SI throughout. `w` is world frame, in the host's world axes.
+* The axis mapping is documented next to the existing chassis/physics frame conversion.
+* Time `t` is in host sim seconds, which keeps gust fields coherent across vehicles.
 
 ---
 
@@ -454,13 +504,38 @@ panel:
    nose to tail. The response settles to the quasi-steady map value.
 7. **Symmetry.** ±β gives mirrored CS, yaw moment and roll moment, with identical CL.
 8. **Cost.** < 15 µs per sim-ms at 1024 panels in the real core.
+9. **Steady uniform-wind reduction.** Car at speed V, steady uniform wind w0, no
+   turbulence or profile, so the relative wind is `U_rel = V − w0` at yaw
+   β = atan2(U_rel,y, U_rel,x). The per-panel sum must reduce *exactly* to the classic
+   relative-wind forms:
+   * `D = q·A·Cd(β)`;
+   * `Y = q·A·CS(β)`;
+   * `N = q·A·L·CN(β)`;
+   * with `q = ½ρ|U_rel|²`, using the map coefficients at β (tolerance < 0.5%).
+
+   Also check:
+   * the drag direction is along `U_rel` (for wind-axis Cd), not along the car's heading;
+   * a pure crosswind on a stationary car (V = 0) gives the β = 90° loads;
+   * reversing the wind side mirrors CS, CN and the roll moment.
+10. **Yaw-sensitivity against published crosswind data.** The map's slopes at small β
+    and their trends to ~20–30° must be compared with published passenger-car data:
+    * dCS/dβ;
+    * dCN/dβ (sign: destabilising);
+    * dCL/dβ (lift rising with yaw);
+    * Cd(β).
+
+    The comparison data comes from Hucho 4th ed. ch. 4 / Schütz 5th ed. (yaw-sweep
+    data), Howell, Windsor & Passmore 2021 (CL vs yaw), Baker, J. Fluids Struct. 5, 1991
+    (ground-vehicle crosswind coefficients) and Sims-Williams, SAE 2011-01-0172 [S]. The
+    numeric target bands are still to be extracted from these sources [U]. For the Uno,
+    use the SAE 840297 yaw data if obtained.
 
 ## 10. Open questions for the user
-1. **Wind representation in the game today.** Is it a uniform vector, a field, or gusts?
-   Where is its force on the car applied? It must be replaced by this model to avoid
-   double counting.
-2. **Air density.** Does the game have temperature, pressure or altitude? Otherwise
-   ρ = 1.2 stays [U].
+1. **~~Wind representation~~ (answered 2026-10-25).** The host applies wind as a
+   physicalised force with a mesh-based drag. Resolved by the §7.5 contract. Still open:
+   does the host have a gust/field model to expose through `host_wind_sample`, or only a
+   uniform vector?
+2. **Air density.** Can the host's weather system expose ρ, or p and T (§7.5)?
 3. **Top-up geometry** for the Miata. The mesh is top down. Is a soft-top/hardtop model
    available, or should one be built from dimensions? It is needed to validate
    Cd = 0.38.
