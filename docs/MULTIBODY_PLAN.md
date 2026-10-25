@@ -120,7 +120,7 @@ int dc_get_joint_reactions(const dc_car*, dc_joint_reaction* out, int max);
 - Phase 0 benchmark target: ≤ 250 µs per substep on the dev box.
 
 **Determinism and Unity compatibility**
-- Fixed ordering, doubles, no threads in the step. The replay test must stay bit-identical.
+- Fixed ordering, doubles. Threads in the step are opt-in (dc_set_threads), with a fixed per-wheel / per-row partition and no cross-thread reductions, so results stay bit-identical for any thread count (docs/PERFORMANCE.md). The replay test must stay bit-identical.
 - The C ABI is unchanged: car create/step, inputs, the column-torque FFB output, and the three-vector body output. It is extended only with joint-reaction telemetry.
 - Unity P/Invoke structs gain one fixed array. The raylib demo and dist build are unaffected.
 

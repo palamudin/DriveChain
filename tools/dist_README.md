@@ -2,6 +2,7 @@
 
 A physically based steering, suspension and tyre core (C, double precision, 2 kHz) driven by a raylib 3D test drive.
 Physics runs on its own 1 kHz thread (2 kHz core substeps), separate from rendering. Input and force feedback go through SDL2.
+Performance options (`[physics]` in demo.ini): `substep_hz` sets the mechanics rate (2000 by default; 480 already converges for the reference car at about a quarter of the cost), and `threads` (1-4, default 1) splits the per-wheel tyre/road contact and part of the solver across worker threads with bit-identical results, e.g. `--set physics.threads=4 --set physics.substep_hz=480`. Timings: docs/PERFORMANCE.md.
 
 > PRIVATE BUILD: `assets/miata_mesh` and `cars/miata_ac.ini` come from a third-party mod and are only for your own testing.
 > Do not redistribute this zip.
