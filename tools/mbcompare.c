@@ -130,7 +130,7 @@ static void m_skidpad(const char* dir) {
     double ay_max = 0, sw_at[3] = {0}, tq_at[3] = {0}; double ay_lvl[3] = {3.0, 5.0, 7.0}; int got[3] = {0};
     double sw_ay_lo = 0, ay_lo = 0; int lo_set = 0, lost = 0;
     /* SAE J266 constant-radius method: R fixed, so the Ackermann angle L/R is constant and the slope of steer angle
-     * vs ay is the understeer gradient. Least-squares over the linear range 0.1-0.4 g (single first-crossing samples
+     * vs ay is the understeer gradient. Least-squares over the linear range 0.2-0.45 g (the start at 8 m/s is already 0.16 g, so lower samples are the start transient) (single first-crossing samples
      * are dominated by path-driver hunting). Reported at the steering wheel and at the road wheels (mean front steer). */
     double fn = 0, fx = 0, fxx = 0, fsw = 0, fxsw = 0, frw = 0, fxrw = 0;
     for (int i = 0; i < 120 * 60; i++) {
@@ -142,7 +142,7 @@ static void m_skidpad(const char* dir) {
         if (fabs(st.lat_err) < 2.0 && ayf > ay_max) ay_max = ayf;
         for (int k = 0; k < 3; k++) if (!got[k] && ayf >= ay_lvl[k]) { got[k] = 1; sw_at[k] = T.sw_angle * DEG; tq_at[k] = T.column_torque; }
         if (!lo_set && ayf >= 3.0) { lo_set = 1; sw_ay_lo = T.sw_angle * DEG; ay_lo = ayf; }
-        if (ayf >= 0.1 * 9.81 && ayf <= 0.4 * 9.81 && fabs(st.lat_err) < 1.0) {
+        if (SIMT > 3.0 && ayf >= 0.2 * 9.81 && ayf <= 0.45 * 9.81 && fabs(st.lat_err) < 1.0) {
             double g = ayf / 9.81, sw = fabs(T.sw_angle) * DEG, rw = fabs(0.5 * (T.w[0].steer + T.w[1].steer)) * DEG;
             fn += 1; fx += g; fxx += g * g; fsw += sw; fxsw += g * sw; frw += rw; fxrw += g * rw; }
         if (fabs(st.lat_err) > 4.0) { lost = 1; break; }
@@ -155,9 +155,13 @@ static void m_skidpad(const char* dir) {
     { double den = fn * fxx - fx * fx;
       if (fn > 20 && den > 1e-9) {
         double ksw = (fn * fxsw - fx * fsw) / den, krw = (fn * fxrw - fx * frw) / den;
-        SUM("usg_sw_fit", ksw, "deg sw/g, LSQ 0.1-0.4 g, constant R (J266 steering-wheel angle gradient)");
-        SUM("usg_rw_fit", krw, "deg road-wheel/g, LSQ 0.1-0.4 g (J266 understeer gradient K)");
+        SUM("usg_sw_fit", ksw, "deg sw/g, LSQ 0.2-0.45 g, constant R (J266 steering-wheel angle gradient)");
+        SUM("usg_rw_fit", krw, "deg actual road-wheel angle/g, LSQ 0.2-0.45 g (tyre + rear/roll steer only; excludes front compliance steer)");
         SUM("usg_overall_ratio", krw > 1e-6 ? ksw / krw : 0, "sw/rw gradient ratio (rack ratio + column compliance)");
+        /* J266 reference steer angle gradient = SW gradient / static overall ratio. This is the understeer gradient K
+         * as published for road cars: it includes front compliance steer, which moves the wheel relative to the rack
+         * and so never appears in the actual road-wheel angle (usg_rw_fit only sees tyre + rear/roll steer). */
+        SUM("usg_K_j266", ksw / P.steer_ratio, "deg/g, usg_sw_fit / steer_ratio (SAE J266 reference steer gradient)");
         SUM("usg_fit_n", fn, "samples"); } }
     SUM("skidpad_lost_path", lost, "");
 }
