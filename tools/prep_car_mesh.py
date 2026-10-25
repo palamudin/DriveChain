@@ -1,19 +1,35 @@
 #!/usr/bin/env python3
-"""prep_car_mesh.py - split a game-style car OBJ (e.g. a LOD B export) into the parts the demo animates.
+"""prep_car_mesh.py - split a game-style car OBJ (e.g. a game LOD export) into the parts the demo animates.
 
 usage: prep_car_mesh.py <car.obj> <car.ini (physics, for hub positions)> <out_dir> [--paint r,g,b] [--max-tex 1024]
 
 Writes into out_dir (keep it under private/ for third-party assets - never commit or publish them):
-  body.obj/.mtl          chassis, cockpit, lights (no glass, damage, blur or light-beam meshes)
+  body.obj/.mtl          chassis, cockpit, lights (no glass or other dropped groups)
   wheel_<c>.obj/.mtl     tyre + rim + brake disc, centred on its wheel centre      (c = fl fr rl rr) - spins & steers
   caliper_<c>.obj/.mtl   caliper, relative to the same wheel centre                  - steers, does not spin
   steer.obj/.mtl         steering wheel, centred on its hub
   mesh.cfg               placement (physics frame: x fwd, y left, z up, origin = CG) + cross-check numbers
   tex/*.png              DDS -> PNG (Pillow), downscaled to --max-tex
-Frame: such models are +X left, +Y up, +Z forward  ->  physics (x, y, z) = (ac.z, ac.x, ac.y) + offset,
+Frame: such models are +X left, +Y up, +Z forward  ->  physics (x, y, z) = (m.z, m.x, m.y) + offset,
 with the offset chosen so the mesh wheel centres land on the physics hub points (least squares in x and z).
+Group naming: generic defaults below; a mesh-specific JSON (same keys) is read from $PREP_MESH_GROUPS or, if present,
+private/car_mesh_groups.json (keep mesh-specific names private). Regexes match the lower-case group name from its
+start (re.match), except 'drop' (re.search); 'paint' is the body-paint material name (full match); {k} = corner token.
 """
-import sys, os, re, math, argparse
+import sys, os, re, math, argparse, json
+
+GROUPS = {"corners": {"fl": "fl", "fr": "fr", "rl": "rl", "rr": "rr"},
+          "drop": r"shadow|collider",
+          "glass": r"(glass|windshield|window)",
+          "wheel": r"(tyre|tire|rim|disc)_{k}",
+          "caliper": r"caliper_{k}",
+          "steer": r"steer",
+          "tyre": r"(tyre|tire)",
+          "paint": r"(body|paint)"}
+_here = os.path.dirname(os.path.abspath(__file__))
+for _f in (os.environ.get("PREP_MESH_GROUPS"), os.path.join(_here, "..", "private", "car_mesh_groups.json")):
+    if _f and os.path.isfile(_f):
+        GROUPS.update({k: v for k, v in json.load(open(_f)).items() if not k.startswith("_")}); break
 
 ap = argparse.ArgumentParser()
 ap.add_argument("obj"); ap.add_argument("ini"); ap.add_argument("out")
@@ -64,15 +80,15 @@ for ln in open(os.path.join(src_dir, mtllib), errors="replace"):
     elif cur and t.startswith("map_Kd"): mats[cur]["map"] = t.split(None, 1)[1].strip().replace("\\", "/")
 
 # ---------- classify
-CORNER = {"lf": "fl", "rf": "fr", "lr": "rl", "rr": "rr"}
+CORNER = GROUPS["corners"]
 def part_of(name):
     n = name.lower()
-    if "damage" in n or "rim_blur" in n or "light_beam" in n or "geo_susp" in n: return None
-    if n in ("geo_ext_windshield_b", "windshield_hr_int_front_b"): return None      # glass: drawn without alpha it would blind the cockpit cam
+    if re.search(GROUPS["drop"], n): return None
+    if re.match(GROUPS["glass"], n): return None      # glass: drawn without alpha it would blind the cockpit cam
     for k, c in CORNER.items():
-        if re.match(rf"(tyre|rim)_{k}_", n) or n == f"geo_disc_{k}_b": return "wheel_" + c
-        if n == f"brake_caliper_{k}_b": return "caliper_" + c
-    if n.startswith("geo_steer"): return "steer"
+        if re.match(GROUPS["wheel"].replace("{k}", k), n): return "wheel_" + c
+        if re.match(GROUPS["caliper"].replace("{k}", k), n): return "caliper_" + c
+    if re.match(GROUPS["steer"], n): return "steer"
     return "body"
 parts = {}
 for gname in order:
@@ -91,7 +107,7 @@ def bbox(pts):
 # wheel centres from the tyre bounding boxes (x, z centre; y = mid of tread width)
 wc = {}; wr = {}
 for c in ("fl", "fr", "rl", "rr"):
-    tyre = [gn for gn in parts["wheel_" + c] if gn.lower().startswith("tyre")]
+    tyre = [gn for gn in parts["wheel_" + c] if re.match(GROUPS["tyre"], gn.lower())]
     mn, mx = bbox(verts_of(tyre))
     wc[c] = [(mn[k] + mx[k]) / 2 for k in range(3)]
     wr[c] = 0.25 * ((mx[0] - mn[0]) + (mx[2] - mn[2]))
@@ -187,7 +203,7 @@ def write_part(pname, gnames, origin):
         for m in used:
             M = mats.get(m, {"Kd": (0.6, 0.6, 0.6), "map": None})
             fm.write(f"newmtl {m}\n")
-            if m == "ext_chassis": fm.write("Kd %.3f %.3f %.3f\n\n" % paint); continue      # body paint (skins are not part of the model)
+            if re.fullmatch(GROUPS["paint"], m or ""): fm.write("Kd %.3f %.3f %.3f\n\n" % paint); continue      # body paint (skins are not part of the model)
             fm.write("Kd %.3f %.3f %.3f\n" % tuple(M["Kd"]))
             t = tex(M["map"])
             if t: fm.write(f"map_Kd {t}\n")
