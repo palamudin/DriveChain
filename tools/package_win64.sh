@@ -42,6 +42,7 @@ done
 #  _propV = rotary-valve pressure states (mb_valve_model = 1, contoured edges), pump at full flow from idle (docs/VALVE.md)
 #  _propB = compliant arm-pivot bushings at documented estimates (docs/BUSHINGS.md)
 #  _propR = compliant rack mount (housing on rubber clamp bushes, axial rate estimate; docs/BUSHINGS.md)
+#  _propBR = propB + propR together (bushes and rack mount)
 #  _propC = propshaft and diff-carrier rotors in the driveline (docs/CARRIER.md)
 # MB-core opt-ins: only for cars that run the multibody core (solver = 1); on legacy-core cars the keys would be inert
 mkprop() { suffix=$1; shift; for f in $D/cars/*.ini; do case "$f" in *_tarmac*|*_prop*) continue;; esac
@@ -62,6 +63,7 @@ done; }
 mkprop propV "; hydraulic-valve proposal propV (docs/VALVE.md)" "mb_valve_model = 1" "assist_rpm_full = 800"
 mkprop propB "; compliant-bushing proposal propB (docs/BUSHINGS.md)" "mb_bush_kr = 2e6, 2e6" "mb_bush_ka = 5e5, 5e5" "mb_bush_kt = 300, 300"
 mkprop propR "; rack-mount compliance proposal propR (docs/BUSHINGS.md)" "mb_rack_mount_k = 8e6" "mb_rack_mount_c = 1.9e4"
+mkprop propBR "; bushes + rack mount proposal propBR (docs/BUSHINGS.md)" "mb_bush_kr = 2e6, 2e6" "mb_bush_ka = 5e5, 5e5" "mb_bush_kt = 300, 300" "mb_rack_mount_k = 8e6" "mb_rack_mount_c = 1.9e4"
 mkprop propC "; carrier-inertia proposal propC (docs/CARRIER.md)" "mb_diff_inertia = 0.02" "mb_gb_out_inertia = 0.01"
 # private mesh maps (owner's testing only): every private/tracks/<name> with a track.cfg -> tracks/<name> (F6 in the demo)
 for t in private/tracks/*/; do [ -f "$t/track.cfg" ] || continue; n=$(basename "$t"); mkdir -p $D/tracks/$n

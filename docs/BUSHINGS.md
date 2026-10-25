@@ -1,7 +1,7 @@
 # Arm-pivot bushings as compliant rows (MB core)
 
 Status: implemented, opt-in. The default stays rigid (all `mb_bush_*` rates are 0, so each arm pivot is a revolute and the results are
-bit-identical to the rigid core). The dist ships `<car>_propB.ini` variants with the estimates below as a proposal.
+bit-identical to the rigid core). The dist ships `<car>_propB.ini` variants with the estimates below as a proposal. `<car>_propBR.ini` combines them with the rack mount (`_propR`, below).
 
 ## Model
 
