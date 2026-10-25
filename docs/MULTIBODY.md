@@ -27,7 +27,7 @@ symplectic position update. About 130 µs per substep at 2 kHz on one core: real
 - **Newton-3:** each joint's two sides sum to zero to round-off (≈1e-12 N·m).
 - **Momentum:** |dP/dt − F_ext| ≈ 2e-8 N static, 1.6e-3 N cornering. F_ext includes tyre contact forces and moments.
 - **Energy:** `dissipated = W_ext − ΔE`, with E = kinetic + gravity + spring/bar/stop + tyre carcass energy, all
-  evaluated at the same instant (start of step). W_ext = engine, aero and body contact, the driver's hands and
+  evaluated at the same instant (start of step). W_ext = engine, aero, the driver's hands and
   the active assist. Dissipation is non-negative and non-decreasing to within 2 mJ per 10 ms (0.2 W) at rest.
 
 ## Validation (`make mbcartest`, part of `make test`)
