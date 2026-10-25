@@ -17,6 +17,27 @@ if [ -f private/miata_ac.ini ]; then cp private/miata_ac.ini $D/cars/; cp -r pri
 for f in $D/cars/*.ini; do b=${f%.ini}
   sed -e '/^\[front\]/a tyre_model = 1' -e '/^\[rear\]/a tyre_model = 1' "$f" > ${b}_tarmac.ini
   sed -e '/^\[front\]/a tyre_model = 1\ntyre_tm_shape = 1' -e '/^\[rear\]/a tyre_model = 1\ntyre_tm_shape = 1' "$f" > ${b}_tarmac_brush.ini; done
+# opt-in tyre-study proposals for the 185/60R14 cars (docs/TYRE_DATA.md; defaults unchanged): _propF2 (envelope), _propD (TARMAC).
+# Keys are appended at the end of [front] and [rear], so they override the car's own values (last key wins).
+for f in $D/cars/mx5_na.ini $D/cars/miata_ac.ini; do [ -f "$f" ] || continue; python3 - "$f" <<'PY'
+import sys, re
+f = sys.argv[1]; src = open(f, newline='').read()
+COMMON = ["tyre_mu_y = 0.955", "tyre_mu_x = 0.926", "tyre_ls_exp_y = 0.90", "tyre_ls_exp_x = 0.92", "tyre_trail_factor = 1.3"]
+SETS = {"propF2": COMMON + ["tyre_falloff_level = 0.75", "tyre_falloff_speed = 4"],
+        "propD": COMMON + ["tyre_model = 1", "tyre_tm_shape = 1", "tyre_tm_damp_mode = 1", "tyre_tm_load_sens = 0.10",
+                           "tyre_tm_slide_floor = 0.70", "tyre_tm_slide_exp = 2", "tyre_tm_slide_speed = 8"]}
+for name, keys in SETS.items():
+    out, sec = [], None
+    lines = src.splitlines()
+    for i, l in enumerate(lines):
+        m = re.match(r"\s*\[(\w+)\]", l)
+        if m and sec in ("front", "rear"): out += ["; tyre-study proposal " + name] + keys
+        if m: sec = m.group(1)
+        out.append(l)
+    if sec in ("front", "rear"): out += ["; tyre-study proposal " + name] + keys
+    open(f[:-4] + "_" + name + ".ini", "w", newline='').write("\r\n".join(x.rstrip("\r") for x in out) + "\r\n")
+PY
+done
 # private mesh maps (owner's testing only): every private/tracks/<name> with a track.cfg -> tracks/<name> (F6 in the demo)
 for t in private/tracks/*/; do [ -f "$t/track.cfg" ] || continue; n=$(basename "$t"); mkdir -p $D/tracks/$n
   for f in track.cfg collider.bin scenery.bin line.csv pitline.csv CREDITS.md; do [ -f "$t/$f" ] && cp "$t/$f" $D/tracks/$n/; done; done
