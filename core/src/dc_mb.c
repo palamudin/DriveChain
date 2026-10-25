@@ -8,7 +8,7 @@
 
 static const v3 AX[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
 
-mb_world* mb_create(void) { mb_world* W = (mb_world*)calloc(1, sizeof(mb_world)); if (W) { W->shake = 1; W->pgs_iters = 400; W->pgs_vtol = 1e-8; } return W; }
+mb_world* mb_create(void) { mb_world* W = (mb_world*)calloc(1, sizeof(mb_world)); if (W) { W->shake = 1; W->pgs_iters = 400; W->pgs_vtol = 1e-8; W->pgs_etol = 1e-8; W->pgs_ssm = 2; } return W; }
 void mb_destroy(mb_world* W) {
     if (!W) return;
     free(W->nbr); free(W->nbr_blk); free(W->blkpos); free(W->blk); free(W->L); free(W->D); free(W->Dinv);
@@ -536,25 +536,56 @@ static void spd_solve(int n, const double* A, double mu, const double* b, double
     for (int k = 0; k < n; k++) for (int i = k + 1; i < n; i++) { double f = M[i][k] / M[k][k]; for (int j = k; j <= n; j++) M[i][j] -= f * M[k][j]; }
     for (int i = n - 1; i >= 0; i--) { double v = M[i][n]; for (int j = i + 1; j < n; j++) v -= M[i][j] * x[j]; x[i] = v / M[i][i]; }
 }
+/* symmetric eigen-decomposition (cyclic Jacobi), n <= 6: A = Q diag(w) Q', Q column-major in q[i*6+k] = Q_ik */
+static void sym_eig(int n, const double* A, double* w, double* q) {
+    double a[6][6];
+    for (int i = 0; i < n; i++) for (int j = 0; j < n; j++) { a[i][j] = 0.5 * (A[i * 6 + j] + A[j * 6 + i]); q[i * 6 + j] = i == j; }
+    for (int sweep = 0; sweep < 30; sweep++) {
+        double off = 0, dia = 0;
+        for (int i = 0; i < n; i++) { dia += a[i][i] * a[i][i]; for (int j = i + 1; j < n; j++) off += a[i][j] * a[i][j]; }
+        if (off <= 1e-30 * dia) break;   /* |offdiag| <= 1e-15 |diag|: roundoff level */
+        for (int p = 0; p < n; p++) for (int r = p + 1; r < n; r++) {
+            if (a[p][r] == 0) continue;
+            double th = (a[r][r] - a[p][p]) / (2 * a[p][r]);
+            double t = (th >= 0 ? 1 : -1) / (fabs(th) + sqrt(th * th + 1)), c = 1 / sqrt(t * t + 1), sn = t * c;
+            for (int k = 0; k < n; k++) { double x = a[k][p], y = a[k][r]; a[k][p] = c * x - sn * y; a[k][r] = sn * x + c * y; }
+            for (int k = 0; k < n; k++) { double x = a[p][k], y = a[r][k]; a[p][k] = c * x - sn * y; a[r][k] = sn * x + c * y; }
+            for (int k = 0; k < n; k++) { double x = q[k * 6 + p], y = q[k * 6 + r]; q[k * 6 + p] = c * x - sn * y; q[k * 6 + r] = sn * x + c * y; }
+        }
+    }
+    for (int i = 0; i < n; i++) w[i] = a[i][i];
+}
 /* isotropic Coulomb group: min 1/2 l'A l + b'l s.t. |l| <= B. Sliding: (A + mu I) l = -b, |l| = B, mu = |v|/B >= 0
-   (maximal dissipation: the impulse opposes the post-impulse relative velocity). Newton on 1/|l(mu)| - 1/B
-   (More & Sorensen 1983), monotone from mu = 0. */
+   (maximal dissipation: the impulse opposes the post-impulse relative velocity). Stuck case: one direct solve.
+   Sliding case: the secular equation in the eigenbasis of A, |l(mu)|^2 = sum c_i^2/(w_i+mu)^2 = B^2 (c = -Q'b),
+   solved by safeguarded Newton on 1/|l| - 1/B (More & Sorensen 1983) inside a bisection bracket. Each iteration is
+   O(n) scalar work, so ill-conditioned blocks (near-singular A, the "hard case") cost no extra linear solves. */
 static void cone_block(int n, const double* A, const double* b, double B, double* l) {
     double nb[6]; for (int i = 0; i < n; i++) nb[i] = -b[i];
     spd_solve(n, A, 0, nb, l);
     double n2 = 0; for (int i = 0; i < n; i++) n2 += l[i] * l[i];
     if (B <= 0) { for (int i = 0; i < n; i++) l[i] = 0; return; }
     if (n2 <= B * B) return;
-    double mu = 0;
-    for (int it = 0; it < 60; it++) {
-        double q[6]; spd_solve(n, A, mu, l, q);     /* q = (A + mu I)^-1 l */
-        double ln = sqrt(n2), lq = 0; for (int i = 0; i < n; i++) lq += l[i] * q[i];
-        double phi = 1 / ln - 1 / B, dphi = lq / (ln * ln * ln);
-        mu -= phi / dphi; if (mu < 0) mu = 0;
-        spd_solve(n, A, mu, nb, l);
-        n2 = 0; for (int i = 0; i < n; i++) n2 += l[i] * l[i];
-        if (fabs(sqrt(n2) - B) <= 1e-14 * B) break;
+    double w[6], Q[36], c[6], cn = 0, wmax = 0;
+    sym_eig(n, A, w, Q);
+    for (int i = 0; i < n; i++) wmax = fmax(wmax, fabs(w[i]));
+    for (int i = 0; i < n; i++) { double s = 0; for (int k = 0; k < n; k++) s += Q[k * 6 + i] * nb[k]; c[i] = s; cn += s * s; if (w[i] < 1e-15 * wmax) w[i] = 1e-15 * wmax; }
+    cn = sqrt(cn);
+    double lo = 0, hi = cn / B, mu = 0;   /* |l(mu)| <= |c|/mu, so |l(hi)| <= B */
+    for (int it = 0; it < 200; it++) {
+        double s2 = 0, s3 = 0;
+        for (int i = 0; i < n; i++) { double d = 1 / (w[i] + mu), e = c[i] * d; s2 += e * e; s3 += e * e * d; }
+        double ln = sqrt(s2), phi = 1 / ln - 1 / B;
+        if (phi < 0) lo = mu; else hi = mu;
+        if (fabs(ln - B) <= 1e-15 * B) break;
+        double dphi = s3 / (ln * ln * ln);            /* d(1/|l|)/dmu = (sum e^2 d) / |l|^3 */
+        double mn = mu - phi / dphi;
+        if (!(mn > lo && mn < hi)) mn = 0.5 * (lo + hi);
+        if (mn == mu || hi - lo <= 1e-16 * hi) break;
+        mu = mn;
     }
+    n2 = 0;
+    for (int k = 0; k < n; k++) { double s = 0; for (int i = 0; i < n; i++) s += Q[k * 6 + i] * c[i] / (w[i] + mu); l[k] = s; n2 += s * s; }
     double f = B / sqrt(n2); for (int i = 0; i < n; i++) l[i] *= f;   /* exact on the sphere */
 }
 
@@ -565,6 +596,66 @@ int mb_fric_source(mb_world* W, int fj, int j, int r0, int nr, double c, v3 ax) 
     J->src[k].j = j; J->src[k].r0 = r0; J->src[k].nr = nr; J->src[k].c = c; J->src[k].d = 0;
     double l = vlen(ax); J->src[k].ax = l > 0 ? vscl(ax, 1 / l) : V3(0, 0, 0);
     return k;
+}
+
+/* PGS subspace step (projected Gauss-Seidel + subspace minimisation, cf. Morales, Nocedal & Smelyanskiy 2008):
+   on the current face of the box LCP, i.e. rows strictly inside their bounds (stuck friction) and stuck isotropic
+   groups, solve W_FF d = -v_F exactly (the remaining rows held), then take the largest feasible fraction of d.
+   W is PSD, so the step decreases the LCP objective; PGS keeps deciding the active set and the termination test is
+   unchanged. Statically indeterminate (singular) directions are skipped (any solution there is a solution). */
+static void pgs_subspace(mb_world* W, int nbx) {
+    int nf = 0;
+    for (int s = 0; s < nbx; s++) {
+        int jj = W->box_j[s]; mb_joint* J = &W->Jt[jj];
+        if (J->cone && J->nsrc > 0) {
+            int n = 0; double ln = 0; while (s + n < nbx && W->box_j[s + n] == jj && n < 6) { ln += W->hb[s + n] * W->hb[s + n]; n++; }
+            if (sqrt(ln) < J->bound * (1 - 1e-9)) for (int a = 0; a < n; a++) W->fsel[nf++] = s + a;
+            s += n - 1; continue;
+        }
+        int r = W->box_r[s]; double lo = J->nsrc > 0 ? -J->bound : J->lo[r], hi = J->nsrc > 0 ? J->bound : J->hi[r], l = W->hb[s];
+        if (l > lo && l < hi) W->fsel[nf++] = s;
+    }
+    if (nf == 0) return;
+    double* A = W->Wf; double* d = W->dlb; double dmax = 0;
+    for (int a = 0; a < nf; a++) {
+        int s = W->fsel[a]; mb_joint* J = &W->Jt[W->box_j[s]];
+        double u = W->ub[s] - J->t[W->box_r[s]]; for (int t2 = 0; t2 < nbx; t2++) u += W->W[s * MB_MAXBOX + t2] * W->hb[t2];
+        d[a] = -u;
+        for (int b = 0; b < nf; b++) A[a * MB_MAXBOX + b] = W->W[s * MB_MAXBOX + W->fsel[b]];
+        if (A[a * MB_MAXBOX + a] > dmax) dmax = A[a * MB_MAXBOX + a];
+    }
+    /* in-place LDL' (no pivoting; W_FF symmetric PSD), skipping numerically singular pivots */
+    double tol = 1e-11 * dmax; int skip[MB_MAXBOX];
+    for (int k = 0; k < nf; k++) {
+        double* Ak = A + k * MB_MAXBOX;
+        skip[k] = !(Ak[k] > tol);
+        if (skip[k]) { for (int i = k + 1; i < nf; i++) { A[i * MB_MAXBOX + k] = 0; } continue; }
+        for (int i = k + 1; i < nf; i++) {
+            double f = A[i * MB_MAXBOX + k] / Ak[k]; if (f == 0) continue;
+            for (int j = k + 1; j <= i; j++) A[i * MB_MAXBOX + j] -= f * A[j * MB_MAXBOX + k];
+            A[i * MB_MAXBOX + k] = f;
+        }
+    }
+    for (int i = 0; i < nf; i++) for (int k = 0; k < i; k++) d[i] -= A[i * MB_MAXBOX + k] * d[k];
+    for (int i = 0; i < nf; i++) d[i] = skip[i] ? 0 : d[i] / A[i * MB_MAXBOX + i];
+    for (int i = nf - 1; i >= 0; i--) for (int k = i + 1; k < nf; k++) d[i] -= A[k * MB_MAXBOX + i] * d[k];
+    /* largest feasible fraction */
+    double al = 1;
+    for (int a = 0; a < nf; a++) {
+        int s = W->fsel[a], jj = W->box_j[s]; mb_joint* J = &W->Jt[jj];
+        if (J->cone && J->nsrc > 0) {   /* group rows are contiguous in fsel: |l + al d| <= B */
+            int n = 1; while (a + n < nf && W->box_j[W->fsel[a + n]] == jj) n++;
+            double qa = 0, qb = 0, qc = -J->bound * J->bound;
+            for (int i = 0; i < n; i++) { double l = W->hb[W->fsel[a + i]], di = d[a + i]; qa += di * di; qb += 2 * l * di; qc += l * l; }
+            if (qa > 0) { double r = (-qb + sqrt(fmax(0, qb * qb - 4 * qa * qc))) / (2 * qa); if (r < al) al = r; }
+            a += n - 1; continue;
+        }
+        int r = W->box_r[s]; double lo = J->nsrc > 0 ? -J->bound : J->lo[r], hi = J->nsrc > 0 ? J->bound : J->hi[r], l = W->hb[s];
+        if (l + d[a] > hi) { double t = (hi - l) / d[a]; if (t < al) al = t; }
+        if (l + d[a] < lo) { double t = (lo - l) / d[a]; if (t < al) al = t; }
+    }
+    if (!(al > 0)) return;
+    for (int a = 0; a < nf; a++) W->hb[W->fsel[a]] += al * d[a];
 }
 
 #ifdef DC_MB_TRACE   /* debug: 1 = early/periodic sweeps, 2 = last sweeps of capped steps (link-time global) */
@@ -648,7 +739,7 @@ void mb_solve(mb_world* W) {
             /* velocity-level complementarity residual. Statically indeterminate friction (e.g. two stuck ball joints in
                one closed loop) has non-unique impulses: GS then moves along the null space at constant |dlam| while every
                velocity is converged, so the impulse change alone cannot terminate. Velocities are the physics. */
-            double vres = 0;
+            double vres = 0, vhard = 0, pfric = 0;
             for (int s = 0; s < nbx; s++) {
                 int jj = W->box_j[s]; mb_joint* J = &W->Jt[jj];
                 double u = W->ub[s] - J->t[W->box_r[s]]; for (int t2 = 0; t2 < nbx; t2++) u += W->W[s * MB_MAXBOX + t2] * W->hb[t2];
@@ -669,14 +760,19 @@ void mb_solve(mb_world* W) {
                     (void)u;
                 }
                 if (v > vres) vres = v;
+                if (J->nsrc > 0) { double pw = v * J->bound; if (pw > pfric) pfric = pw; } else if (v > vhard) vhard = v;
             }
             W->pgs_vres = vres;
 #ifdef DC_MB_TRACE
-            if ((mb_trace == 1 && (it < 10 || it % 50 == 0)) || (mb_trace == 2 && it >= W->pgs_iters - 3)) fprintf(stderr, "  pgs it %d res %.3e vres %.3e nbx %d\n", it, res, vres, nbx);
+            if ((mb_trace == 1 && (it < 10 || it % 50 == 0)) || (mb_trace == 2 && it >= W->pgs_iters - 3)) fprintf(stderr, "  pgs it %d res %.3e vres %.3e vhard %.3e pfric %.3e nbx %d\n", it, res, vres, vhard, pfric, nbx);
 #endif
-            if (res < 1e-12 || vres < W->pgs_vtol) break;
+            /* friction rows: |lam| <= bound, so bound * v_res bounds the work error of the row in this step (J). Once
+               that is negligible (pgs_etol) the remaining sweeps only polish a sliding direction / stuck velocity that
+               no longer moves any energy; hard rows (limits, stops, clutch) always need v_res < pgs_vtol. */
+            if (res < 1e-12 || vres < W->pgs_vtol || (vhard < W->pgs_vtol && pfric < W->pgs_etol)) break;
+            if (W->pgs_ssm > 0 && it % W->pgs_ssm == W->pgs_ssm - 1) pgs_subspace(W, nbx);
         }
-        W->pgs_res = res; W->pgs_it = it;
+        W->pgs_res = res; W->pgs_it = it; if (it >= W->pgs_iters) W->pgs_ncapped++;
         memcpy(W->x, W->r, sizeof(double) * N);
         for (int s = 0; s < nbx; s++) {
             mb_joint* J = &W->Jt[W->box_j[s]]; int r = W->box_r[s];

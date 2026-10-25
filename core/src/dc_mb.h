@@ -98,6 +98,9 @@ typedef struct {
     double W[MB_MAXBOX * MB_MAXBOX], ub[MB_MAXBOX], lb_[MB_MAXBOX], hb[MB_MAXBOX];
     int box_of[MB_MAXJ];              /* first box slot of a box joint this step (-1 none) */
     int box_dropped;                  /* box rows dropped because MB_MAXBOX was exceeded (must stay 0) */
+    double Wf[MB_MAXBOX * MB_MAXBOX], dlb[MB_MAXBOX]; int fsel[MB_MAXBOX];   /* PGS subspace step workspace */
+    int pgs_ssm;                      /* box LCP: exact subspace step on the interior (stuck) rows every pgs_ssm sweeps (0 off) */
+    double pgs_etol;                  /* PGS: friction rows also stop when bound * v_res (work error, J/step) < pgs_etol */
     double pgs_vtol, pgs_vres;        /* PGS stops when the velocity complementarity residual < pgs_vtol (m/s | rad/s) */
     int ready;
     int shake;                        /* 1: projection also corrects velocity (SHAKE/RATTLE-like, energy-consistent) */
@@ -106,6 +109,7 @@ typedef struct {
     int pgs_iters;                    /* box-LCP Gauss-Seidel iteration cap (default 400) */
     /* stats */
     double pgs_res; int fact_fail; int pgs_it;
+    int pgs_ncapped;                  /* solves that ended at the pgs_iters cap (cumulative, diagnostic) */
 } mb_world;
 
 mb_world* mb_create(void);
