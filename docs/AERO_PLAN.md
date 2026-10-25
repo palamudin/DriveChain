@@ -42,6 +42,11 @@ are game developers.
   (CLR ≈ +0.15, CLF ≈ −0.04).** Pressure-drag Cd_p ≈ 0.47, against Mazda's 0.44 top
   down. The mesh is coarse with no layers: P2 has to converge this and validate the
   front split.
+* **Other vehicles (§12):** a passing truck or a car ahead changes only the air at our
+  panels, through per-type CFD field maps plus pair-CFD corrections at close range. The
+  steering kick comes out of the tyres. The incident-pressure lower bound for a truck at
+  25 m/s with 1 m clearance is ~225 N lateral and ~190 N·m yaw [M, derived]. Sampling
+  costs ~3 µs per sim-ms per vehicle [M].
 
 ---
 
@@ -502,6 +507,7 @@ Otherwise wind and drag are counted twice.
 | P4 | Runtime `dc_aero.c` in the core: panel evaluation, body/wheel loads, energy audit, `DC_DBG_NO_AERO`; per-car params; wind API; replaces `cda/cla_*`. **Needs user go-ahead after the perf/demo worker is done** | Yes |
 | P5 | Unsteady: transient CFD for admittance; sheared-inlet check; crosswind step validation | small |
 | P6 | Fiat Uno: geometry + same pipeline; validation vs SAE 840297; optional wake export for slipstream | small |
+| P7 | Vehicle–vehicle interaction (§12): truck/car field maps, pair-correction sweep, Ahmed-pair + platoon validation, nearby-vehicle host API + reaction output | small |
 
 ## 9. Tests (to implement with P4)
 1. **Map reproduction.** Static pose, no wind: the runtime wrench equals the CFD integral
@@ -561,7 +567,10 @@ Otherwise wind and drag are counted twice.
    perf measurements taken during CFD are unreliable.
 7. **Shipping derived data.** May the aero map (per-panel loads, no geometry) be
    distributed even though the mesh is private?
-8. **Scope.** Should the reaction side (wake/slipstream for other cars) be in scope?
+8. **~~Scope~~ (answered 2026-10-25): yes.** Vehicle–vehicle interaction (being passed
+   by a truck, slipstream/drafting, mutual reaction) is in scope. See §12. Still open:
+   whether the host can supply the nearby-vehicle list and apply the reported reaction
+   wrenches (§12.4).
 
 ## 11. Tool reference
 * `python3 tools/aero/meshcheck.py <obj> --offset=dx,dy,dz [--frame yup|phys]`: frontal
@@ -573,3 +582,221 @@ Otherwise wind and drag are counted twice.
 * `mpirun -np 4 foamFormatConvert -parallel`, then
   `python3 tools/aero/foam_forces.py <case> --U 30 --A 1.627 --xf 1.099 --xr -1.167 --zg -0.4426`.
 * `cc -O2 -march=native tools/aero/bench_panel_map.c -o /tmp/bpm -lm && /tmp/bpm`.
+* `python3 tools/aero/truck_field.py [--U 25 --gap 1.0 ...]`: truck incident-pressure loads on a car box (§12.2).
+* `cc -O2 -march=native tools/aero/bench_field_superpose.c -o /tmp/bfs -lm && /tmp/bfs 1024 4 32`:
+  field-map vs source-model sampling cost (§12.3).
+
+---
+
+## 12. Vehicle–vehicle interaction: being passed by a truck, and slipstream (Phase 1 design)
+
+Scope (answers Q8): another vehicle's air is felt by our car as forces on the body and
+wheels. Examples: a lateral push or pull, a yaw moment, lift changes, and a steering kick
+through the tyres. Drafting/slipstream is in scope. No new force type is added. The other
+vehicle only changes the **air velocity (and pressure) at our panels**, and the existing
+§6 per-panel machinery turns that into point loads on the chassis and unsprung bodies.
+The steering kick is therefore *emergent*: front-axle lateral load → tyre slip → rack
+force. Nothing is scripted.
+
+### 12.1 What happens physically [S]
+Sequence for a car overtaken by, or overtaking, a larger vehicle at lateral clearance Y:
+1. **Bow pressure.** The high-pressure region ahead of the other vehicle's nose first
+   pushes our car's rear away, then its front. The yaw moment turns our nose *away*, then
+   *toward* the vehicle.
+2. **Gap suction.** Alongside the nose shoulder and in the gap, the accelerated flow (a
+   Venturi effect between the two bodies) pulls the car *toward* the other vehicle. The
+   side force is near its minimum (most attractive) around side-by-side. The yaw moment
+   changes sign with position.
+3. **Base and wake.** Near the other vehicle's tail the flow is pulled in again and then
+   pushed out as the wake closes. Drag shows a pulse because our base pressure drops.
+   The literature reports up to **+50 % on the overtaken body's Cd** in the Ahmed-pair
+   case.
+
+Sources: Uystepruyst & Krajnović, *JWEIA* 114:62–71, 2013, doi:10.1016/j.jweia.2012.12.018
+(URANS, two Ahmed 30° bodies, k = Vr/V = 0.141–0.331, Y/W = 0.25–0.7; within ~5 % of
+experiment on the medium/fine mesh). The overtaken body's ΔCy and ΔCn swing by about
+**±0.2–0.3 at Y = 0.25 W** [S, read from figures]. Noger, Regardin & Széchényi,
+*J. Fluids Struct.* 21(3):231–241, 2005: the same sequence measured in a wind tunnel with
+a moving model.
+
+Scalings [S]:
+* Interference amplitudes vary roughly **linearly with log(Y/W)** (Noger 2005; Uystepruyst
+  2013).
+* For the **overtaken** vehicle, the coefficients are **almost independent of the
+  overtaking speed** (Noger 2005). The loads scale with q, and the event lasts about
+  (L_other + L_car + ~2 bow lengths)/ΔV.
+* **Quasi-steady is adequate for k ≲ 0.2–0.25** (Yamamoto et al., *JSAE Review* 18(1):39–44,
+  1997, 1/10 car–bus; Noger 2005, where unsteady effects appear only for the *overtaking*
+  vehicle above k ≈ 0.2).
+* Above that range, quasi-steady **underpredicts**. Gilliéron & Noger (SAE 2004-01-1311)
+  report side force 60–120 % above quasi-steady at k = 0.32, with pseudo-harmonic,
+  Strouhal-like behaviour.
+* In crosswind the errors get larger. Corin, He & Dominy (*JWEIA* 2008, 2D CFD) report
+  dynamic effects up to 400 % above quasi-steady. Telionis et al. (1979/1984) report drag
+  and side force +100–150 % as the car emerges from the truck's leeward wake (yaw ≤ 24°).
+  Noger 2005 found that crosswind adds magnitude but no new unsteady mechanism.
+* Car near a truck: Howell, Garry & Holt, SAE 2014-01-0604 (quasi-steady, small car beside
+  a truck). The truck's **nose and tail dominate**, and a short truck body represents them.
+  Estate shapes have the highest Cs. It is a "more extreme but rarer event" than
+  crosswind. Heffley, SAE 730235 (wind tunnel, car near bus/truck). FHWA on-road work
+  found that **path deviation is dominated by crosswind**, with little deviation in calm
+  air [S2, via later reviews].
+* Truck/truck at full-scale-equivalent geometry: Marshall, Snape, Soper, Sterling &
+  Gillmeier, *Front. Future Transp.* 2024, doi:10.3389/ffutr.2024.1356539 (1:20 DAF XF, 6 m
+  gap). The overtaking lorry's Cd goes 0.363 → 0.773 (+113 %) when it moves out.
+  **Cs goes −0.22 at x/L ≈ 0.4, +0.22 at x/L ≈ 1.4, then −0.62 at x/L ≈ 2.4** (based on
+  frontal area).
+* Two-way coupling matters at small spacing or in crosswind. Liu et al., *Proc IMechE D*
+  233(14):3684, 2019, doi:10.1177/0954407019831559 (DES with overset mesh, plus multibody,
+  small car overtaking a coach). See also the two-way CFD–multibody study,
+  doi:10.1080/19942060.2020.1803970, with 1 m lateral spacing.
+
+**Full-scale Newton values for a car passed by a truck were not found in an accessible
+source** (Howell 2014 and Heffley 1973 are paywalled). The magnitudes below are derived
+values, labelled as such.
+
+### 12.2 Order-of-magnitude numbers [M, derived; not a validation]
+`tools/aero/truck_field.py` models the truck as a slender-body line-source model
+(16.5 × 2.55 × 4.0 m, ground-imaged, wake closed over 4 m [U]). It integrates only the
+truck's *incident* pressure field (Froude–Krylov) over a Miata-sized box (3.97 × 1.68 ×
+1.23 m). Inputs: truck at 25 m/s (90 km/h) through still air. Signs: + = toward the
+truck; Mz + = nose toward the truck.
+
+| Clearance (side to side) | Peak push away | Peak pull toward | Peak \|yaw moment\| | ΔCS / ΔCN on car (q at 25 m/s, A 1.6 m², l 2.265 m) | Lift swing |
+|---|---|---|---|---|---|
+| 0.5 m | — | ~340 N | ~330 N·m | 0.57 / 0.25 | — |
+| **1.0 m** | **~150 N** (car ahead of the nose) | **~225 N** (at the nose shoulder) | **~190 N·m** | **0.38 / 0.14** | **±~55 N** |
+| 2.0 m | | ~110 N | ~75 N·m | 0.18 / 0.06 | |
+| 3.0 m | | ~60 N | ~35 N·m | 0.10 / 0.03 | |
+
+* The sequence matches §12.1: push away ahead of the nose, pull at the nose shoulder, weak
+  load alongside the box, pull at the base shoulder, then push away as the wake closes.
+* The amplitudes fall with gap at roughly the log/inverse-power rate reported in the
+  literature.
+* At 1 m clearance ΔCS ≈ 0.38, the same order as the Ahmed-pair ΔCy of ±0.2–0.3 at
+  Y = 0.25 W.
+* Loads scale with **U_truck²**: ×1.44 at 30 m/s.
+* **Front-axle share** at the 1 m peak: Fy·b/L + Mz/L ≈ 113 + 37 ≈ **150 N** of lateral
+  load at the front tyres. That is the steering kick, which comes through the tyres and
+  the rack.
+* Open-loop drift: ~200 N on ~1000 kg for ~0.5 s gives about 2–3 cm [U, derived].
+* This model is a **lower bound on the structure, not the magnitude**. It omits:
+  * the car's own diffraction and added-mass response (a factor of ~1.5–2 for bluff
+    bodies [U]);
+  * the car's own map response to the induced crossflow;
+  * gap Venturi and mutual interaction.
+
+### 12.3 Runtime representation: options
+**(a) Per-vehicle-type flow-field maps (recommended core).**
+* *Offline:* one steady RANS per vehicle type (truck, bus, van, car) in its own frame,
+  with a moving ground. Store the time-averaged perturbation velocity u′ and pressure p′
+  on a body-fitted box grid that covers the bow, sides, and the wake to ~5–10 L. A
+  96×48×32 float4 grid at 0.5 m is ~2.4 MB. Add a few yaw states for crosswind.
+* *Runtime:*
+  * each nearby vehicle's field is transformed by its pose, scaled by its airspeed², and
+    sampled at our panel points;
+  * induced velocities are **superposed** on `w(x,t)`, so `u_i = v_i − w − Σ u′_k`;
+  * the background pressure gradient enters as an extra per-panel `−p′_k n_i A_i` term
+    (the incident-pressure/buoyancy force, which the panel map would otherwise miss).
+* The wake deficit in the same map produces **drafting** automatically through the
+  existing panel map: lower local q gives lower drag and lift.
+* *Cost [M]:* `tools/aero/bench_field_superpose.c` measures a 1024-panel trilinear lookup
+  at **~13 µs per tick per vehicle, about 3 µs per sim-ms at 240 Hz**. Four vehicles cost
+  ~12 µs per sim-ms. This fits the §0 budget if limited to the 2–4 nearest vehicles within
+  ~2 L.
+
+**(b) Potential-flow source/doublet bodies, ground-imaged, plus a calibrated wake.**
+* Cheap to author and needs no CFD.
+* It captures the bow push and shoulder suction (§12.2), but gets the base and wake
+  pressure wrong unless the closure length and a wake-deficit law are calibrated. The
+  axisymmetric far wake decays as u_d ∝ x^(−2/3) (Pope, *Turbulent Flows*, ch. 5); the
+  near-wake coefficients are [U] and need CFD.
+* *Cost [M]:* 32 sources ≈ 61 µs per tick per vehicle (~15 µs per sim-ms), which is 5× the
+  grid map.
+* Use it as a fallback for vehicle types with no map, or for unit tests.
+
+**(c) Coupled pair CFD → interaction-correction maps.**
+* Pure superposition cannot represent:
+  * the Venturi acceleration in the gap, which is stronger than the sum of the two
+    isolated fields;
+  * each body's change to the other's separation and base pressure;
+  * wake modification. In drafting, the follower raises the *leader's* base pressure: the
+    lead truck's drag falls at gaps down to ~2 m (Chalmers 1:6 moving-ground study). Some
+    car shapes see *higher* drag in a pair unless the gap is ≤ 0.25 L (Le Good et al.,
+    SAE 2018-37-0018; *Energies* 14(22):7553, 2021).
+* Remedy: steady pair runs on a grid of (X/L, Y/W, type pair, yaw), stored as **per-panel
+  ΔC corrections** on top of (a). Interpolate in X/L and log(Y/W), following the
+  literature's linear-in-log(Y/W) scaling.
+* Add a quasi-steady → dynamic factor only where k > 0.2. It comes from 2–3 moving-mesh
+  URANS runs and is applied through the §7.4 admittance filter.
+
+**How wrong superposition and quasi-steady are, per the literature:**
+* Overtaken car, k < 0.2–0.25, no crosswind: quasi-steady is OK (Noger 2005; Yamamoto
+  1997). The Ahmed-pair URANS gives quasi-steady *overestimating* the side-force peak and
+  missing yaw-moment features (Uystepruyst 2013).
+* k ≈ 0.3: the dynamic peak is 60–120 % above quasi-steady (Gilliéron & Noger 2004).
+* In crosswind: up to +100–150 % (Telionis) and up to 400 % in 2D CFD (Corin 2008).
+* Drafting at gaps < ~0.5–1 L: the leader's drag change is missed entirely, and the
+  follower's change can even flip sign by shape.
+* Hence **(a) + (c)**: (a) alone is acceptable beyond ~1 W lateral clearance and ~1 L
+  longitudinal gap; inside that, (c) is required.
+
+**Recommendation: (a) + (c), with (b) as a fallback.** All three go through the §6 panel
+loads, so the forces reach the chassis and the wheels/unsprung masses as point loads,
+with `Win` energy accounting unchanged.
+
+### 12.4 Host contract extension (adds to §7.5)
+* **Input per tick:** a list of nearby vehicles, each with
+  `{id, type_id, pose (pos + quat, world), linear velocity, angular velocity, dims L/W/H}`.
+  The alternative is the §7.5 field callback, extended to return `p′` as well as `w`.
+  drivechain selects the N nearest vehicles within a range (default 2 L, N = 4 [U]).
+* **Mutual reaction (output per tick):** drivechain reports its own car's induced
+  field for other vehicles to use. For other drivechain cars this happens automatically.
+  For non-drivechain vehicles there are two outputs:
+  * the *aerodynamic interaction wrench* our car exerts on each listed vehicle, from our
+    car's field map sampled at that vehicle's box, the mirror of the (a)/(c) loads;
+  * `dc_aero_sample_field(pts, n, out_u, out_p)` for hosts with their own aero.
+* Momentum closure (every action has a reaction) holds only if the host applies those
+  reported reactions. Otherwise our car is pushed while the truck is not. drivechain
+  cannot enforce this, and the integration check flags it.
+* Units and frames as in §7.5: SI, world frame, host sim time. The host must not also
+  apply its own proximity or "draft" forces to drivechain cars (`aero_owner = drivechain`).
+
+### 12.5 Validation (adds tests 11–14 to §9)
+11. **Ahmed-pair passing.** Run the (a)+(c) pipeline on two Ahmed 30° bodies.
+    * Target: Uystepruyst & Krajnović 2013 ΔCy(X/L) and ΔCn(X/L) at Y/W = 0.25 and 0.5,
+      k = 0.141.
+    * Tolerance: peak values within **±20 %**, zero crossings within **±0.1 X/L**, and
+      the correct sign sequence.
+    * Also check the log(Y/W) amplitude trend against Noger 2005.
+12. **Lorry overtaking.** Reproduce Marshall et al. 2024 Cs extremes (−0.22, +0.22, −0.62
+    at x/L ≈ 0.4, 1.4, 2.4) and the +113 % Cd of the overtaking lorry within ±20 %.
+13. **Drafting vs gap.**
+    * Car pairs/platoons: Zabat et al. — 0.62 average drag ratio at 0.5 L (SAE 940421,
+      minivans, Cd 0.33); 4-vehicle platoon averaging 56 % of isolated drag at 0.2 L,
+      weak interaction beyond ~1 L (SAE 950632).
+    * Trucks: OSTI 1561786 (Volvo VNL 1/64) — 63.3 % at 3 m and 69.8 % at 0.3 L;
+      Marshall 2024 — up to 57.4 % reduction at 0° and 12.9 % at 30° yaw.
+    * Tolerance: drag ratio within **±10 %** of isolated drag, plus the leader-drag trend.
+14. **Car beside truck (derived check).** In calm air at 1 m clearance and 25 m/s truck
+    speed, the peak |Fy| must be ≥ the §12.2 incident-pressure lower bound (~225 N) and
+    have the same sign sequence. The front-axle lateral load and rack-force pulse are
+    logged. The test must pass with zero proximity-specific code (no gate). Cost: < 4 µs
+    per sim-ms per nearby vehicle (test 8 budget extension).
+
+### 12.6 CFD needed (awaits user go-ahead; none run in this phase)
+Box rate (§5): ~1.2 s per iteration at ~1.2 M cells on 4 cores.
+
+| Run | Count | Est. box time |
+|---|---|---|
+| Ahmed-pair validation (steady, pair, 3 X/L × 2 Y/W) + 1 moving-mesh URANS | 6 + 1 | ~6 h + ~10–15 h |
+| Truck field map, isolated (larger domain, ~3 M cells), 0° + 2 yaw states | 3 | ~6–9 h |
+| Car field map (Miata), reuse the §5 case with an enlarged wake region | 1–3 | ~2–4 h |
+| Car–truck pair corrections, steady: X/L ∈ {−1, −0.5, 0, 0.5, 1, 1.5} × Y ∈ {0.5, 1, 2 m} | 18 | ~35–50 h |
+| Car–car drafting pairs: gap ∈ {0.25, 0.5, 1, 2} L | 4 | ~6–8 h |
+| Dynamic factor: car-overtaken-by-truck moving-mesh URANS, k ≈ 0.15 and 0.3 | 2 | ~30–60 h |
+
+Totals [U]: roughly **2–3 days for the steady set and another 2–3 days for URANS** on
+this box, with no other CPU work running. A cloud machine is suggested for the pair
+sweep (Q6). The truck geometry has to be a generic tractor-trailer built from dimensions
+(not private).
