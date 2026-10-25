@@ -99,7 +99,7 @@ void dc_default_params(dc_car_params* p) {
     M->rim_inertia = 0.035; M->ishaft_inertia = 5e-4; M->input_inertia = 3e-4; M->pinion_inertia = 2e-4;
     M->valve_a0 = 4.4e-6; M->valve_amin = 2.0e-8; M->valve_theta_c = 0.05; M->valve_cd = 0.6;
     M->oil_rho = 860; M->oil_beta = 3.0e8; M->chamber_vol = 5e-5; M->supply_vol = 1e-4; M->hose_compliance = 2e-12;
-    M->diff_inertia = 0.02; M->gb_out_inertia = 0.01; M->baumgarte = 0.2;
+    M->diff_inertia = 0; M->gb_out_inertia = 0;   /* carrier rotors off by default; proposal 0.02 / 0.01 in docs/CARRIER.md */ M->baumgarte = 0.2;
     /* joint friction: sources and estimates in docs/JOINT_FRICTION.md */
     M->jf = 1;
     M->bj_mu = 0.08; M->bj_radius = 0.0125; M->bj_torque = 1.5;

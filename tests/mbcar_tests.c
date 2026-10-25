@@ -15,12 +15,14 @@
 static int fails = 0;
 #define CHECK(cond, ...) do { int ok_ = (cond); printf("  %-4s ", ok_ ? "ok" : "FAIL"); printf(__VA_ARGS__); printf("\n"); if (!ok_) fails++; } while (0)
 
-static int g_bush = 0;  /* 1: arm pivots as compliant bushings (docs/BUSHINGS.md estimates) */
+static int g_bush = 0;
+static int g_carrier = 0;  /* 1: carrier-inertia driveline (docs/CARRIER.md proposal values) */  /* 1: arm pivots as compliant bushings (docs/BUSHINGS.md estimates) */
 static int g_jf = -1;   /* >= 0 overrides mb.jf (joint friction switch) */
 static dc_car* make(const char* ini, double v0, int steer_mode) {
     dc_car_params p; char err[256]; dc_default_params(&p);
     if (!dc_load_params(ini, &p, err, sizeof err)) { printf("load %s: %s\n", ini, err); return NULL; }
     p.solver = DC_SOLVER_MULTIBODY; if (g_jf >= 0) p.mb.jf = g_jf;
+    if (g_carrier) { p.mb.diff_inertia = 0.02; p.mb.gb_out_inertia = 0.01; }
     if (g_bush) for (int a = 0; a < 2; a++) { p.mb.bush_kr[a] = 2e6; p.mb.bush_ka[a] = 5e5; p.mb.bush_kt[a] = 300; }
     dc_car* c = dc_create(&p); double z[3] = {0, 0, 0}; dc_reset(c, z, 0, v0);
     dc_input in; memset(&in, 0, sizeof in); in.gear = 0; in.steer_mode = steer_mode; dc_set_input(c, &in);
@@ -118,7 +120,8 @@ int main(int argc, char** argv) {
         dmin = 1e9; dprev = 0; mono = 1;
         for (int k = 0; k < 400; k++) { dc_step(c, 0.01); dc_get_telemetry(c, &t); if (k > 50 && t.dissipated < dprev - 1e-2) mono = 0; dprev = t.dissipated; dmin = fmin(dmin, t.dissipated); }
         sfz = t.w[0].fz + t.w[1].fz + t.w[2].fz + t.w[3].fz;
-        CHECK(c->mb->nbush == 8 && fabs(sfz - mg) < 1e-3 * mg, "bushed static: %d bushes, sum Fz = m g (err %.2e)", c->mb->nbush, fabs(sfz - mg) / mg);
+        int narms = 0; for (int i = 0; i < 4; i++) narms += c->mb->narm[i];
+        CHECK(c->mb->nbush == narms && fabs(sfz - mg) < 1e-3 * mg, "bushed static: %d of %d arm pivots bushed, sum Fz = m g (err %.2e)", c->mb->nbush, narms, fabs(sfz - mg) / mg);
         CHECK(dmin > -1e-6 && mono, "bushed static: dissipation >= 0 and non-decreasing (min %.3g J)", dmin);
         joint_n3(c, &fr, &tr, &fref);
         CHECK(fr < 1e-9 * fmax(fref, 1) && tr < 1e-8 * fmax(fref, 1), "bushed static: Newton-3 per joint %.2e N, %.2e N m", fr, tr);
@@ -137,6 +140,37 @@ int main(int argc, char** argv) {
         CHECK(frm < 1e-9 && trm < 1e-8, "bushed cornering: Newton-3 per joint (rel %.2e, %.2e m)", frm, trm);
         CHECK(mono && rf < 1e-2, "bushed cornering: dissipation non-decreasing, momentum residual %.2e N", rf);
         CHECK(emax > 1e-5 && emax < 5e-3, "bushed cornering: bush deflection visible but small (%.2f mm)", emax * 1e3);
+        dc_destroy(c);
+    }
+    /* --- carrier inertia: propshaft + diff carrier as geared rotors */
+    {
+        dc_car* c0 = make(ini, 20, DC_STEER_ANGLE); g_carrier = 1; c = make(ini, 20, DC_STEER_ANGLE); g_carrier = 0;
+        mb_world* W = c->mb->W; dc_mbcar* m = c->mb;
+        int l = m->wh[m->drv[0]], r = m->wh[m->drv[1]];
+        v3 yw = mv(&W->B[m->ch].R, V3(0, 1, 0)), xw = mv(&W->B[m->ch].R, V3(1, 0, 0));
+        double wc = vdot(vsub(W->B[m->dcr].w, W->B[m->ch].w), yw); wc = fabs(wc);
+        double dke = mb_kinetic(W) - mb_kinetic(c0->mb->W), ex = 0.5 * 0.02 * wc * wc + 0.5 * 0.01 * pow(c->P.final_drive * wc, 2);
+        CHECK(m->carrier && fabs(dke - ex) < 1e-6 * ex, "carrier: reset KE adds 1/2 I_d wc^2 + 1/2 I_go (fd wc)^2 = %.2f J (got %.2f J, wc %.1f rad/s)", ex, dke, wc);
+        dc_destroy(c0);
+        memset(&in, 0, sizeof in); in.gear = 2; in.throttle = 0.6; in.steer_mode = DC_STEER_ANGLE;
+        in.steer_target = 40 * M_PI / 180; in.hands_k = 60; in.hands_d = 3; in.hands_tmax = 30; dc_set_input(c, &in);
+        frm = trm = 0; mono = 1; dprev = 0; double cerr = 0;
+        for (int k = 0; k < 400; k++) {
+            if (k == 200) { in.gear = 0; in.throttle = 0; dc_set_input(c, &in); }   /* neutral: rotors stay geared to the wheels */
+            dc_step(c, 0.01); dc_get_telemetry(c, &t);
+            if (k > 20) { joint_n3(c, &fr, &tr, &fref); frm = fmax(frm, fr / fmax(fref, 1)); trm = fmax(trm, tr / fmax(fref, 1)); }
+            if (k > 10 && t.dissipated < dprev - 1e-2) mono = 0; dprev = t.dissipated;
+            yw = mv(&W->B[m->ch].R, V3(0, 1, 0)); xw = mv(&W->B[m->ch].R, V3(1, 0, 0));
+            v3 aL = mv(&W->B[l].R, c->K[m->drv[0]].spin_axis_u), aR = mv(&W->B[r].R, c->K[m->drv[1]].spin_axis_u);
+            double wm = 0.5 * (vdot(vsub(W->B[l].w, W->B[m->ch].w), aL) + vdot(vsub(W->B[r].w, W->B[m->ch].w), aR));
+            double wcar = vdot(vsub(W->B[m->dcr].w, W->B[m->ch].w), yw) * (vdot(vadd(aL, aR), yw) >= 0 ? 1 : -1);
+            double wgo = vdot(vsub(W->B[m->go].w, W->B[m->ch].w), xw);
+            cerr = fmax(cerr, fmax(fabs(wcar - wm), fabs(wgo - c->P.final_drive * wcar)) / fmax(fabs(wm), 1));
+        }
+        rf = sqrt(t.resid_force[0]*t.resid_force[0]+t.resid_force[1]*t.resid_force[1]+t.resid_force[2]*t.resid_force[2]);
+        CHECK(cerr < 1e-6, "carrier: ratio chain holds (carrier = wheel mean, propshaft = fd x carrier), rel err %.2e", cerr);
+        CHECK(frm < 1e-9 && trm < 1e-8, "carrier: Newton-3 per joint under drive and in neutral (rel %.2e, %.2e m)", frm, trm);
+        CHECK(mono && rf < 1e-2, "carrier: dissipation non-decreasing, momentum residual %.2e N", rf);
         dc_destroy(c);
     }
     printf(fails ? "=== %d FAILURES ===\n" : "=== ALL PASS ===\n", fails);

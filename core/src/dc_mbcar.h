@@ -38,6 +38,7 @@ typedef struct dc_mbcar {
     int has_bar[2], bar[2][2], j_bar[2][2], j_drop[2][2];
     double k_bar[2], G_bar[2];
     int eng, gi;
+    int carrier, go, dcr, j_go, j_dcr, j_gbox, j_fd;   /* carrier-inertia driveline (docs/CARRIER.md): gearbox output + propshaft rotor, diff carrier rotor */
     int j_eng, j_gi, j_clutch, j_diff, j_lsd, j_brake[4], j_rfric, j_cfric, j_rstop;
     int j_pfric, j_bjf[4][3], j_stf[4], j_tmf[4];   /* load-dependent joint friction rows (-1 = none) */
     int drv[2];                              /* driven wheels */

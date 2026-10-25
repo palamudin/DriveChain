@@ -345,9 +345,23 @@ dc_mbcar* dc_mbcar_create(dc_car* c) {
     m->j_gi = mb_revolute(W, "gbox_brg", m->gi, m->ch, vadd(ep, V3(-0.5, 0, 0)), EX);
     { int b[2] = {m->eng, m->gi}; m->j_clutch = mb_custom(W, "clutch", 1, 1, 2, b); }
     m->drv[0] = P->drive == DC_DRIVE_FWD ? 0 : 2; m->drv[1] = m->drv[0] + 1;
+    /* carrier inertia (opt-in, docs/CARRIER.md): the gearbox output + propshaft and the diff carrier + ring gear become rotors
+       on chassis bearings, joined by three ratio rows in series (gearbox g, final drive fd, open-diff mean) instead of one
+       overall-ratio row; their bearing and mesh reactions then reach the chassis through the solve */
+    m->carrier = M->diff_inertia > 0 || M->gb_out_inertia > 0; m->go = m->dcr = m->j_go = m->j_dcr = m->j_gbox = m->j_fd = -1;
+    if (m->carrier) {
+        const dc_kin* Kd = &c->K[m->drv[0]];
+        v3 pg = vadd(ep, V3(-1.0, 0, 0)), pc = V3(Kd->hub0.x, 0, Kd->hub0.z);
+        m->go = addb(m, "gbox_out", 1.0, mdiag(fmax(M->gb_out_inertia, 1e-4), 0.01, 0.01), pg, qid()); ACC(m->go);
+        m->dcr = addb(m, "diff_carrier", 1.0, mdiag(0.01, fmax(M->diff_inertia, 1e-4), 0.01), pc, qid()); ACC(m->dcr);
+        m->j_go = mb_revolute(W, "gbox_out_brg", m->go, m->ch, pg, EX);
+        m->j_dcr = mb_revolute(W, "carrier_brg", m->dcr, m->ch, pc, EY);
+        int bg[3] = {m->gi, m->go, m->ch}; m->j_gbox = mb_custom(W, "gearbox", 1, 0, 3, bg);
+        int bf[3] = {m->go, m->dcr, m->ch}; m->j_fd = mb_custom(W, "final_drive", 1, 0, 3, bf);
+    }
     {
         int wl = m->wh[m->drv[0]], wr = m->wh[m->drv[1]];
-        int b4[4] = {m->gi, wl, wr, m->ch}; m->j_diff = mb_custom(W, "diff", 1, 0, 4, b4);
+        int b4[4] = {m->carrier ? m->dcr : m->gi, wl, wr, m->ch}; m->j_diff = mb_custom(W, "diff", 1, 0, 4, b4);
         int b3[3] = {wl, wr, m->ch}; m->j_lsd = mb_custom(W, "lsd", 1, 1, 3, b3);
         mb_couple(W, wl, wr); mb_couple(W, wl, m->ch); mb_couple(W, wr, m->ch);
     }
@@ -395,6 +409,14 @@ void dc_mbcar_reset(dc_car* c) {
     v3 xw = mv(&R, EX);
     W->B[m->eng].w = vadd(c->w, vscl(xw, c->we));
     W->B[m->gi].w = vadd(c->w, vscl(xw, c->wg));
+    if (m->carrier) {   /* carrier and propshaft geared to the driven wheels' mean speed */
+        int l = m->wh[m->drv[0]], r = m->wh[m->drv[1]];
+        v3 aL = mv(&W->B[l].R, c->K[m->drv[0]].spin_axis_u), aR = mv(&W->B[r].R, c->K[m->drv[1]].spin_axis_u), yw = mv(&R, EY);
+        double wc = 0.5 * (vdot(vsub(W->B[l].w, c->w), aL) + vdot(vsub(W->B[r].w, c->w), aR));
+        v3 ac = vdot(vadd(aL, aR), yw) >= 0 ? yw : vneg(yw);
+        W->B[m->dcr].w = vadd(c->w, vscl(ac, wc));
+        W->B[m->go].w = vadd(c->w, vscl(xw, c->P.final_drive * wc));
+    }
     for (int j = 0; j < W->nj; j++) memset(W->Jt[j].lam, 0, sizeof W->Jt[j].lam);
     m->th_prev_raw = m->pin_prev_raw = m->inp_prev_raw = 0;
     m->th_acc = m->pin_acc = m->inp_acc = 0;
@@ -571,7 +593,19 @@ void dc_mbcar_step(dc_car* c) {
         double cap = P->clutch_torque * clampd(1 - c->in.clutch, 0, 1) * h;
         J->lo[0] = -cap; J->hi[0] = cap; J->t[0] = 0;
         mb_joint* D = &W->Jt[m->j_diff]; memset(D->J, 0, sizeof D->J); D->t[0] = 0; D->phi[0] = 0;
-        if (Gr != 0) {
+        if (m->carrier) {
+            /* carrier axis = chassis lateral, signed so that forward rolling of the driven wheels spins it positive */
+            v3 yw_ = mv(&Ch->R, EY), ac = vdot(vadd(aL, aR), yw_) >= 0 ? yw_ : vneg(yw_);
+            double fd = P->final_drive, g = Gr / fd;
+            mb_joint* G = &W->Jt[m->j_gbox]; memset(G->J, 0, sizeof G->J); G->t[0] = 0; G->phi[0] = 0;
+            if (Gr != 0) {   /* w_in / g - w_out = 0 (relative to the casing) */
+                row_an(xw, 1.0 / g, G->J[0][0]); row_an(xw, -1, G->J[0][1]); row_an(xw, 1 - 1.0 / g, G->J[0][2]); G->compl = 1e-11;
+            } else G->compl = 1.0;   /* neutral: row inert, the output stays geared to the wheels */
+            mb_joint* F = &W->Jt[m->j_fd]; memset(F->J, 0, sizeof F->J); F->t[0] = 0; F->phi[0] = 0;
+            row_an(xw, 1.0 / fd, F->J[0][0]); row_an(ac, -1, F->J[0][1]); row_an(vsub(ac, vscl(xw, 1.0 / fd)), 1, F->J[0][2]); F->compl = 1e-11;
+            row_an(ac, 1, D->J[0][0]); row_an(aL, -0.5, D->J[0][1]); row_an(aR, -0.5, D->J[0][2]);
+            row_an(vsub(vscl(vadd(aL, aR), 0.5), ac), 1, D->J[0][3]); D->compl = 1e-11;
+        } else if (Gr != 0) {
             row_an(xw, 1.0 / Gr, D->J[0][0]); row_an(aL, -0.5, D->J[0][1]); row_an(aR, -0.5, D->J[0][2]);
             v3 cwv = vadd(vscl(xw, -1.0 / Gr), vscl(vadd(aL, aR), 0.5)); row_an(cwv, 1, D->J[0][3]);
             D->compl = 1e-11;

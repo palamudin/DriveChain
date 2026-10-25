@@ -136,7 +136,7 @@ typedef struct {
     double rim_inertia, ishaft_inertia, input_inertia, pinion_inertia;   /* about own axes, kg m^2 */
     double valve_a0, valve_amin, valve_theta_c, valve_cd;   /* rotary valve: open orifice area m^2, leak area of a closed metering edge, twist to close rad, discharge coeff */
     double oil_rho, oil_beta, chamber_vol, supply_vol;     /* oil density, effective bulk modulus incl. hose (Pa), each cylinder chamber + hose m^3, pump/supply volume m^3 */
-    double diff_inertia, gb_out_inertia;   /* diff carrier + ring, gearbox output + propshaft, kg m^2 */
+    double diff_inertia, gb_out_inertia;   /* diff carrier + ring, gearbox output + propshaft, kg m^2; either > 0 adds them as geared rotors (docs/CARRIER.md), 0 = off */
     double baumgarte;               /* joint drift correction per substep (0.1..0.3) */
     /* load-dependent joint friction (box rows bounded by mu * |own normal reaction| + preload; docs/JOINT_FRICTION.md).
        jf = 0: only the constant rack_friction / column_friction rows (previous behaviour). */

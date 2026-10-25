@@ -41,6 +41,7 @@ done
 # opt-in proposals for every base car (defaults unchanged); each writes <car>_<suffix>.ini with keys appended to [car]:
 #  _propV = rotary-valve pressure states (mb_valve_model = 1, contoured edges), pump at full flow from idle (docs/VALVE.md)
 #  _propB = compliant arm-pivot bushings at documented estimates (docs/BUSHINGS.md)
+#  _propC = propshaft and diff-carrier rotors in the driveline (docs/CARRIER.md)
 mkprop() { suffix=$1; shift; for f in $D/cars/*.ini; do case "$f" in *_tarmac*|*_prop*) continue;; esac
 python3 - "$f" "$suffix" "$@" <<'PY'
 import sys, re
@@ -57,6 +58,7 @@ PY
 done; }
 mkprop propV "; hydraulic-valve proposal propV (docs/VALVE.md)" "mb_valve_model = 1" "assist_rpm_full = 800"
 mkprop propB "; compliant-bushing proposal propB (docs/BUSHINGS.md)" "mb_bush_kr = 2e6, 2e6" "mb_bush_ka = 5e5, 5e5" "mb_bush_kt = 300, 300"
+mkprop propC "; carrier-inertia proposal propC (docs/CARRIER.md)" "mb_diff_inertia = 0.02" "mb_gb_out_inertia = 0.01"
 # private mesh maps (owner's testing only): every private/tracks/<name> with a track.cfg -> tracks/<name> (F6 in the demo)
 for t in private/tracks/*/; do [ -f "$t/track.cfg" ] || continue; n=$(basename "$t"); mkdir -p $D/tracks/$n
   for f in track.cfg collider.bin scenery.bin line.csv pitline.csv CREDITS.md; do [ -f "$t/$f" ] && cp "$t/$f" $D/tracks/$n/; done; done
