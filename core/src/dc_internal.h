@@ -41,6 +41,19 @@ typedef struct {
     double delta_row[DC_MAX_ROWS];
 } dc_tyre_state;
 
+/* TARMAC tyre: per-axle constant tables (ray fan, flat-volume inversion, derived parameters), built by dc_tyre_tm_init */
+#define DC_TM_NR 61
+#define DC_TM_NL 9
+typedef struct {
+    double R0, H, tread, laneW, bottom, lane[DC_TM_NL];
+    int nl;
+    double cth[DC_TM_NR], sth[DC_TM_NR], w[DC_TM_NR];
+    double bpD[DC_TM_NR], bpS[DC_TM_NR], bpT[DC_TM_NR], bpV[DC_TM_NR];
+    double kx, ky, sx0, sy0, cd, mu0, ls, fref, floor_, vslide, crr, krim, crim, cz, kappa, roll, kz_mode;
+    double patch0;           /* areaSmooth * halfLength on a flat road at fref (reference footprint) */
+    double cp;               /* tread brush stiffness per unit area per unit deflection, N/m^3 (2 C_ref / patch0) */
+} dc_tm_tab;
+
 struct dc_car {
     dc_car_params P;
     dc_kin K[4];
@@ -77,6 +90,7 @@ struct dc_car {
     double tel_udot[NQ];
     double link_f[4][DC_MAX_LINKS+1];  /* two-force member loads (+ = tension), last = spring/strut axial share */
     double link_resid[4];
+    dc_tm_tab tm[2];                 /* TARMAC tyre tables per axle */
     struct dc_mbcar* mb;             /* multibody solver state (solver = DC_SOLVER_MULTIBODY), else NULL */
 };
 

@@ -81,6 +81,7 @@ DC_API dc_car* dc_create(const dc_car_params* pin) {
     P->sprung_cg[0] = scg.x; P->sprung_cg[1] = scg.y; P->sprung_cg[2] = scg.z;
     c->I_s_body = V3(P->sprung_inertia[0], P->sprung_inertia[1], P->sprung_inertia[2]);
     dc_kin_setup(c);
+    dc_tyre_tm_init(c);
     for (int i = 0; i < 4; i++) {
         c->pose[i].c = c->K[i].hub0; c->pose[i].R = m3id();
         dc_kin_solve(&c->K[i], 0, 0, &c->pose[i], 1);

@@ -9,7 +9,7 @@ typedef struct {
     double N[DC_MAX_ROWS], Fz_t[DC_MAX_ROWS], Frim[DC_MAX_ROWS], a_r[DC_MAX_ROWS], dl[DC_MAX_ROWS], dlr[DC_MAX_ROWS];
     double Ntot, Fz, Fr, delta_eff, a_eff;
     double Re, arm_x, Vcx, Vsy, Vr, sig_x, sig_y, Ctot, Cxtot;
-    double ey_new, ex_star, D, Fx_star, kx, Fy, Mz_brush, mu_eff, lam;
+    double ey_new, by_new, ex_star, D, Fx_star, kx, Fy, Mz_brush, mu_eff, lam;
     double phi_new, Mt, grip, camber_l, rr_e, tp;
     double Fx;                       /* final */
     v3 F, tau;                       /* final world force and torque about wheel centre */
@@ -19,6 +19,10 @@ typedef struct {
 } dc_tc;
 void dc_tyre_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc* t);
 void dc_tyre_phaseB(dc_car* c, int i, v3 cw, v3 a, double omega_new, double h, dc_tc* t, int commit);
+/* TARMAC tyre (tyre_model = 1): same interface, dispatched from dc_tyre_phaseA/B */
+void dc_tyre_tm_init(dc_car* c);
+void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc* t);
+void dc_tyre_tm_phaseB(dc_car* c, int i, v3 cw, v3 a, double omega_new, double h, dc_tc* t, int commit);
 /* vertical rate vs gauge pressure: linear (reference rate + pressure gain) around the reference,
    blended to the carcass-only rate kz_flat below half the reference pressure (a linear law extrapolated
    to 0 psi keeps a deflated tyre unphysically stiff), floored at 4% of kz_ref. */

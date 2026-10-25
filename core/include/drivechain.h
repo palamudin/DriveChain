@@ -35,6 +35,7 @@ extern "C" {
 enum { DC_SUSP_DWB = 0, DC_SUSP_STRUT = 1, DC_SUSP_MULTILINK = 2 };
 enum { DC_DRIVE_RWD = 0, DC_DRIVE_FWD = 1, DC_DRIVE_AWD = 2 };
 enum { DC_STEER_TORQUE = 0, DC_STEER_ANGLE = 1 };
+enum { DC_TYRE_ENVELOPE = 0, DC_TYRE_TARMAC = 1 };
 
 /* ---------------- parameters (all data driven; see cars/ *.ini) ---------------- */
 typedef struct {
@@ -61,6 +62,24 @@ typedef struct {
     double ray_span_deg;                   /* +- span of the fan around straight down */
     double trail_factor;                   /* pneumatic-trail shape factor on the brush trail (1 = parabolic pressure, a/3 at
                                               zero slip; 1.5 gives a/2 = 1/4 contact length as measured, Pacejka 2012 ch.3) */
+    /* ---- tyre model selector and TARMAC model (model = 1; see core/src/dc_tyre_tm.c, docs/TYRE_TARMAC.md).
+       A parameter left at 0 takes the documented default (derived from the parameters above where noted). */
+    int model;                             /* DC_TYRE_ENVELOPE (0, default) or DC_TYRE_TARMAC (1) */
+    int tm_lanes;                          /* lanes across the contact width (7) */
+    double tm_kz_mode;                     /* 0: Rhyne 2005 Kz(p, size); 1: kz law above (dc_tyre_kz) */
+    double tm_contact_ratio;               /* kappa = mean contact pressure / inflation pressure (0.8) */
+    double tm_carcass_roll;                /* carcass roll per unit lateral belt shift / section height (0.6) */
+    double tm_cz;                          /* radial carcass damping N s/m (300) */
+    double tm_kx, tm_ky;                   /* carcass (brush) stiffness N/m (default carcass_kx, carcass_ky) */
+    double tm_relax_x, tm_relax_y;         /* relaxation lengths at the reference load, m (default: brush cornering /
+                                              slip stiffness of the envelope model at fz_ref divided by tm_ky / tm_kx) */
+    double tm_damping;                     /* brush damping N s/m (420) */
+    double tm_mu;                          /* peak friction at tm_fz_ref (default mu_y at that load) */
+    double tm_load_sens;                   /* mu = tm_mu (fz_ref/N)^ls (default 1 - ls_exp_y) */
+    double tm_fz_ref;                      /* reference corner load N (default: static corner load m g / 4) */
+    double tm_slide_floor, tm_slide_speed; /* sliding-friction decay: floor (0.7) and e-folding speed m/s (5) */
+    double tm_crr;                         /* rolling resistance coefficient (0.012) */
+    double tm_k_rim, tm_c_rim;             /* rim-flange pinch stiffness / damping (1.2e6, 1500) */
 } dc_tyre_params;
 
 typedef struct {
