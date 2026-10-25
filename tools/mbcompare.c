@@ -29,7 +29,7 @@ static double road(void* u, double x, double y, double* nx, double* ny, double* 
 
 static dc_car_params P; static dc_car* C; static dc_driver* D; static dc_input IN; static dc_telemetry T;
 static FILE* CSV; static double SIMT; static double CPU;
-static double H_DPREV, H_DMIN = 1e30, H_PMAX, H_NFAIL; static int H_FIRST;   /* health: min per-step dissipation, peak valve pressure, valve fails */
+static double H_DPREV, H_DMIN = 1e30, H_PMAX, H_NFAIL, H_DMIN_T; static int H_FIRST; static char H_CUR[32], H_DMIN_M[32];   /* health: min per-step dissipation, peak valve pressure, valve fails */
 static const double DT = 1.0 / 120.0;
 
 static int auto_gear(int g, double rpm) {
@@ -44,6 +44,7 @@ static void start(double speed, int gear) {
     dc_set_road(C, road, NULL);
     double pos[3] = {0, 0, 0};
     dc_reset(C, pos, 0, speed);
+    if (getenv("DCDBG")) dc_debug_flags(C, atoi(getenv("DCDBG")));
     memset(&IN, 0, sizeof IN); IN.gear = gear; IN.steer_mode = DC_STEER_TORQUE;
     dc_driver_params dp; dc_driver_default_params(&dp);
     if (D) dc_driver_destroy(D);
@@ -58,7 +59,8 @@ static void tick(int autoshift) {
     dc_step(C, DT);
     CPU += (double)(clock() - c0) / CLOCKS_PER_SEC;
     dc_get_telemetry(C, &T); SIMT += DT;
-    if (!H_FIRST) H_DMIN = fmin(H_DMIN, T.dissipated - H_DPREV);
+    if (!H_FIRST && T.dissipated - H_DPREV < H_DMIN) { H_DMIN = T.dissipated - H_DPREV; H_DMIN_T = SIMT; snprintf(H_DMIN_M, sizeof H_DMIN_M, "%s", H_CUR); }
+    if (getenv("DTRACE") && !H_FIRST && T.dissipated - H_DPREV < atof(getenv("DTRACE"))) fprintf(stderr, "dtrace %s t %.3f dE %.4f\n", H_CUR, SIMT, T.dissipated - H_DPREV);
     H_FIRST = 0; H_DPREV = T.dissipated;
     for (int k = 0; k < 3; k++) H_PMAX = fmax(H_PMAX, fabs(T.valve_p[k]));
     H_NFAIL = fmax(H_NFAIL, T.valve_nfail);
@@ -68,7 +70,7 @@ static double yaw_of(void) { dc_xform x[DC_PART_COUNT]; dc_get_parts(C, x, DC_PA
     return atan2(2 * (q0 * q3 + q1 * q2), 1 - 2 * (q2 * q2 + q3 * q3)); }
 static void pos_of(double* x, double* y) { dc_xform p[DC_PART_COUNT]; dc_get_parts(C, p, DC_PART_COUNT); *x = p[0].pos[0]; *y = p[0].pos[1]; }
 static void csv_open(const char* dir, const char* name) {
-    char fn[512]; snprintf(fn, sizeof fn, "%s/%s.csv", dir, name); CSV = fopen(fn, "w");
+    char fn[512]; snprintf(fn, sizeof fn, "%s/%s.csv", dir, name); CSV = fopen(fn, "w"); snprintf(H_CUR, sizeof H_CUR, "%s", name);
     fprintf(CSV, "t,x,y,yaw,speed,ay,yaw_rate,beta,sw,column_torque,rack_force,fz0,fz1,fz2,fz3,alpha0,alpha2,travel0,travel1,travel2,travel3,steer0,steer1,fx0,fy0,fx1,fy1,fx2,fy2,fx3,fy3,aks0,aks1,aks2,aks3,kss2,kss3\n");
 }
 static void csv_row(void) {
@@ -321,6 +323,7 @@ int main(int argc, char** argv) {
     RUN("settle", m_settle); RUN("bounce", m_bounce); RUN("skidpad", m_skidpad); RUN("step", m_step); RUN("liftoff", m_liftoff);
     RUN("handsoff", m_handsoff); RUN("bump", m_bump); RUN("slalom", m_slalom); if (!strcmp(what, "hyst")) m_hyst(dir);
     SUM("health_min_step_dissipation", H_DMIN, "J (all manoeuvres; < 0 = energy created)");
+    printf("%-10s %-28s %12s t=%.3f s\n", tag, "health_min_step_at", H_DMIN_M, H_DMIN_T);
     SUM("health_valve_pmax", H_PMAX * 1e-6, "MPa peak |valve pressure|");
     SUM("health_valve_nfail", H_NFAIL, "valve Newton non-convergences (max per run)");
     SUM("cpu_per_sim_s", CPU / fmax(SIMT, 1e-9), "(last manoeuvre normalised; see total)");
