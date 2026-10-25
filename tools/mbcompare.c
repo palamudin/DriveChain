@@ -29,6 +29,7 @@ static double road(void* u, double x, double y, double* nx, double* ny, double* 
 
 static dc_car_params P; static dc_car* C; static dc_driver* D; static dc_input IN; static dc_telemetry T;
 static FILE* CSV; static double SIMT; static double CPU;
+static double H_DPREV, H_DMIN = 1e30, H_PMAX, H_NFAIL; static int H_FIRST;   /* health: min per-step dissipation, peak valve pressure, valve fails */
 static const double DT = 1.0 / 120.0;
 
 static int auto_gear(int g, double rpm) {
@@ -47,7 +48,7 @@ static void start(double speed, int gear) {
     dc_driver_params dp; dc_driver_default_params(&dp);
     if (D) dc_driver_destroy(D);
     D = dc_driver_create(&dp);
-    SIMT = 0;
+    SIMT = 0; H_FIRST = 1;
 }
 static void tick(int autoshift) {
     dc_driver_update(D, C, DT, &IN);
@@ -57,6 +58,10 @@ static void tick(int autoshift) {
     dc_step(C, DT);
     CPU += (double)(clock() - c0) / CLOCKS_PER_SEC;
     dc_get_telemetry(C, &T); SIMT += DT;
+    if (!H_FIRST) H_DMIN = fmin(H_DMIN, T.dissipated - H_DPREV);
+    H_FIRST = 0; H_DPREV = T.dissipated;
+    for (int k = 0; k < 3; k++) H_PMAX = fmax(H_PMAX, fabs(T.valve_p[k]));
+    H_NFAIL = fmax(H_NFAIL, T.valve_nfail);
 }
 static double yaw_of(void) { dc_xform x[DC_PART_COUNT]; dc_get_parts(C, x, DC_PART_COUNT);
     double q0 = x[0].quat[0], q1 = x[0].quat[1], q2 = x[0].quat[2], q3 = x[0].quat[3];
@@ -105,6 +110,7 @@ static void m_bounce(const char* dir) {   /* drop-release body bounce: body heav
     /* heave: kick the body with a 30 mm/s.. use road step: simplest is a lift then release = drop from 30 mm */
     double t0 = SIMT; double tr[360]; int nt = 0;
     BUMP.bx = -1e6; BUMP.len = 2e6; BUMP.h = 0.03;   /* plateau: 30 mm road step under all four wheels */
+    H_FIRST = 1;   /* the teleported road injects tyre energy this step: external work, not an audit failure */
     for (int i = 0; i < 360; i++) { tick(0); csv_row(); dc_xform px[DC_PART_COUNT]; dc_get_parts(C, px, DC_PART_COUNT); tr[nt++] = px[0].pos[2]; }
     BUMP.h = 0; fclose(CSV);
     /* body heave response to the step: final value, first max, following min -> half damped period, overshoot */
@@ -296,6 +302,9 @@ int main(int argc, char** argv) {
 #define RUN(nm, fn) if (!strcmp(what, "all") || !strcmp(what, nm)) fn(dir)
     RUN("settle", m_settle); RUN("bounce", m_bounce); RUN("skidpad", m_skidpad); RUN("step", m_step); RUN("liftoff", m_liftoff);
     RUN("handsoff", m_handsoff); RUN("bump", m_bump); RUN("slalom", m_slalom); if (!strcmp(what, "hyst")) m_hyst(dir);
+    SUM("health_min_step_dissipation", H_DMIN, "J (all manoeuvres; < 0 = energy created)");
+    SUM("health_valve_pmax", H_PMAX * 1e-6, "MPa peak |valve pressure|");
+    SUM("health_valve_nfail", H_NFAIL, "valve Newton non-convergences (max per run)");
     SUM("cpu_per_sim_s", CPU / fmax(SIMT, 1e-9), "(last manoeuvre normalised; see total)");
     return 0;
 }

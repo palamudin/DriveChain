@@ -37,6 +37,6 @@
 [bench] car-sized mechanism: chassis + 4 x (2 arms, knuckle, wheel, link) + 5 steering + 4 ARB + 3 driveline
   bodies 30, joints 41, nodes 67, unknowns 333, factor blocks 2916 doubles
   heap allocations during 4000 steps                  0.000e+00  (limit 0.0e+00)  PASS
-  70.3 us per step (target <= 250 us)
+  70.1 us per step (target <= 250 us)
   step time over 250 us budget [us]                   0.000e+00  (limit 0.0e+00)  PASS
 === ALL PASS (0 failures) ===

@@ -1,0 +1,31 @@
+=== valve pressure-state model ===
+--- bench (rack held, rated flow)
+  ok   model 1: steady dP = boost law to 0.001 MPa (limit 0.21), T 0..6 N m
+  ok   model 1: relief caps supply at 6.81 MPa (setting 7.0)
+  ok   model 1: Newton converged, max 25 iterations
+  ok   model 2: dP monotone in twist (dP at 8 N m 7.34 MPa)
+  ok   model 2: relief caps supply at 7.34 MPa (setting 7.0)
+  ok   model 2: Newton converged, max 27 iterations
+--- cars/mx5_na.ini (assist_rpm_full 800)
+  ok   parking at idle: rim torque for 30/60 deg  model0 3.36/3.89  model1 3.52/4.05  (model2 4.62/5.05) N m
+  info rim torque for 90 deg: model0 4.18 model1 4.44 model2 5.30 N m (-1 = not reached by 6 N m)
+  ok   model 1 step: valve Newton failures 0
+  ok   model 1 step: per-step dissipation >= 0 (min 1.40e+00 J)
+  ok   model 1 step: rack/pressure ringing bounded and dying out (worst 100 ms HF rack-force rms 55.6 N, last 250 ms 2.59 N)
+  ok   model 1: repeat after dc_reset is bit-identical
+  ok   model 2 step: valve Newton failures 0
+  ok   model 2 step: per-step dissipation >= 0 (min 1.38e+00 J)
+  ok   model 2 step: rack/pressure ringing bounded and dying out (worst 100 ms HF rack-force rms 22.8 N, last 250 ms 0.02 N)
+  info model 0 step: worst 100 ms HF rack-force rms 30.7 N, last 250 ms 4.97 N
+--- cars/hatch_fwd.ini (assist_rpm_full 800)
+  ok   parking at idle: rim torque for 30/60 deg  model0 1.04/2.64  model1 1.05/2.72  (model2 1.12/3.92) N m
+  info rim torque for 90 deg: model0 -1.00 model1 -1.00 model2 -1.00 N m (-1 = not reached by 6 N m)
+  ok   model 1 step: valve Newton failures 0
+  ok   model 1 step: per-step dissipation >= 0 (min 1.56e+00 J)
+  ok   model 1 step: rack/pressure ringing bounded and dying out (worst 100 ms HF rack-force rms 98.5 N, last 250 ms 0.15 N)
+  ok   model 1: repeat after dc_reset is bit-identical
+  ok   model 2 step: valve Newton failures 0
+  ok   model 2 step: per-step dissipation >= 0 (min 1.56e+00 J)
+  ok   model 2 step: rack/pressure ringing bounded and dying out (worst 100 ms HF rack-force rms 36.6 N, last 250 ms 0.04 N)
+  info model 0 step: worst 100 ms HF rack-force rms 32.0 N, last 250 ms 0.61 N
+all valve tests passed (0 failed)

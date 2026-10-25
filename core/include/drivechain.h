@@ -147,6 +147,16 @@ typedef struct {
     double pin_brg_radius, pin_brg_span, pin_torque;   /* pinion bearings radius, span m, seal drag N m */
     double strut_mount_mu, strut_mount_radius, strut_mount_torque;   /* MacPherson top-mount bearing (axial load = spring + stops) */
     double strut_mu, strut_lever, strut_seal;     /* damper rod guide + piston under side load: coefficient, contact load / top side load, seal drag N */
+    /* hydraulic assist valve (docs/VALVE.md): 0 = algebraic open-centre law (assist_* keys, default);
+       1 = rotary-valve bridge with chamber + supply pressure states, metering edges contoured so the steady boost at
+           rated flow equals the assist_pmax/assist_tref law; 2 = same bridge with linear-chamfer edges (valve_a0,
+           valve_amin, valve_theta_c): boost curve fully emergent. Relief valve on the supply at assist_pmax. */
+    double valve_model;
+    double hose_compliance;   /* valve_model > 0: supply-hose volumetric expansion, m^3/Pa (adds to supply_vol/oil_beta). PS pressure hose
+                                 is built to expand (SAE J188 "high volumetric expansion"): listed 8-17 cc/ft, test pressure not stated;
+                                 taken at the 10.3 MPa rating = ~3.8e-12 per m. Plain 2-braid hose ~9e-13 per m (Parker 4660).
+                                 Default 2e-12 = ~0.5 m of J188 hose. It is also the damping element: with less, rack break-away
+                                 sets off large, lightly damped ~35-40 Hz rack/pressure ringing bursts (docs/VALVE.md). */
 } dc_mb_params;
 
 typedef struct {
@@ -255,6 +265,9 @@ typedef struct {
     double proj_work;           /* cumulative KE change from the momentum projection (J), reported for honesty */
     double rack_fric_force, col_fric_torque;  /* MB core: rack friction force on the rack (N), column bearing friction torque (N m) */
     int pgs_iters, box_rows, box_dropped, pad3; /* MB core: box-LCP sweeps, active box rows, rows dropped by MB_MAXBOX (should be 0) */
+    double valve_p[3];                        /* MB core, valve_model > 0: cylinder chamber A (+rack side), chamber B, pump supply gauge pressure, Pa */
+    double pump_flow, hyd_energy;             /* pump delivery m^3/s, oil compression energy J (included in potential) */
+    double valve_nfail;                       /* cumulative valve Newton non-convergences since reset (health counter, expect 0) */
     dc_wheel_telem w[4];
 } dc_telemetry;
 

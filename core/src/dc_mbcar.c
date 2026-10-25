@@ -83,6 +83,89 @@ static v3 carried_point(const dc_car* c, int i, int on_arm, v3 P0, double s) {
     return vadd(A, mv(&Rot, vsub(P0, A)));
 }
 
+
+/* ------------------------------------------------------------------ hydraulic valve (docs/VALVE.md)
+   Open-centre rotary valve = Wheatstone bridge of four variable orifices between the pump supply S, the tank T and
+   the cylinder chambers A (pushes the rack +y) and B. Twist th > 0 (valve input ahead of the pinion in the +rack
+   sense) closes the edges S->B and A->T and leaves S->A, B->T open, so A rises and B falls. Orifice flow
+   Q = cd a sqrt(2|dp|/rho) (turbulent), regularised below ptr; chamber pressures follow the continuity equation
+   (V/beta) dP/dt = Q_in - dV/dt with the effective bulk modulus (oil + hose). A relief valve caps the supply. */
+void dc_valve_setup(dc_valve* v, const dc_car* c) {
+    const dc_car_params* P = &c->P; const dc_mb_params* M = &P->mb;
+    v->a0 = M->valve_a0; v->amin = M->valve_amin; v->thc = fmax(M->valve_theta_c, 1e-4); v->cd = M->valve_cd;
+    v->rho = M->oil_rho; v->beta = M->oil_beta; v->Vc = M->chamber_vol; v->Vs = M->supply_vol;
+    v->Cs = M->supply_vol / M->oil_beta + fmax(M->hose_compliance, 0);   /* supply capacitance: oil + hose expansion, m^3/Pa */
+    v->Ap = P->assist_area; v->half = c->rack_hard > 0 ? c->rack_hard : 0.08;
+    v->prel = P->assist_pmax; v->Qr = P->assist_flow;
+    v->grel = P->assist_flow / (0.05 * P->assist_pmax);   /* relief passes the rated flow at 5 % over its setting */
+    v->ktb = P->assist_torsion_k; v->tref = P->assist_tref; v->pmax = P->assist_pmax;
+    v->ptr = 1e4;                                          /* laminar/turbulent transition pressure, Pa */
+    v->edge = M->valve_model >= 1.5 ? 1 : 0;
+}
+double dc_valve_area(const dc_valve* v, double th) {
+    /* opening edge (th < 0): grows from a0 as the chamfer uncovers, limited by the valve-body ports (Roesth 2007:
+       levels off at 20-30 mm^2); closing edge (th > 0): contoured to the design boost law, or a linear chamfer */
+    double ao = fmin(v->a0 * (1 + fabs(th) / v->thc), fmax(25e-6, v->a0));
+    if (th <= 0) return ao;
+    double a;
+    if (v->edge == 0) {   /* dP = K (1/a_c^2 - 1/a_o^2) at rated flow, no rack motion (Merritt bridge) = pmax x^4/(1+x^4) */
+        double x = v->ktb * th / v->tref, x4 = x * x * x * x, dp = v->pmax * x4 / (1 + x4);
+        double q = v->Qr / (2 * v->cd), K = 0.5 * v->rho * q * q;
+        a = 1 / sqrt(dp / K + 1 / (ao * ao));
+    } else a = v->a0 * (1 - th / v->thc);
+    return fmax(a, v->amin);
+}
+static double orif(const dc_valve* v, double a, double dp, double* dq) {
+    double C = v->cd * a * sqrt(2 / v->rho), s = dp * dp + v->ptr * v->ptr, r = sqrt(sqrt(s));
+    *dq = C * (0.5 * dp * dp + v->ptr * v->ptr) / (s * r);
+    return C * dp / r;
+}
+static int solve3(double A[3][3], const double b[3], double x[3]) {
+    double d = A[0][0] * (A[1][1] * A[2][2] - A[1][2] * A[2][1]) - A[0][1] * (A[1][0] * A[2][2] - A[1][2] * A[2][0])
+             + A[0][2] * (A[1][0] * A[2][1] - A[1][1] * A[2][0]);
+    if (fabs(d) < 1e-300) return 0;
+    for (int k = 0; k < 3; k++) {
+        double B[3][3]; memcpy(B, A, sizeof B);
+        for (int i = 0; i < 3; i++) B[i][k] = b[i];
+        x[k] = (B[0][0] * (B[1][1] * B[2][2] - B[1][2] * B[2][1]) - B[0][1] * (B[1][0] * B[2][2] - B[1][2] * B[2][0])
+              + B[0][2] * (B[1][0] * B[2][1] - B[1][1] * B[2][0])) / d;
+    }
+    return 1;
+}
+int dc_valve_solve(const dc_valve* v, const double P0[3], double th, double rd, double r, double Qp, double h, double P[3], double dPdv[3]) {
+    const double pvap = -0.95e5;
+    double aSA = dc_valve_area(v, -th), aAT = dc_valve_area(v, th), aSB = dc_valve_area(v, th), aBT = dc_valve_area(v, -th);
+    double VA = v->Vc + v->Ap * fmax(v->half + r, 0), VB = v->Vc + v->Ap * fmax(v->half - r, 0);
+    double CA = h > 0 ? VA / (v->beta * h) : 0, CB = h > 0 ? VB / (v->beta * h) : 0, CS = h > 0 ? v->Cs / h : 0;
+    double J[3][3]; int it, ok = -1;
+    for (int i = 0; i < 3; i++) P[i] = P0[i];
+    for (it = 1; it <= 60; it++) {
+        double gSA, gAT, gSB, gBT;
+        double qSA = orif(v, aSA, P[2] - P[0], &gSA), qAT = orif(v, aAT, P[0], &gAT);
+        double qSB = orif(v, aSB, P[2] - P[1], &gSB), qBT = orif(v, aBT, P[1], &gBT);
+        double over = P[2] - v->prel, qrel = over > 0 ? v->grel * over : 0, grl = over > 0 ? v->grel : 0;
+        double R[3] = { CA * (P[0] - P0[0]) - qSA + qAT + v->Ap * rd,
+                        CB * (P[1] - P0[1]) - qSB + qBT - v->Ap * rd,
+                        CS * (P[2] - P0[2]) - Qp + qSA + qSB + qrel };
+        J[0][0] = CA + gSA + gAT; J[0][1] = 0;              J[0][2] = -gSA;
+        J[1][0] = 0;              J[1][1] = CB + gSB + gBT; J[1][2] = -gSB;
+        J[2][0] = -gSA;           J[2][1] = -gSB;           J[2][2] = CS + gSA + gSB + grl;
+        double dx[3], nb[3] = {-R[0], -R[1], -R[2]};
+        if (!solve3(J, nb, dx)) break;
+        double mx = 0;
+        for (int i = 0; i < 3; i++) { double lim = 0.25 * fmax(fabs(P[i]), 2e5); if (dx[i] > lim) dx[i] = lim; if (dx[i] < -lim) dx[i] = -lim; P[i] += dx[i]; mx = fmax(mx, fabs(dx[i])); }
+        if (mx < 0.05) { ok = it; break; }
+    }
+    double b[3] = {-v->Ap, v->Ap, 0};
+    if (!solve3(J, b, dPdv)) dPdv[0] = dPdv[1] = dPdv[2] = 0;
+    for (int i = 0; i < 2; i++) if (P[i] < pvap) { P[i] = pvap; dPdv[i] = 0; }   /* cavitation: the chamber cannot pull below vapour */
+    return ok;
+}
+double dc_valve_energy(const dc_valve* v, const double P[3], double r) {
+    double VA = v->Vc + v->Ap * fmax(v->half + r, 0), VB = v->Vc + v->Ap * fmax(v->half - r, 0);
+    return 0.5 / v->beta * (VA * P[0] * P[0] + VB * P[1] * P[1]) + 0.5 * v->Cs * P[2] * P[2];
+}
+
 static void phi_refresh(void* user);
 
 dc_mbcar* dc_mbcar_create(dc_car* c) {
@@ -273,6 +356,8 @@ dc_mbcar* dc_mbcar_create(dc_car* c) {
     for (int i = 0; i < 4; i++) mb_couple(W, m->lo_body[i], m->ch);
     for (int a = 0; a < 2; a++) if (m->has_bar[a]) mb_couple(W, m->bar[a][0], m->bar[a][1]);
     if (m->steer) { mb_couple(W, m->inp, m->pin); mb_couple(W, m->rack, m->ch); mb_couple(W, m->rim, m->ch); }
+    m->vmodel = (m->steer && P->assist && M->valve_model > 0.5) ? (M->valve_model >= 1.5 ? 2 : 1) : 0;
+    if (m->vmodel) dc_valve_setup(&m->vlv, c);
     W->phi_cb = phi_refresh; W->cb_user = c;
     if (!mb_finalize(W)) { mb_destroy(W); free(m); return NULL; }
     return m;
@@ -303,6 +388,12 @@ void dc_mbcar_reset(dc_car* c) {
     m->th_prev_raw = m->pin_prev_raw = m->inp_prev_raw = 0;
     m->th_acc = m->pin_acc = m->inp_acc = 0;
     m->lam_diff_prev = 0; m->diss = 0; m->audit_init = 0;
+    m->vp[0] = m->vp[1] = m->vp[2] = 0; m->vQp = 0; m->v_fail = 0;
+    if (m->vmodel) {   /* steady centred bridge at the current pump flow */
+        const dc_car_params* P = &c->P; double z[3] = {0, 0, 0}, d[3];
+        m->vQp = P->assist_flow * clampd(fabs(c->we * 30 / M_PI) / P->assist_rpm_full, 0, 1);
+        dc_valve_solve(&m->vlv, z, 0, 0, c->r, m->vQp, 0, m->vp, d);
+    }
     memset(m->extF, 0, sizeof m->extF); memset(m->extT, 0, sizeof m->extT);
 }
 
@@ -571,7 +662,16 @@ void dc_mbcar_step(dc_car* c) {
         row_pt(W, m->ch, xr, yw, -1, jr[1]);
         double rd = mb_row_vel(W, 2, br, jr);
         double f = 0, kk = 0, cc = 0;
-        if (P->assist) {
+        if (P->assist && m->vmodel) {
+            /* valve bridge with pressure states: backward-Euler pressures linearised in the (new) rack velocity, so the
+               cylinder is a linearly implicit element between rack and housing; committed nonlinearly after the solve */
+            double thv = (thi - thp) * sgn(c->r_p), Pl[3], dPdv[3];
+            m->vQp = P->assist_flow * clampd(fabs(rpm) / P->assist_rpm_full, 0, 1);
+            if (dc_valve_solve(&m->vlv, m->vp, thv, rd, r, m->vQp, h, Pl, dPdv) < 0) m->v_fail++;
+            double F = P->assist_area * (Pl[0] - Pl[1]), cv = P->assist_area * (dPdv[0] - dPdv[1]);
+            f += F; cc += cv;
+            m->F_assist = F; m->v_th = thv; m->v_F0 = F; m->v_c = cv; m->v_rd0 = rd;
+        } else if (P->assist) {
             double x = tau / P->assist_tref, x4 = x * x * x * x;
             double dP = P->assist_pmax * sgn(x) * x4 / (1 + x4);
             double F = P->assist_area * dP * sgn(c->r_p);
@@ -629,6 +729,7 @@ void dc_mbcar_step(dc_car* c) {
     for (int b = 0; b < W->nb; b++) { m->v_save[b] = W->B[b].v; m->w_save[b] = W->B[b].w; }
     /* stored energy at the start of the step, every term at the same instant (energy audit) */
     double E_start = pe;
+    if (m->vmodel) { double eh = dc_valve_energy(&m->vlv, m->vp, r); E_start += eh; pe += eh; }
     for (int b = 0; b < W->nb; b++) {
         mb_body* B = &W->B[b];
         E_start += 0.5 * B->m * vdot(B->v, B->v) + 0.5 * vdot(B->w, mv(&B->Iw, B->w)) + B->m * g * B->x.z;
@@ -685,6 +786,13 @@ void dc_mbcar_step(dc_car* c) {
             Win += h * m->T_hands * (vdot(W->B[m->rim].w, er) - vdot(Ch->w, er));
             v3 dvr = vsub(W->B[m->rack].v, mb_point_vel(Ch, W->B[m->rack].x));
             Win += h * F_act * vdot(dvr, yw);
+            if (m->vmodel) {   /* commit the pressure states with the solved rack velocity; the pump is the power source */
+                double rdn = vdot(dvr, yw), Pn[3], d_[3];
+                if (dc_valve_solve(&m->vlv, m->vp, m->v_th, rdn, r, m->vQp, h, Pn, d_) < 0) m->v_fail++;
+                memcpy(m->vp, Pn, sizeof Pn);
+                m->F_assist = m->v_F0 + m->v_c * (rdn - m->v_rd0);
+                Win += h * m->vQp * Pn[2];
+            }
         }
     }
     /* momentum before integration (for the Newton-3 audit) */
@@ -781,6 +889,9 @@ void dc_mbcar_step(dc_car* c) {
     T->engine_rpm = c->we * 30 / M_PI; T->clutch_slip = (c->we - c->wg) * 30 / M_PI; T->gear = c->in.gear;
     T->dissipated = c->dissipated; T->engine_running = c->engine_on; T->proj_work = 0;
     T->rack_fric_force = m->steer ? W->Jt[m->j_rfric].lam[0] / h : 0; T->col_fric_torque = m->steer ? W->Jt[m->j_cfric].lam[0] / h : 0;
+    T->valve_p[0] = m->vp[0]; T->valve_p[1] = m->vp[1]; T->valve_p[2] = m->vp[2];
+    T->pump_flow = m->vQp; T->hyd_energy = m->vmodel ? dc_valve_energy(&m->vlv, m->vp, c->r) : 0;
+    T->valve_nfail = m->v_fail;
     T->pgs_iters = W->pgs_it; T->box_rows = W->nbox; T->box_dropped = W->box_dropped;
     for (int i = 0; i < 4; i++) {
         dc_wheel_telem* Wt = &T->w[i]; dc_tc* t = &m->tc[i]; const dc_kin* k = &c->K[i]; dc_pose* p = &c->pose[i];

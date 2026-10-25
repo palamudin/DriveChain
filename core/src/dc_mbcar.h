@@ -5,6 +5,19 @@
 #include "dc_mb.h"
 #include "dc_tyre.h"
 
+/* open-centre rotary valve + double-acting cylinder with oil compressibility (docs/VALVE.md) */
+typedef struct {
+    double a0, amin, thc, cd, rho, beta, Vc, Vs, Cs, Ap, half, prel, grel, ktb, tref, pmax, Qr, ptr;
+    int edge;                                /* 0 = contoured to the design boost law, 1 = linear chamfer */
+} dc_valve;
+void dc_valve_setup(dc_valve* v, const dc_car* c);
+double dc_valve_area(const dc_valve* v, double th);      /* metering edge that closes for th > 0 */
+/* one backward-Euler step (h > 0) or the steady state (h = 0) of the bridge: P = {chamber A, chamber B, supply}.
+   th: valve twist in the +rack sense (rad), rd: rack velocity, r: rack position, Qp: pump flow.
+   dPdv: sensitivity of P to rd (linearly implicit coupling). Returns Newton iterations (< 0: not converged). */
+int dc_valve_solve(const dc_valve* v, const double P0[3], double th, double rd, double r, double Qp, double h, double P[3], double dPdv[3]);
+double dc_valve_energy(const dc_valve* v, const double P[3], double r);
+
 typedef struct dc_mbcar {
     mb_world* W;
     int ch;                                  /* chassis body */
@@ -39,6 +52,7 @@ typedef struct dc_mbcar {
     double diss;
     /* per step telemetry scratch */
     double Fs[4], Fd[4], Fb[4], tau_tb, T_hands, F_assist, F_rack;
+    int vmodel; dc_valve vlv; double vp[3], vQp, v_th, v_F0, v_c, v_rd0; int v_fail;   /* valve pressure states (valve_model > 0) */
     int resolves;                            /* friction-circle re-solves (statistics) */
     /* test hooks */
     v3 extF[MB_MAXB], extT[MB_MAXB];

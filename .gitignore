@@ -17,3 +17,6 @@ results/fishtail/*/fishcheck_*.csv
 
 # driver selftest raw traces (regenerate with make drvtest)
 results/driver/drv_*.csv
+
+# valve step traces (regenerate with make valvetest)
+results/valve/*_step.csv

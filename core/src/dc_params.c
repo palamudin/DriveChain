@@ -98,7 +98,7 @@ void dc_default_params(dc_car_params* p) {
     M->pinion_y = 0.25;
     M->rim_inertia = 0.035; M->ishaft_inertia = 5e-4; M->input_inertia = 3e-4; M->pinion_inertia = 2e-4;
     M->valve_a0 = 4.4e-6; M->valve_amin = 2.0e-8; M->valve_theta_c = 0.05; M->valve_cd = 0.6;
-    M->oil_rho = 860; M->oil_beta = 3.0e8; M->chamber_vol = 5e-5; M->supply_vol = 1e-4;
+    M->oil_rho = 860; M->oil_beta = 3.0e8; M->chamber_vol = 5e-5; M->supply_vol = 1e-4; M->hose_compliance = 2e-12;
     M->diff_inertia = 0.02; M->gb_out_inertia = 0.01; M->baumgarte = 0.2;
     /* joint friction: sources and estimates in docs/JOINT_FRICTION.md */
     M->jf = 1;
@@ -148,7 +148,7 @@ static const fld car_f[] = {
     CF("mb_rim_inertia", mb.rim_inertia, 1), CF("mb_ishaft_inertia", mb.ishaft_inertia, 1), CF("mb_input_inertia", mb.input_inertia, 1),
     CF("mb_pinion_inertia", mb.pinion_inertia, 1), CF("mb_valve_a0", mb.valve_a0, 1), CF("mb_valve_amin", mb.valve_amin, 1),
     CF("mb_valve_theta_c", mb.valve_theta_c, 1), CF("mb_valve_cd", mb.valve_cd, 1), CF("mb_oil_rho", mb.oil_rho, 1),
-    CF("mb_oil_beta", mb.oil_beta, 1), CF("mb_chamber_vol", mb.chamber_vol, 1), CF("mb_supply_vol", mb.supply_vol, 1),
+    CF("mb_oil_beta", mb.oil_beta, 1), CF("mb_chamber_vol", mb.chamber_vol, 1), CF("mb_supply_vol", mb.supply_vol, 1), CF("mb_valve_model", mb.valve_model, 1), CF("mb_hose_compliance", mb.hose_compliance, 1),
     CF("mb_diff_inertia", mb.diff_inertia, 1), CF("mb_gb_out_inertia", mb.gb_out_inertia, 1), CF("mb_baumgarte", mb.baumgarte, 1),
     CF("joint_friction", mb.jf, 1), CF("bj_mu", mb.bj_mu, 1), CF("bj_radius", mb.bj_radius, 1), CF("bj_torque", mb.bj_torque, 1),
     CF("yoke_preload", mb.yoke_preload, 1), CF("yoke_mu", mb.yoke_mu, 1), CF("mesh_sep", mb.mesh_sep, 1),
