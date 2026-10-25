@@ -51,7 +51,8 @@ NA-specific bush rates are not public, so these are documented estimates in the 
 
 | metric | rigid | bushed |
 |---|---|---|
-| understeer gradient (steering wheel) | 7.1 deg/g | 18.5 deg/g |
+| understeer gradient K (J266, SW gradient / ratio 15, LSQ 0.2–0.45 g; see UNDERSTEER.md) | 0.36 deg/g | 1.91 deg/g |
+| (old two-sample steering-wheel metric, superseded) | 7.1 deg SW/g | 18.5 deg SW/g |
 | step yaw-rate steady state | 15.9 deg/s | 11.9 deg/s |
 | step overshoot | 4.8 % | 10.3 % |
 | skidpad ay max | 0.78 g | 0.78 g |
