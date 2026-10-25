@@ -134,3 +134,23 @@ partially sliding footprint, and grows over several m/s (Grosch 1963; Persson 20
 `mx5_tarmac_propD.txt` holds the TARMAC proposal.)
 
 Driving validation of the proposals is in the section below.
+
+## Force application point (envelope tyre)
+
+The envelope tyre used to apply its friction forces (Fx, Fy, and the MB core's longitudinal row) at the load-weighted
+mean of the *penetrating* disc points. That point sits about 1.3 cm below the road surface, so lateral force had a
+shorter lever to the roll axis than it should, and the steady-state lateral load transfer came out too high. The
+friction contact point is now the load-weighted mean of the road-surface points under the stations. Normal-force
+moments are unchanged, because they come from the exact volume gradient.
+
+Steady skidpad on mx5_na (MB core), effective load-transfer height ΔFz·t/(m·ay):
+
+| basis | envelope before | envelope after | TARMAC |
+|---|---|---|---|
+| actual contact-point track | 0.445 m | 0.431 m | 0.431 m |
+| nominal track | 0.436 m | 0.423 m | 0.413 m |
+
+The remaining gap on the nominal-track basis is TARMAC's larger lateral patch shift (belt shift and carcass roll),
+which moves its contact points inward. `tests/contact_point_tests.c` (`make contacttest`) checks three things: the
+static contact z is within 1 mm of the road, the skidpad Fy application z is within 2 mm, and the envelope and
+TARMAC load-transfer heights agree within 1.5 cm.

@@ -12,7 +12,7 @@
        front tyre deflection: sim 13.39 mm (camber-weighted rows), analytic flat 13.27 mm
 [PASS] static: design ride height reached travel F 0.07 mm R 0.07 mm (springs preloaded for design height)
        analytic ride modes (sprung 2-dof, series tyre): 1.352 Hz, 1.473 Hz -> compared by FFT in plot.py
-       with tyre friction (drop from 3 cm, brakes on): travel F -2.24 mm R -4.18 mm held by tyre scrub (physical)
+       with tyre friction (drop from 3 cm, brakes on): travel F -1.95 mm R -3.96 mm held by tyre scrub (physical)
 --- conserve
 [PASS] conserve: horizontal momentum      max |dP| = 0.00e+00 kg m/s (0.0e+00 rel)
 [PASS] conserve: yaw ang. momentum Lz     max |dLz| = 2.473e-08 (L0 = 1053.0, 2.3e-11 rel)
@@ -32,36 +32,36 @@
 [PASS] tyre: load sensitivity             fitted 0.766 vs 0.750
        relaxation length (63% distance at 2 deg step): 0.232 m (sigma_y = C/k_carcass)
 --- skidpad
-       skidpad R=40 m: max steady ay 0.928 g; understeer gradient 0.71 deg/g (road-wheel), 10.6 deg/g at the steering wheel
+       skidpad R=40 m: max steady ay 0.928 g; understeer gradient 0.70 deg/g (road-wheel), 10.6 deg/g at the steering wheel
 [PASS] skidpad: max lateral accel plausible 0.928 g (street tyre target ~0.85-0.95 g)
-[PASS] skidpad: understeer (K>0)          0.71 deg/g
+[PASS] skidpad: understeer (K>0)          0.70 deg/g
 --- step
-       step steer 80 km/h, sw 40 deg in 0.15 s: yaw rate ss 17.45 deg/s, ay ss 0.651 g, 90% rise 0.229 s (from 50% sw), overshoot 4.5 %
+       step steer 80 km/h, sw 40 deg in 0.15 s: yaw rate ss 17.44 deg/s, ay ss 0.652 g, 90% rise 0.229 s (from 50% sw), overshoot 4.5 %
 [PASS] step steer: stable + well damped   overshoot 4.5 %, t90 0.229 s
 --- handsoff
-       hands-off: peak |beta| 31.9 deg; wheel self-steered to -458.2 deg (countersteer, first at t=1.87 s while yaw rate still +); final r 0.00 deg/s, beta -0.00 deg, sw 0.0 deg
-[PASS] hands-off: emergent countersteer   min sw -458.2 deg
+       hands-off: peak |beta| 32.3 deg; wheel self-steered to -463.7 deg (countersteer, first at t=1.87 s while yaw rate still +); final r 0.00 deg/s, beta -0.00 deg, sw 0.0 deg
+[PASS] hands-off: emergent countersteer   min sw -463.7 deg
 [PASS] hands-off: recovers + self-centres r 0.00 deg/s, beta -0.00 deg, sw 0.0 deg at t=9 s
-       comparison, hands clamped at 90 deg: peak |beta| 39.3 deg, final r 16.9 deg/s (keeps rotating)
-       comparison, hands off with MANUAL rack: peak |beta| 22.6 deg, min sw -355.6 deg, final r -0.00 deg/s, beta -0.00 deg (hydraulic valve boosts the wheel-inertia torque -> slower self-steer)
+       comparison, hands clamped at 90 deg: peak |beta| 39.2 deg, final r 17.0 deg/s (keeps rotating)
+       comparison, hands off with MANUAL rack: peak |beta| 23.1 deg, min sw -359.0 deg, final r -0.00 deg/s, beta -0.00 deg (hydraulic valve boosts the wheel-inertia torque -> slower self-steer)
 --- kerb
-       kerb (25 mm sharp rumble, 60 km/h): fan envelope peak Fz 6411 N, max dFz/dt 1869 kN/s, |FFB| peak 2.24 N m
+       kerb (25 mm sharp rumble, 60 km/h): fan envelope peak Fz 6412 N, max dFz/dt 1835 kN/s, |FFB| peak 2.22 N m
                                             single-ray      peak Fz 8322 N, max dFz/dt 11437 kN/s, |FFB| peak 2.34 N m
 [PASS] kerb: envelope removes edge spikes dFz/dt ratio 0.16, peak ratio 0.77
-[PASS] kerb: FFB shows the hit            column torque peak 2.24 N m on the kerb vs 0.000 N m on smooth tarmac before it
+[PASS] kerb: FFB shows the hit            column torque peak 2.22 N m on the kerb vs 0.000 N m on smooth tarmac before it
 --- puncture
-       puncture FR (tau 1 s) at 80 km/h: pressure 0 kPa at 8 s, patch length 108 -> 275 mm, rim contact force peak 238 N, column torque peak 0.92 N m, lateral drift -14.45 m
-[PASS] puncture: patch grows + rim contacts patch x2.55, rim 238 N
+       puncture FR (tau 1 s) at 80 km/h: pressure 0 kPa at 8 s, patch length 108 -> 275 mm, rim contact force peak 225 N, column torque peak 0.81 N m, lateral drift -16.10 m
+[PASS] puncture: patch grows + rim contacts patch x2.55, rim 225 N
 --- assist
-       assist off/on: parking peak driver torque 34.9 / 5.4 N m; 20 m/s 45deg sine peak 7.41 / 2.12 N m
-[PASS] assist: reduces effort             parking ratio 0.15, road ratio 0.29
+       assist off/on: parking peak driver torque 35.6 / 5.5 N m; 20 m/s 45deg sine peak 7.24 / 2.10 N m
+[PASS] assist: reduces effort             parking ratio 0.16, road ratio 0.29
 --- perf
-       perf default 3x13 rays flat     101.53 us/substep -> 5x real time at 2000 Hz (one core)
-[PASS] perf: >= 4x real time at substep rate (< 125 us) 101.53 us/substep, 4.9x real time
-       perf 1x7 rays flat              73.43 us/substep -> 7x real time at 2000 Hz (one core)
-       perf 3x13 rays rough terrain    153.04 us/substep -> 3x real time at 2000 Hz (one core)
-       perf TARMAC tyre flat           115.87 us/substep -> 4x real time at 2000 Hz (one core)
-       perf TARMAC tyre rough terrain  212.79 us/substep -> 2x real time at 2000 Hz (one core)
-[PASS] newton3: worst residual all tests  |sum m a - F_ext|/mg = 8.79e-16, |sum dL/dt - T_ext| = 7.48e-10 N m
+       perf default 3x13 rays flat     102.04 us/substep -> 5x real time at 2000 Hz (one core)
+[PASS] perf: >= 4x real time at substep rate (< 125 us) 102.04 us/substep, 4.9x real time
+       perf 1x7 rays flat              72.46 us/substep -> 7x real time at 2000 Hz (one core)
+       perf 3x13 rays rough terrain    161.02 us/substep -> 3x real time at 2000 Hz (one core)
+       perf TARMAC tyre flat           122.73 us/substep -> 4x real time at 2000 Hz (one core)
+       perf TARMAC tyre rough terrain  218.30 us/substep -> 2x real time at 2000 Hz (one core)
+[PASS] newton3: worst residual all tests  |sum m a - F_ext|/mg = 8.63e-16, |sum dL/dt - T_ext| = 8.68e-10 N m
 FAILURES: 0
 ILURES: 0

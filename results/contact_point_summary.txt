@@ -1,0 +1,20 @@
+cars/mx5_na.ini, reduced core, envelope
+  ok   static: contact point on the road (max |z| 0.0000 m)
+  ok   skidpad: lateral force applied at road height (0.0000 m)
+       load-transfer height (actual contact track) 0.434 m
+cars/mx5_na.ini, reduced core, TARMAC
+  ok   static: contact point on the road (max |z| 0.0000 m)
+  ok   skidpad: lateral force applied at road height (0.0000 m)
+       load-transfer height (actual contact track) 0.434 m
+  ok   reduced core: envelope LT height 0.434 vs TARMAC 0.434 m (same chassis)
+cars/mx5_na.ini, multibody core, envelope
+  ok   static: contact point on the road (max |z| 0.0000 m)
+  ok   skidpad: lateral force applied at road height (0.0000 m)
+       load-transfer height (actual contact track) 0.431 m
+cars/mx5_na.ini, multibody core, TARMAC
+  ok   static: contact point on the road (max |z| 0.0000 m)
+  ok   skidpad: lateral force applied at road height (0.0000 m)
+       load-transfer height (actual contact track) 0.431 m
+  ok   multibody core: envelope LT height 0.431 vs TARMAC 0.431 m (same chassis)
+
+CONTACT POINT TESTS: PASS (0 failures)

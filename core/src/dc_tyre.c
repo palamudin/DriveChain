@@ -218,7 +218,11 @@ void dc_tyre_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc
                     else if (u < e) { ph = u * u / (2 * e); dph = u / e; } else { ph = u - e / 2; dph = 1; }
                     v3 dudc = V3(Hx, Hy, -1);                     /* station rigidly attached to the wheel centre */
                     v3 fi = vscl(dudc, -dph * ds);
-                    A += ph * ds; sw += ph; P = vadd(P, vscl(pb, ph));
+                    /* patch centre: the tread/road interface above the station (x, y, H), not the penetrating disc
+                       point pb (that lies ~delta below the road and put the friction forces under the surface: the
+                       lateral force then acted ~1.3 cm low and over-stated load transfer). Normal-force moments are
+                       unaffected: they come from the exact gradient (Mr), not from this point. */
+                    A += ph * ds; sw += ph; P = vadd(P, vscl(V3(pb.x, pb.y, H), ph));
                     G = vadd(G, fi); Mr = vadd(Mr, vcross(st_off[i], fi));
                     gsum += gg * ph; gw += ph;
                     if (st_Sr[i] > 0) {

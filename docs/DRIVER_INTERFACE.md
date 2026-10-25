@@ -38,7 +38,7 @@ Keep the bind on loopback: any process that can reach the port can drive the car
 | `engage` | `on` | engaged |
 | `gear` | `gear` | |
 | `step` | `n` ticks or `seconds` (drvhost only) | telemetry |
-| `get` | | telemetry: t, x, y, z, yaw, v, yaw rate, β, ax/ay, sw angle/rate, column/hand torque, path error, engaged… |
+| `get` | | telemetry: t, x, y, z, yaw, v, yaw rate, β, ax/ay, sw angle/rate, column/hand torque, path error, engaged…; per wheel [FL,FR,RL,RR]: fz, fx, fy, mz, alpha_deg, kappa, travel_mm, bumpstop_n, deflection_mm, rim_n, travel_vel, sliding, contact_z, omega |
 | `metrics`, `metrics_reset` | | rms/max lateral error, peak β, saturation |
 | `stream` | `hz` | Pushes telemetry lines (TCP). |
 | `log` | `file`, `every` | CSV trace |

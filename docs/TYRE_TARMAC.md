@@ -145,8 +145,27 @@ Notes on the vehicle results:
   - The drift driver was tuned against the envelope tyre, so drift-hold numbers are indicative.
 - **Lift-off yaw gain.** The comparison is at equal ay, so the TARMAC car is at a lower fraction of its limit. This
   is not like-for-like.
-- **Telemetry slip angle.** It reads ≈ 0.02 rad for TARMAC in a slide. This is because its transient slip is `b/σ`,
-  and `b` is capped by the return map. It is a telemetry artefact, not physics.
+- **Telemetry slip angle (fixed).** Reported `slip_angle`/`slip_ratio` used to be the deflection state over the
+  relaxation length, which saturates at μFz/Cα in a slide (≈ 0.02 rad for TARMAC, a few degrees for the envelope). For
+  all tyre models they are now the relaxed *kinematic* slip, dα/dt = |Vx|/σ·(α_ss − α), integrated implicitly
+  (Pacejka 2012, §7.2.1). Telemetry only; it does not feed the force. `tests/reset_tests.c` checks reported against
+  kinematic slip in a handbrake slide (gain 0.8-1.1).
+- **Reset state.** `dc_reset` re-initialises every tyre state (brush/LuGre deflections, relaxation and telemetry
+  states, thermal). `make resettest` verifies that a reset after abuse and a teleport is bit-identical to a fresh
+  car, for envelope, TARMAC, brush and brush+LuGre on both cores.
+- **Closed-loop laps on a mesh circuit.** An earlier "TARMAC spins on power after a reset" finding was traced to the
+  test, not the tyre or its state. The harness reset the car on the grid slot, 4.7 m off the racing line, so the path
+  driver lunged back to the line with large rim angles at full throttle. Started on the line, TARMAC (both shapes
+  tested) laps cleanly with no spin. From the off-line start the envelope tyre recovers and TARMAC spins, which
+  matches the hands-off result above: TARMAC has a higher Cα/Fz (≈ 22 vs 14 /rad) and so a larger yaw response,
+  plus slide decay. The off-line start is kept as a stress case (`--start spot`).
+- **Very large single-wheel loads in a spin.** Spikes of 40-90 kN were traced to a wheel sliding sideways into a
+  raised concrete kerb with a near-vertical lip of about 22 cm at the track edge. The tyre bottoms and the rim
+  contact carries the load, so this is a real rim strike. Wheel and rim damage is not modelled.
+- **"Fell through the world".** The car had left the track during a spin. The lap harness's windowed nearest-point
+  search then lost the line, and the path driver drove straight at full throttle until the car left the mesh,
+  which has no geometry beyond its bounding area. This was not a contact failure. The harness now re-acquires the
+  line globally and stops when the car leaves the map.
 
 ## Recommendation
 

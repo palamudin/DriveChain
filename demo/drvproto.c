@@ -89,7 +89,15 @@ void proto_telemetry(proto_t* P, char* o, int max) {
     #define AL(i) (t.w[i].slip_angle * DEG)
     #define KA(i) t.w[i].slip_ratio
     #define TR(i) (t.w[i].travel * 1e3)
+    #define BS(i) t.w[i].bumpstop_force
+    #define DF(i) (t.w[i].deflection * 1e3)
+    #define RF(i) t.w[i].rim_force
+    #define TV(i) t.w[i].travel_vel
+    #define SL(i) t.w[i].sliding
+    #define CZ(i) t.w[i].contact[2]
+    #define OM(i) t.w[i].omega
     ARR4("fz", FZ); ARR4("fx", FX); ARR4("fy", FY); ARR4("mz", MZ); ARR4("alpha_deg", AL); ARR4("kappa", KA); ARR4("travel_mm", TR);
+    ARR4("bumpstop_n", BS); ARR4("deflection_mm", DF); ARR4("rim_n", RF); ARR4("travel_vel", TV); ARR4("sliding", SL); ARR4("contact_z", CZ); ARR4("omega", OM);
     n += snprintf(o + n, max - n, "\"toe_deg\":[%.4f,%.4f],\"energy_j\":%.2f,\"dissipated_j\":%.2f}",
                   t.w[0].toe * DEG, t.w[1].toe * DEG, t.kinetic + t.potential, t.dissipated);
 }

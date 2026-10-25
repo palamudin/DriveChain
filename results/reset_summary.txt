@@ -1,6 +1,6 @@
 cars/mx5_na.ini, reduced core, envelope
   ok   reset after abuse is bit-identical to a fresh car (60 samples, max |diff| 0)
-  ok   rear reported slip 0.98 deg vs kinematic 0.99 deg (steady cornering after reset)
+  ok   rear reported slip 1.02 deg vs kinematic 1.03 deg (steady cornering after reset)
   ok   sliding: reported/kinematic slip gain 0.93 over 287 samples > 8 deg
 cars/mx5_na.ini, reduced core, TARMAC
   ok   reset after abuse is bit-identical to a fresh car (60 samples, max |diff| 0)
@@ -16,8 +16,8 @@ cars/mx5_na.ini, reduced core, TARMAC brush+LuGre
   ok   sliding: reported/kinematic slip gain 0.93 over 284 samples > 8 deg
 cars/mx5_na.ini, multibody core, envelope
   ok   reset after abuse is bit-identical to a fresh car (60 samples, max |diff| 0)
-  ok   rear reported slip 0.96 deg vs kinematic 0.97 deg (steady cornering after reset)
-  ok   sliding: reported/kinematic slip gain 0.93 over 284 samples > 8 deg
+  ok   rear reported slip 0.99 deg vs kinematic 1.00 deg (steady cornering after reset)
+  ok   sliding: reported/kinematic slip gain 0.93 over 285 samples > 8 deg
 cars/mx5_na.ini, multibody core, TARMAC
   ok   reset after abuse is bit-identical to a fresh car (60 samples, max |diff| 0)
   ok   rear reported slip 0.71 deg vs kinematic 0.72 deg (steady cornering after reset)
@@ -33,7 +33,7 @@ cars/mx5_na.ini, multibody core, TARMAC brush+LuGre
 cars/hatch_fwd.ini, reduced core, envelope
   ok   reset after abuse is bit-identical to a fresh car (60 samples, max |diff| 0)
   ok   rear reported slip 0.30 deg vs kinematic 0.30 deg (steady cornering after reset)
-  ok   sliding: reported/kinematic slip gain 0.97 over 193 samples > 8 deg
+  ok   sliding: reported/kinematic slip gain 0.96 over 206 samples > 8 deg
 cars/hatch_fwd.ini, reduced core, TARMAC
   ok   reset after abuse is bit-identical to a fresh car (60 samples, max |diff| 0)
   ok   rear reported slip 0.27 deg vs kinematic 0.27 deg (steady cornering after reset)
@@ -49,7 +49,7 @@ cars/hatch_fwd.ini, reduced core, TARMAC brush+LuGre
 cars/hatch_fwd.ini, multibody core, envelope
   ok   reset after abuse is bit-identical to a fresh car (60 samples, max |diff| 0)
   ok   rear reported slip 0.05 deg vs kinematic 0.05 deg (steady cornering after reset)
-  ok   sliding: reported/kinematic slip gain 0.97 over 181 samples > 8 deg
+  ok   sliding: reported/kinematic slip gain 0.95 over 185 samples > 8 deg
 cars/hatch_fwd.ini, multibody core, TARMAC
   ok   reset after abuse is bit-identical to a fresh car (60 samples, max |diff| 0)
   ok   rear reported slip 0.04 deg vs kinematic 0.05 deg (steady cornering after reset)
