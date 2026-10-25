@@ -1,0 +1,17 @@
+car,assist,case,joint_friction,ay_mean,rim_friction_Nm,rack_force_abs_mean_N
+hatch_fwd,1,hyst0g,0,0.000,0.414,24.2
+hatch_fwd,1,hyst0g,1,0.000,0.531,55.4
+hatch_fwd,1,hyst06g,0,5.888,0.031,1467.4
+hatch_fwd,1,hyst06g,1,5.860,0.152,1464.1
+hatch_fwd,0,hyst0g,0,0.000,0.536,35.6
+hatch_fwd,0,hyst0g,1,0.000,1.784,61.3
+hatch_fwd,0,hyst06g,0,5.887,0.446,1467.5
+hatch_fwd,0,hyst06g,1,5.869,2.313,1467.3
+mx5_na,1,hyst0g,0,-0.000,0.328,70.7
+mx5_na,1,hyst0g,1,-0.000,1.127,83.1
+mx5_na,1,hyst06g,0,5.864,0.045,980.2
+mx5_na,1,hyst06g,1,5.870,0.223,991.2
+mx5_na,0,hyst0g,0,-0.000,0.364,80.6
+mx5_na,0,hyst0g,1,-0.000,1.298,80.1
+mx5_na,0,hyst06g,0,5.864,0.410,980.3
+mx5_na,0,hyst06g,1,5.870,1.981,991.4
