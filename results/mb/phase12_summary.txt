@@ -2,10 +2,10 @@
   ok   static: sum Fz 10298.70 N = m g 10300.50 N (err 1.74e-04)
   ok   static: left/right warp within the joint-friction band (F 2681.6/2675.0, R 2468.1/2474.0 N)
   ok   static (jf=0): left/right symmetric (F 2678.8/2678.8, R 2471.4/2471.4 N)
-  ok   static: momentum residual |dP/dt - F_ext| 2.14e-08 N, |dL/dt - M_ext| 2.40e-01 N m
+  ok   static: momentum residual |dP/dt - F_ext| 1.99e-08 N, |dL/dt - M_ext| 2.40e-01 N m
   ok   static: dissipation >= 0, non-decreasing to < 10 mJ per 10 ms (1 W) (min 68.6 J, final 69.1 J)
-  ok   static: knuckle pose = closed-loop corner kinematics (pos 1.33e-14 m, rot 6.32e-14)
-  ok   static: Newton-3 per joint: max |sum F| 0.00e+00 N, |sum M| 1.54e-12 N m (largest joint force 2761 N)
+  ok   static: knuckle pose = closed-loop corner kinematics (pos 1.34e-14 m, rot 6.47e-14)
+  ok   static: Newton-3 per joint: max |sum F| 0.00e+00 N, |sum M| 8.51e-13 N m (largest joint force 2761 N)
        cornering: ay 4.88 m/s^2, yaw 0.356 rad/s, roll travel -29.6/29.9 mm, rack 6.7 mm
   ok   cornering: car actually corners, ay and yaw agree (ay 4.88, v*r 5.34)
   ok   cornering: knuckle pose = corner kinematics at the solved travel/rack (pos 3.68e-12 m, rot 2.49e-11)
@@ -16,9 +16,9 @@
        bushings: 8 arm pivots compliant
   ok   bushed static: 8 of 8 arm pivots bushed, sum Fz = m g (err 1.64e-04)
   ok   bushed static: dissipation >= 0 and non-decreasing (min 70.8 J)
-  ok   bushed static: Newton-3 per joint 0.00e+00 N, 1.11e-12 N m
+  ok   bushed static: Newton-3 per joint 0.00e+00 N, 9.17e-13 N m
        bushed cornering: ay 4.22 m/s^2, yaw 0.302 rad/s, max pose departure from rigid kinematics 0.90 mm
-  ok   bushed cornering: Newton-3 per joint (rel 0.00e+00, 2.73e-11 m)
+  ok   bushed cornering: Newton-3 per joint (rel 0.00e+00, 2.74e-11 m)
   ok   bushed cornering: dissipation non-decreasing, momentum residual 2.74e-03 N
   ok   bushed cornering: bush deflection visible but small (0.90 mm)
   ok   rack mount: housing is its own body (6) on joint 0

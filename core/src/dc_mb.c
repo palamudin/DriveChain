@@ -12,7 +12,7 @@ mb_world* mb_create(void) { mb_world* W = (mb_world*)calloc(1, sizeof(mb_world))
 void mb_destroy(mb_world* W) {
     if (!W) return;
     free(W->nbr); free(W->nbr_blk); free(W->blkpos); free(W->blk); free(W->L); free(W->D); free(W->Dinv);
-    free(W->x); free(W->r); free(W->z); free(W->zb); free(W);
+    free(W->x); free(W->r); free(W->z); free(W->zb); free(W->gb); free(W->rch); free(W->yv); free(W->gv); free(W->Cv); free(W);
 }
 
 static m3 m3inv(const m3* A) {
@@ -332,6 +332,30 @@ int mb_finalize(mb_world* W) {
     W->nbr_start[n] = c;
     W->x = (double*)calloc(N, sizeof(double)); W->r = (double*)calloc(N, sizeof(double)); W->z = (double*)calloc(N, sizeof(double));
     W->zb = (double*)calloc((size_t)MB_MAXBOX * N, sizeof(double));
+    W->gb = (double*)calloc((size_t)MB_MAXBOX * N, sizeof(double));
+    /* elimination tree: parent = the earliest-eliminated later neighbour (all later neighbours are ancestors) */
+    for (int k = 0; k < n; k++) {
+        W->etpar[k] = -1; int best = n;
+        for (int e = W->nbr_start[k]; e < W->nbr_start[k + 1]; e++) if (W->rank[W->nbr[e]] < best) { best = W->rank[W->nbr[e]]; W->etpar[k] = W->nbr[e]; }
+    }
+    /* reach of every joint (union of the etree paths of its bodies, or of its own node), sorted by rank */
+    W->rch = (int*)malloc(sizeof(int) * ((size_t)W->nj * n + 1));
+    int nr_ = 0; unsigned char* mk = (unsigned char*)calloc((size_t)n, 1);
+    for (int j = 0; j < W->nj; j++) {
+        W->rch_start[j] = nr_; const mb_joint* J = &W->Jt[j]; int* R = W->rch + nr_, cnt = 0;
+        int st[MB_JB + 1], ns = 0;
+        if (W->node_of_joint[j] >= 0) st[ns++] = W->node_of_joint[j];
+        else for (int k = 0; k < J->nb; k++) if (J->b[k] >= 0) st[ns++] = J->b[k];
+        for (int a = 0; a < ns; a++) for (int u = st[a]; u >= 0 && !mk[u]; u = W->etpar[u]) { mk[u] = 1; R[cnt++] = u; }
+        for (int a = 1; a < cnt; a++) { int v = R[a], b = a - 1; while (b >= 0 && W->rank[R[b]] > W->rank[v]) { R[b + 1] = R[b]; b--; } R[b + 1] = v; }
+        for (int a = 0; a < cnt; a++) mk[R[a]] = 0;
+        nr_ += cnt;
+    }
+    W->rch_start[W->nj] = nr_; free(mk);
+    W->nvr_max = 0;
+    for (int j = 0; j < W->nj; j++) if (W->Jt[j].box) for (int k = 0; k < W->Jt[j].nsrc; k++) W->nvr_max += W->Jt[j].src[k].nr;
+    W->yv = (double*)calloc((size_t)W->nvr_max * N + 1, sizeof(double)); W->gv = (double*)calloc((size_t)W->nvr_max * N + 1, sizeof(double));
+    W->Cv = (double*)calloc((size_t)W->nvr_max * MB_MAXBOX + 1, sizeof(double));
     (void)orig; free(orig); free(adj); free(elim);
     #undef ADJ
     W->ready = 1;
@@ -512,13 +536,14 @@ static void assemble(mb_world* W) {
 /* load-dependent friction bound of box joint J from the normal reactions of its source joints, evaluated at the
    current box impulses: factorised multipliers are mu = x_free + sum_s zb_s hb_s (lambda = -mu, sign irrelevant). */
 static double fric_bound(const mb_world* W, const mb_joint* J, int nbx) {
-    double B = J->pre; int N = W->N;
+    double B = J->pre; int N = W->N, jj = (int)(J - W->Jt);
     for (int k = 0; k < J->nsrc; k++) {
         int nd = W->node_of_joint[J->src[k].j]; if (nd < 0) continue;
         double v[6]; int nr = J->src[k].nr;
         for (int a = 0; a < nr; a++) {
             int o = W->off[nd] + J->src[k].r0 + a; double x = W->x[o];
-            for (int s = 0; s < nbx; s++) x += W->zb[(size_t)s * N + o] * W->hb[s];
+            if (W->schur_dense) for (int s = 0; s < nbx; s++) x += W->zb[(size_t)s * N + o] * W->hb[s];
+            else { const double* C = W->Cv + (size_t)(W->vr_off[jj][k] + a) * MB_MAXBOX; for (int s = 0; s < nbx; s++) x += C[s] * W->hb[s]; }
             v[a] = x;
         }
         v3 ax = J->src[k].ax;
@@ -658,6 +683,63 @@ static void pgs_subspace(mb_world* W, int nbx) {
     for (int a = 0; a < nf; a++) W->hb[W->fsel[a]] += al * d[a];
 }
 
+/* forward substitution y <- L^-1 y over a rank-sorted elimination-tree reach R (y is zero outside R and stays so),
+   then g = D^-1 y on R. Then K^-1 = L^-T D^-1 L^-1 gives  a' K^-1 b = sum_{k in R_a} g_a[k] . y_b[k]. */
+static void fwd_reach(const mb_world* W, const int* R, int nR, double* y, double* g) {
+    for (int a = 0; a < nR; a++) {
+        int k = R[a], dk = W->dim[k]; const double* yk = y + W->off[k];
+        for (int e = W->nbr_start[k]; e < W->nbr_start[k + 1]; e++) {
+            int i = W->nbr[e], di = W->dim[i]; const double* L = W->L + W->nbr_blk[e]; double* yi = y + W->off[i];
+            for (int p = 0; p < di; p++) { double s = 0; for (int q = 0; q < dk; q++) s += L[p * dk + q] * yk[q]; yi[p] -= s; }
+        }
+    }
+    for (int a = 0; a < nR; a++) {
+        int k = R[a], dk = W->dim[k]; const double* yk = y + W->off[k]; double* gk = g + W->off[k]; const double* Di = W->Dinv + 36 * k;
+        for (int p = 0; p < dk; p++) { double s = 0; for (int q = 0; q < dk; q++) s += Di[p * dk + q] * yk[q]; gk[p] = s; }
+    }
+}
+static double reach_dot(const mb_world* W, const int* R, int nR, const double* g, const double* y) {
+    double s = 0;
+    for (int a = 0; a < nR; a++) { int k = R[a], o = W->off[k], dk = W->dim[k]; for (int q = 0; q < dk; q++) s += g[o + q] * y[o + q]; }
+    return s;
+}
+/* Schur complement of the box rows, W = J_B K^-1 J_B', u_free = J_B x, and the source-row couplings C = E_src K^-1 J_B'
+   used by the load-dependent friction bounds, all from sparse forward solves (no back substitution, no full solves) */
+static void schur_sparse(mb_world* W, int nbx) {
+    int N = W->N;
+    for (int s = 0; s < nbx; s++) {
+        int jj = W->box_j[s], r = W->box_r[s]; const mb_joint* J = &W->Jt[jj];
+        double* y = W->zb + (size_t)s * N; memset(y, 0, sizeof(double) * N);
+        double u0 = 0;
+        for (int k = 0; k < J->nb; k++) { int b = J->b[k]; if (b < 0) continue; for (int q = 0; q < 6; q++) { y[W->off[b] + q] += J->J[r][k][q]; u0 += J->J[r][k][q] * W->x[W->off[b] + q]; } }
+        W->ub[s] = u0;
+        fwd_reach(W, W->rch + W->rch_start[jj], W->rch_start[jj + 1] - W->rch_start[jj], y, W->gb + (size_t)s * N);
+    }
+    for (int s = 0; s < nbx; s++) {
+        int jj = W->box_j[s]; const int* R = W->rch + W->rch_start[jj]; int nR = W->rch_start[jj + 1] - W->rch_start[jj];
+        const double* g = W->gb + (size_t)s * N;
+        for (int t2 = s; t2 < nbx; t2++) { double w = reach_dot(W, R, nR, g, W->zb + (size_t)t2 * N); W->W[s * MB_MAXBOX + t2] = w; W->W[t2 * MB_MAXBOX + s] = w; }
+    }
+    int nv = 0;
+    for (int s = 0; s < nbx; s++) {
+        int jj = W->box_j[s]; const mb_joint* J = &W->Jt[jj];
+        if (J->nsrc == 0 || W->box_of[jj] != s) continue;
+        for (int k = 0; k < J->nsrc; k++) {
+            int sj = J->src[k].j, nd = W->node_of_joint[sj]; W->vr_off[jj][k] = -1; if (nd < 0) continue;
+            W->vr_off[jj][k] = nv;
+            const int* R = W->rch + W->rch_start[sj]; int nR = W->rch_start[sj + 1] - W->rch_start[sj];
+            for (int a = 0; a < J->src[k].nr; a++, nv++) {
+                double* y = W->yv + (size_t)nv * N; double* g = W->gv + (size_t)nv * N; memset(y, 0, sizeof(double) * N);
+                y[W->off[nd] + J->src[k].r0 + a] = 1;
+                fwd_reach(W, R, nR, y, g);
+                double* C = W->Cv + (size_t)nv * MB_MAXBOX;
+                for (int t2 = 0; t2 < nbx; t2++) C[t2] = reach_dot(W, R, nR, g, W->zb + (size_t)t2 * N);
+            }
+        }
+    }
+    W->nvr = nv;
+}
+
 #ifdef DC_MB_TRACE   /* debug: 1 = early/periodic sweeps, 2 = last sweeps of capped steps (link-time global) */
 extern int mb_trace;
 int mb_trace = 0;
@@ -682,7 +764,8 @@ void mb_solve(mb_world* W) {
         }
     }
     W->nbox = nbx; W->pgs_it = 0;
-    if (nbx > 0) {
+    if (nbx > 0 && !W->schur_dense) schur_sparse(W, nbx);
+    else if (nbx > 0) {
         for (int s = 0; s < nbx; s++) {
             mb_joint* J = &W->Jt[W->box_j[s]]; int r = W->box_r[s];
             double* z = W->zb + (size_t)s * N; memset(z, 0, sizeof(double) * N);
@@ -699,6 +782,11 @@ void mb_solve(mb_world* W) {
                 for (int k = 0; k < J->nb; k++) { int b = J->b[k]; if (b < 0) continue; for (int q = 0; q < 6; q++) w += J->J[r][k][q] * z[W->off[b] + q]; }
                 W->W[s * MB_MAXBOX + t2] = w;
             }
+        }
+    }
+    if (nbx > 0) {
+        for (int s = 0; s < nbx; s++) {
+            mb_joint* J = &W->Jt[W->box_j[s]]; int r = W->box_r[s];
             if (J->nsrc > 0) W->hb[s] = J->lam[r];   /* warm start; the first sweep applies the load-dependent bound */
             else W->hb[s] = J->lam[r] < J->lo[r] ? J->lo[r] : (J->lam[r] > J->hi[r] ? J->hi[r] : J->lam[r]);
         }

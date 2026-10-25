@@ -98,6 +98,14 @@ typedef struct {
     double W[MB_MAXBOX * MB_MAXBOX], ub[MB_MAXBOX], lb_[MB_MAXBOX], hb[MB_MAXBOX];
     int box_of[MB_MAXJ];              /* first box slot of a box joint this step (-1 none) */
     int box_dropped;                  /* box rows dropped because MB_MAXBOX was exceeded (must stay 0) */
+    /* sparse Schur build (box rows): W_st = (L^-1 j_s)' D^-1 (L^-1 j_t), forward solves only over the elimination-tree
+       reach of each row's bodies; the friction-bound sources are extra "virtual" unit rows of the same form */
+    int schur_dense;                  /* 1: reference path, one full K^-1 solve per box row (verification only) */
+    int etpar[MB_MAXN];               /* elimination-tree parent (-1 root) */
+    int *rch, rch_start[MB_MAXJ + 1]; /* per joint: rank-sorted reach (box joint: its bodies; factorised: its node) */
+    double *gb;                       /* nbox * N: D^-1 L^-1 j_s on the reach (zb holds L^-1 j_s) */
+    int nvr_max, nvr; double *yv, *gv, *Cv;   /* virtual source rows: L^-1 e_o, D^-1 L^-1 e_o, C = e_o' K^-1 J_B' (nvr x MB_MAXBOX) */
+    int vr_off[MB_MAXJ][MB_FSRC];     /* first virtual row of source k of box joint j this solve (-1 none) */
     double Wf[MB_MAXBOX * MB_MAXBOX], dlb[MB_MAXBOX]; int fsel[MB_MAXBOX];   /* PGS subspace step workspace */
     int pgs_ssm;                      /* box LCP: exact subspace step on the interior (stuck) rows every pgs_ssm sweeps (0 off) */
     double pgs_etol;                  /* PGS: friction rows also stop when bound * v_res (work error, J/step) < pgs_etol */
