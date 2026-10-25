@@ -1,4 +1,5 @@
 #include <string.h>
+#include <stdint.h>
 /* dc_tyre.c - rubber-patch "wheel collider" and brush tyre.
  *
  * Envelope:  n_rows strips across the tread width, each a fan of n_rays rays (±span) in the wheel plane.
@@ -19,15 +20,18 @@
 #include "dc_tyre.h"
 
 #define HC_REF 0.004    /* m: indentation at which carcass damping reaches its full value */
-#define COL_MAX 128
-#define COL_DS 0.004  /* m: wheel-fixed integration station pitch */
+#define COL_MAX 1024
+#define COL_DS 0.004  /* m: wheel-fixed integration station pitch (upper bound; also <= road_resolve/6, see below) */
+#define LANE_PITCH 0.02 /* m: lateral pitch of the contact lanes (normal-force integration across the width); upper bound, also <= road_resolve */
 #define COL_EPS 0.003   /* m: C1 entry window of a column's penetration (no force kink at first touch) */
 
 /* Memoised world-grid road sampler: bilinear H on a world-fixed lattice, sampled lazily around one wheel. */
 #define GRID_N 48
-typedef struct { double dw; int i0, j0; unsigned char have[GRID_N][GRID_N]; double h[GRID_N][GRID_N], g[GRID_N][GRID_N]; } rgrid;
+typedef struct { double dw, idw; int i0, j0; unsigned char have[GRID_N][GRID_N]; double h[GRID_N][GRID_N], g[GRID_N][GRID_N]; } rgrid;
+/* exact floor for |v| < 2^31 without a libm call (baseline x86-64 has no SSE4.1 roundsd) */
+static inline int ifloor(double v) { int i = (int)v; return i - (v < (double)i); }
 static void grid_init(rgrid *G, double cx, double cy, double dw) {
-    G->dw = dw; G->i0 = (int)floor(cx / dw) - GRID_N / 2; G->j0 = (int)floor(cy / dw) - GRID_N / 2;
+    G->dw = dw; G->idw = 1.0 / dw; G->i0 = (int)floor(cx / dw) - GRID_N / 2; G->j0 = (int)floor(cy / dw) - GRID_N / 2;
     memset(G->have, 0, sizeof G->have);
 }
 static double grid_node(rgrid *G, const dc_car *c, int i, int j, double *g) {
@@ -38,15 +42,29 @@ static double grid_node(rgrid *G, const dc_car *c, int i, int j, double *g) {
     }
     return dc_road_height(c, i * G->dw, j * G->dw, g);
 }
-static double grid_h(rgrid *G, const dc_car *c, double x, double y, double *Hx, double *Hy, double *grip) {
-    double fx = x / G->dw, fy = y / G->dw, ix = floor(fx), iy = floor(fy); fx -= ix; fy -= iy;
-    int i = (int)ix, j = (int)iy; double g00, g10, g01, g11;
-    double h00 = grid_node(G, c, i, j, &g00), h10 = grid_node(G, c, i + 1, j, &g10);
-    double h01 = grid_node(G, c, i, j + 1, &g01), h11 = grid_node(G, c, i + 1, j + 1, &g11);
-    double hy0 = h00 + fx * (h10 - h00), hy1 = h01 + fx * (h11 - h01);
-    *Hx = ((1 - fy) * (h10 - h00) + fy * (h11 - h01)) / G->dw;
-    *Hy = (hy1 - hy0) / G->dw;
-    *grip = (1 - fy) * (g00 + fx * (g10 - g00)) + fy * (g01 + fx * (g11 - g01));
+/* bilinear road height H(x,y) on the memo grid, with a one-cell cache: consecutive stations of a lane mostly fall in the same road cell (station pitch ~dw/6) */
+typedef struct { int i, j; double h00, h10, h01, h11, g00, g10, g01, g11; } hcell;
+static inline double grid_hc(rgrid *G, hcell *C, const dc_car *c, double x, double y, double *Hx, double *Hy, double *grip) {
+    double fx = x * G->idw, fy = y * G->idw;
+    int i = ifloor(fx), j = ifloor(fy); fx -= i; fy -= j;
+    if (i != C->i || j != C->j) {
+        int li = i - G->i0, lj = j - G->j0;
+        if (li >= 0 && lj >= 0 && li < GRID_N - 1 && lj < GRID_N - 1) {
+            for (int a = 0; a < 2; a++) for (int b = 0; b < 2; b++)
+                if (!G->have[li + a][lj + b]) { G->h[li + a][lj + b] = dc_road_height(c, (i + a) * G->dw, (j + b) * G->dw, &G->g[li + a][lj + b]); G->have[li + a][lj + b] = 1; }
+            C->h00 = G->h[li][lj]; C->h10 = G->h[li + 1][lj]; C->h01 = G->h[li][lj + 1]; C->h11 = G->h[li + 1][lj + 1];
+            C->g00 = G->g[li][lj]; C->g10 = G->g[li + 1][lj]; C->g01 = G->g[li][lj + 1]; C->g11 = G->g[li + 1][lj + 1];
+        } else {
+            C->h00 = grid_node(G, c, i, j, &C->g00); C->h10 = grid_node(G, c, i + 1, j, &C->g10);
+            C->h01 = grid_node(G, c, i, j + 1, &C->g01); C->h11 = grid_node(G, c, i + 1, j + 1, &C->g11);
+        }
+        C->i = i; C->j = j;
+    }
+    double d0 = C->h10 - C->h00, d1 = C->h11 - C->h01;
+    double hy0 = C->h00 + fx * d0, hy1 = C->h01 + fx * d1;
+    *Hx = ((1 - fy) * d0 + fy * d1) * G->idw;
+    *Hy = (hy1 - hy0) * G->idw;
+    *grip = (1 - fy) * (C->g00 + fx * (C->g10 - C->g00)) + fy * (C->g01 + fx * (C->g11 - C->g01));
     return hy0 + fy * (hy1 - hy0);
 }
 static double seg_area(double d, double R) {
@@ -58,7 +76,8 @@ static double invert_area(double A, double R) {
     double d = pow(3.0 * A / (4.0 * sqrt(2.0 * R)), 2.0 / 3.0);
     for (int k = 0; k < 4; k++) {
         double f = seg_area(d, R) - A, df = 2 * sqrt(fmax(2 * R * d - d * d, 1e-12));
-        d -= f / df; if (d < 0) d = 1e-9; if (d > 2 * R) d = 2 * R;
+        double st = f / df; d -= st; if (d < 0) d = 1e-9; if (d > 2 * R) d = 2 * R;
+        if (fabs(st) < 1e-13) break;      /* converged (quadratic): further steps change nothing at double precision */
     }
     return d;
 }
@@ -134,102 +153,176 @@ void dc_tyre_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc
     rgrid GR; if (!single) grid_init(&GR, cw.x, cw.y, dw);
     t->nrows = nrows;
     v3 nsum = V3(0, 0, 0), psum = V3(0, 0, 0);
+    const int nlane = single ? 1 : (int)ceil(w / nrows / fmin(LANE_PITCH, dw) - 1e-9);
+    const double nl = (double)nrows * nlane;
+    /* wheel-fixed integration stations (lane-independent tables: station x, disc and rim half-chords, offset of the
+       lowest disc point from the lane origin) */
+    const double xmax = R * sin(span);
+    int ns = 2 * (int)ceil(xmax / fmin(COL_DS, dw / 6.0));   /* stations must resolve the grid's face ramp, else a step face aliases between stations */
+    if (ns > COL_MAX) ns = COL_MAX;
+    const double ds = 2 * xmax / ns;                      /* station pitch (wheel-fixed) */
+    const double x0s = -xmax + 0.5 * ds;
+    double st_x[COL_MAX], st_S[COL_MAX], st_Sr[COL_MAX]; v3 st_off[COL_MAX];
+    if (!single) for (int i = 0; i < ns; i++) {
+        double x = x0s + i * ds; st_x[i] = x; st_S[i] = sqrt(fmax(R * R - x * x, 0));
+        st_Sr[i] = fabs(x) < Rr ? sqrt(Rr * Rr - x * x) : -1;
+        st_off[i] = vadd(vscl(fw, x), vscl(dn, st_S[i]));
+    }
+    /* culling blocks of 4 stations: corner offsets (x at the block ends, S at its min/max) of each block's disc-bottom footprint */
+    v3 bl_off[COL_MAX / 4 + 2][4];
+    if (!single) for (int bk = 0; bk < (ns + 3) / 4; bk++) {
+        double xa = x0s + 4 * bk * ds, xb = x0s + fmin(4 * bk + 3, ns - 1) * ds;
+        double Sa = sqrt(fmax(R * R - xa * xa, 0)), Sb = sqrt(fmax(R * R - xb * xb, 0));
+        double Smax = (xa <= 0 && xb >= 0) ? R : fmax(Sa, Sb), Smin = fmin(Sa, Sb);
+        for (int k = 0; k < 4; k++) bl_off[bk][k] = vadd(vscl(fw, (k & 2) ? xb : xa), vscl(dn, (k & 1) ? Smax : Smin));
+    }
     for (int r = 0; r < nrows; r++) {
-        double yoff = ((r + 0.5) / nrows - 0.5) * w;
-        v3 o = vmad(cw, a, yoff);
-        double A = 0, Ar = 0, sw = 0; v3 P = V3(0, 0, 0), G = V3(0, 0, 0), Gr = V3(0, 0, 0), Mr = V3(0, 0, 0);
-        double dl1 = -1, dlr1 = 0; v3 n1 = up;
-        if (single) {       /* one ray straight down the wheel plane: penetration = R - t, force along the hit normal */
-            v3 nh; double g; double th = ray_hit(c, o, dn, R, &nh, &g);
-            if (th < R) {
-                dl1 = R - th; n1 = nh; P = vmad(o, dn, th); sw = 1; A = 1; G = nh; gsum += g; gw += 1;
-                if (th < Rr) { dlr1 = Rr - th; Ar = 1; Gr = nh; }
+        /* the strip's normal force is integrated over nlane lateral lanes (pitch <= LANE_PITCH), each its own exact
+           column potential; the brush strip receives their resultant (force, point, moment). Coarse strips alone
+           alias a laterally sliding step face (kerb struck at a shallow angle): a whole strip jumps onto the kerb at once. */
+        v3 orw = vmad(cw, a, ((r + 0.5) / nrows - 0.5) * w), Fv = V3(0, 0, 0), Tq = V3(0, 0, 0), Pw = V3(0, 0, 0);
+        double sN = 0, fzs = 0, frs = 0, dlw = 0, dlrm = 0;
+        t->N[r] = 0; t->orow[r] = orw; t->Mst[r] = V3(0, 0, 0);
+        /* Stations (wheel-fixed) and exact culling, shared by the row's lanes. A block of 4 stations can touch the road
+           only if the highest road node of the grid cells under its footprint (the bilinear H never exceeds its cell's
+           corner nodes) reaches the lowest disc point of the block. Exact bound: a culled station has u <= 0. */
+        unsigned char act[COL_MAX / 4 + 2];
+        if (!single) {
+            const double y0 = ((double)r / nrows - 0.5) * w, y1 = ((r + 1.0) / nrows - 0.5) * w;
+            const int nb = (ns + 3) / 4;
+            /* row-wide bound first (same exactness argument, coarser footprint): a block whose lowest point is above every
+               road node under the whole row cannot touch; only the rest need their own footprint scan */
+            double hrow = -1e30;
+            {
+                double bx0 = 1e30, bx1 = -1e30, by0 = 1e30, by1 = -1e30, gdum;
+                for (int cy = 0; cy < 2; cy++) for (int cx = 0; cx < 2; cx++) for (int cs = 0; cs < 2; cs++) {
+                    v3 pb = vadd(vmad(vmad(cw, a, cy ? y1 : y0), fw, cx ? xmax : -xmax), vscl(dn, cs ? R : 0.0));
+                    bx0 = fmin(bx0, pb.x); bx1 = fmax(bx1, pb.x); by0 = fmin(by0, pb.y); by1 = fmax(by1, pb.y);
+                }
+                int i0 = ifloor(bx0 / dw), i1 = ifloor(bx1 / dw) + 1, j0 = ifloor(by0 / dw), j1 = ifloor(by1 / dw) + 1;
+                for (int ii = i0; ii <= i1; ii++) for (int jj = j0; jj <= j1; jj++) { double hn = grid_node(&GR, c, ii, jj, &gdum); if (hn > hrow) hrow = hn; }
             }
-        } else {
-            /* Column envelope. The row's disc is cut into vertical strips at stations x_i fixed to the WHEEL
-               (pitch ~4 mm, symmetric). The road under them is H(x,y): the bilinear interpolant of road samples on a
-               WORLD-fixed grid of pitch road_resolve (25 mm). So:
-                 - H is one fixed continuous world field -> the contact is a true potential: the station forces
-                   f_i = -k' dphi/du grad(u_i) applied at the station points are its exact gradient (forces AND moments);
-                 - flat road: integrand exactly wheel-relative -> no horizontal force ripple, momentum conserved;
-                 - discontinuous road (kerb face, plank): the step becomes a 25 mm ramp fixed in the world that
-                   slides continuously through the stations -> no force steps (a belt cannot wrap finer features).
-               A = sum phi(u_i) ds, u_i = H(b_i) - z(b_i), b_i the lowest disc point above station i. */
-            double xmax = R * sin(span);
-            int ns = 2 * (int)ceil(xmax / COL_DS); if (ns > COL_MAX) ns = COL_MAX;
-            const double ds = 2 * xmax / ns;                      /* station pitch (wheel-fixed) */
-            double x0s = -xmax + 0.5 * ds;
-            /* coarse pre-pass: clearance at every 4th station; a block is skipped only if both probes clear the road by
-               more than the most H can rise inside it (a block spans <= 2 grid cells, so H inside <= probe H + |grad H| * block)
-               plus the disc arc sagitta -> culling never drops a station that could touch */
-            unsigned char act[COL_MAX / 4 + 2];
-            double uprev = 0, mprev = 0, blk = 4 * ds;
-            for (int bk = 0; bk * 4 <= ns; bk++) {
-                int i = bk * 4 < ns ? bk * 4 : ns - 1;
-                double x = x0s + i * ds, S = sqrt(fmax(R * R - x * x, 0));
-                v3 pb = vadd(vmad(o, fw, x), vscl(dn, S));
-                double hx, hy, gg2, uu = grid_h(&GR, c, pb.x, pb.y, &hx, &hy, &gg2) - pb.z;
-                double mg = 0.001 + blk * sqrt(hx * hx + hy * hy);
-                if (bk > 0) act[bk - 1] = (uu > -fmax(mg, mprev) || uprev > -fmax(mg, mprev));
-                uprev = uu; mprev = mg;
+            const v3 rb[2] = {vmad(cw, a, y0), vmad(cw, a, y1)};
+            for (int bk = 0; bk < nb; bk++) {
+                double bx0 = 1e30, bx1 = -1e30, by0 = 1e30, by1 = -1e30, zlo = 1e30;
+                for (int cy = 0; cy < 2; cy++) for (int k = 0; k < 4; k++) {
+                    v3 pb = vadd(rb[cy], bl_off[bk][k]);
+                    bx0 = fmin(bx0, pb.x); bx1 = fmax(bx1, pb.x); by0 = fmin(by0, pb.y); by1 = fmax(by1, pb.y);
+                    if (k & 1) zlo = fmin(zlo, pb.z);
+                }
+                if (zlo >= hrow) { act[bk] = 0; continue; }
+                int i0 = ifloor(bx0 / dw), i1 = ifloor(bx1 / dw) + 1, j0 = ifloor(by0 / dw), j1 = ifloor(by1 / dw) + 1;
+                double hmax = -1e30, gdum;
+                for (int ii = i0; ii <= i1 && hmax <= zlo; ii++) for (int jj = j0; jj <= j1; jj++) {
+                    double hn = grid_node(&GR, c, ii, jj, &gdum); if (hn > hmax) { hmax = hn; if (hmax > zlo) break; }
+                }
+                act[bk] = hmax > zlo;
             }
-            for (int i = 0; i < ns; i++) {
-                if (!act[i / 4]) continue;
-                double x = x0s + i * ds, S = sqrt(fmax(R * R - x * x, 0));
-                v3 pb = vadd(vmad(o, fw, x), vscl(dn, S));
-                double Hx, Hy, gg;
-                double H = grid_h(&GR, c, pb.x, pb.y, &Hx, &Hy, &gg);
-                double u = H - pb.z;
-                if (u <= 0) continue;
-                double e = COL_EPS, ph, dph;
-                if (u < e) { ph = u * u / (2 * e); dph = u / e; } else { ph = u - e / 2; dph = 1; }
-                v3 dudc = V3(Hx, Hy, -1);                     /* station rigidly attached to the wheel centre */
-                v3 fi = vscl(dudc, -dph * ds);
-                A += ph * ds; sw += ph; P = vadd(P, vscl(pb, ph));
-                G = vadd(G, fi); Mr = vadd(Mr, vcross(vsub(pb, o), fi));
-                gsum += gg * ph; gw += ph;
-                if (fabs(x) < Rr) {
-                    double Sr = sqrt(Rr * Rr - x * x);
-                    double ur = H - (o.z + fw.z * x + dn.z * Sr);
-                    if (ur > 0) {
-                        double phr, dphr; if (ur < e) { phr = ur * ur / (2 * e); dphr = ur / e; } else { phr = ur - e / 2; dphr = 1; }
-                        Ar += phr * ds; Gr = vsub(Gr, vscl(dudc, dphr * ds));
+        }
+        for (int q = 0; q < nlane; q++) {
+            double yoff = ((r * nlane + q + 0.5) / nl - 0.5) * w;
+            v3 o = vmad(cw, a, yoff);
+            double A = 0, Ar = 0, sw = 0; v3 P = V3(0, 0, 0), G = V3(0, 0, 0), Gr = V3(0, 0, 0), Mr = V3(0, 0, 0), Mrr = V3(0, 0, 0);
+            double dl1 = -1, dlr1 = 0; v3 n1 = up;
+            if (single) {       /* one ray straight down the wheel plane: penetration = R - t, force along the hit normal */
+                v3 nh; double g; double th = ray_hit(c, o, dn, R, &nh, &g);
+                if (th < R) {
+                    dl1 = R - th; n1 = nh; P = vmad(o, dn, th); sw = 1; A = 1; G = nh; gsum += g; gw += 1;
+                    if (th < Rr) { dlr1 = Rr - th; Ar = 1; Gr = nh; }
+                }
+            } else {
+                /* Column envelope. The row's disc is cut into vertical strips at stations x_i fixed to the WHEEL
+                   (pitch ~4 mm, symmetric). The road under them is H(x,y): the bilinear interpolant of road samples on a
+                   WORLD-fixed grid of pitch road_resolve (25 mm). So:
+                     - H is one fixed continuous world field -> the contact is a true potential: the station forces
+                       f_i = -k' dphi/du grad(u_i) applied at the station points are its exact gradient (forces AND moments);
+                     - flat road: integrand exactly wheel-relative -> no horizontal force ripple, momentum conserved;
+                     - discontinuous road (kerb face, plank): the step becomes a 25 mm ramp fixed in the world that
+                       slides continuously through the stations -> no force steps (a belt cannot wrap finer features).
+                   A = sum phi(u_i) ds, u_i = H(b_i) - z(b_i), b_i the lowest disc point above station i. */
+                hcell HC = {INT32_MIN, INT32_MIN, 0, 0, 0, 0, 0, 0, 0, 0};
+                for (int i = 0; i < ns; i++) {
+                    if (!act[i / 4]) { i |= 3; continue; }
+                    const double x = st_x[i], S = st_S[i];
+                    v3 pb = vadd(o, st_off[i]);
+                    double Hx, Hy, gg;
+                    double H = grid_hc(&GR, &HC, c, pb.x, pb.y, &Hx, &Hy, &gg);
+                    double u = H - pb.z;
+                    if (u <= 0) continue;
+                    /* the column overlaps the disc only up to its top: a road higher than the disc at this station (a
+                       face taller than the wheel) fills the chord, and further height adds neither area nor force.
+                       Without this the potential kept growing with H and pushed the wheel UP a wall it can't climb. */
+                    const double umax = -2 * S * dn.z;
+                    double e = COL_EPS, ph, dph;
+                    if (u >= umax) { u = umax; ph = umax < e ? umax * umax / (2 * e) : umax - e / 2; dph = 0; }
+                    else if (u < e) { ph = u * u / (2 * e); dph = u / e; } else { ph = u - e / 2; dph = 1; }
+                    v3 dudc = V3(Hx, Hy, -1);                     /* station rigidly attached to the wheel centre */
+                    v3 fi = vscl(dudc, -dph * ds);
+                    A += ph * ds; sw += ph; P = vadd(P, vscl(pb, ph));
+                    G = vadd(G, fi); Mr = vadd(Mr, vcross(st_off[i], fi));
+                    gsum += gg * ph; gw += ph;
+                    if (st_Sr[i] > 0) {
+                        double Sr = st_Sr[i];
+                        double ur = H - (o.z + fw.z * x + dn.z * Sr), urmax = -2 * Sr * dn.z;
+                        if (ur > 0) {
+                            double phr, dphr;
+                            if (ur >= urmax) { phr = urmax < e ? urmax * urmax / (2 * e) : urmax - e / 2; dphr = 0; }
+                            else if (ur < e) { phr = ur * ur / (2 * e); dphr = ur / e; } else { phr = ur - e / 2; dphr = 1; }
+                            v3 fr_i = vscl(dudc, -dphr * ds);
+                            Ar += phr * ds; Gr = vadd(Gr, fr_i);
+                            Mrr = vadd(Mrr, vcross(vadd(vscl(fw, x), vscl(dn, Sr)), fr_i));
+                        }
                     }
                 }
             }
+            if (A <= 0 || sw <= 0) continue;
+            double dl = single ? dl1 : invert_area(A, R);
+            double chord = 2 * sqrt(fmax(2 * R * dl - dl * dl, 1e-10));
+            double gl = vlen(G);
+            v3 pr = vscl(P, 1.0 / sw), nrm = single ? n1 : (gl > 1e-12 ? vscl(G, 1 / gl) : up);
+            double gain = single ? 1.0 : gl / chord;     /* =1 on a plane; >1 against step faces. Uncapped: the force must stay the exact gradient of t->pe or a face strike does net work */
+            v3 Mq = V3(0, 0, 0);
+            v3 vp = vadd(vc, vcross(wperp, vsub(pr, cw)));
+            double dd = -vdot(vp, nrm);
+            double fz = gain * kz / nl * dl * (1 + prog * (dl / dlim) * (dl / dlim)) + (nodamp ? 0 : T->cz / nl * fmin(dl / HC_REF, 1.0) * dd);   /* Hunt-Crossley: damping grows with indentation, no force step at first touch */
+            if (fz < 0) fz = 0;
+            if (!single && gl > 1e-12) {      /* moment of the station forces about o (stiffness part), minus the spin axis */
+                double ks = gain * kz / nl * dl * (1 + prog * (dl / dlim) * (dl / dlim)) / gl;
+                Mq = vscl(Mr, ks);
+            }
+            /* rim: same potential construction on the rim radius; its stiffness force is the exact gradient of
+               0.5 k_rim dlr^2, i.e. along the rim's own area gradient Gr (a rim corner on a face pushes along Gr, not
+               along the tyre's normal), with its own station moment; damping acts along the contact normal */
+            double fr = 0, dlr = 0; v3 Frv = V3(0, 0, 0), Mqr = V3(0, 0, 0);
+            if (Ar > 0) {
+                dlr = single ? dlr1 : invert_area(Ar, Rr);
+                double chr = 2 * sqrt(fmax(2 * Rr * dlr - dlr * dlr, 1e-10));
+                double fks = T->k_rim / nl * dlr;
+                double fcd = nodamp ? 0 : T->c_rim / nl * fmin(dlr / HC_REF, 1.0) * dd;
+                if (single) { Frv = vscl(Gr, fks + fcd); }
+                else {
+                    double s_ = fks / chr;
+                    Frv = vadd(vscl(Gr, s_), vscl(nrm, fcd)); Mqr = vscl(Mrr, s_);
+                }
+                if (vdot(Frv, nrm) < 0) { Frv = V3(0, 0, 0); Mqr = V3(0, 0, 0); }
+                fr = vlen(Frv);
+                t->pe += 0.5 * T->k_rim / nl * dlr * dlr;
+            }
+            t->pe += kz / nl * (0.5 * dl * dl + prog * dl * dl * dl * dl / (4 * dlim * dlim));
+            double Nq = fz + fr;
+            v3 Fq = vmad(Frv, nrm, fz);
+            Fv = vadd(Fv, Fq); Tq = vadd(Tq, vadd(vcross(vsub(o, orw), Fq), vadd(Mq, Mqr)));
+            Pw = vmad(Pw, pr, Nq); sN += Nq; fzs += fz; frs += fr; dlw += dl * Nq; if (dlr > dlrm) dlrm = dlr;
         }
-        t->N[r] = 0;
-        if (A <= 0 || sw <= 0) continue;
-        double dl = single ? dl1 : invert_area(A, R);
-        double chord = 2 * sqrt(fmax(2 * R * dl - dl * dl, 1e-10));
-        double gl = vlen(G);
-        v3 pr = vscl(P, 1.0 / sw), nrm = single ? n1 : (gl > 1e-12 ? vscl(G, 1 / gl) : up);
-        double gain = single ? 1.0 : fmin(gl / chord, 4.0);     /* =1 on a plane; >1 against step faces (exact gradient) */
-        t->orow[r] = o;
-        t->Mst[r] = V3(0, 0, 0);
-        v3 vp = vadd(vc, vcross(wperp, vsub(pr, cw)));
-        double dd = -vdot(vp, nrm);
-        double fz = gain * kz / nrows * dl * (1 + prog * (dl / dlim) * (dl / dlim)) + (nodamp ? 0 : T->cz / nrows * fmin(dl / HC_REF, 1.0) * dd);   /* Hunt-Crossley: damping grows with indentation, no force step at first touch */
-        if (fz < 0) fz = 0;
-        if (!single && gl > 1e-12) {      /* moment of the station forces about o (stiffness part), minus the spin axis */
-            double ks = gain * kz / nrows * dl * (1 + prog * (dl / dlim) * (dl / dlim)) / gl;
-            v3 m = vscl(Mr, ks); t->Mst[r] = vsub(m, vscl(a, vdot(m, a)));
-        }
-        double fr = 0, dlr = 0;
-        if (Ar > 0) {
-            dlr = single ? dlr1 : invert_area(Ar, Rr);
-            double chr = 2 * sqrt(fmax(2 * Rr * dlr - dlr * dlr, 1e-10));
-            double gr2 = single ? 1.0 : fmin(vdot(Gr, nrm) / chr, 4.0); if (gr2 < 0) gr2 = 0;
-            fr = gr2 * T->k_rim / nrows * dlr + (nodamp ? 0 : T->c_rim / nrows * fmin(dlr / HC_REF, 1.0) * dd);
-            if (fr < 0) fr = 0;
-            t->pe += 0.5 * T->k_rim / nrows * dlr * dlr;
-        }
-        t->pe += kz / nrows * (0.5 * dl * dl + prog * dl * dl * dl * dl / (4 * dlim * dlim));
-        t->pr[r] = pr; t->nr[r] = nrm; t->Fz_t[r] = fz; t->Frim[r] = fr; t->N[r] = fz + fr;
-        t->dl[r] = dl; t->dlr[r] = dlr;
-        nsum = vadd(nsum, vscl(nrm, t->N[r])); psum = vadd(psum, vscl(pr, t->N[r]));
-        t->Ntot += t->N[r]; t->Fz += fz; t->Fr += fr;
-        S->delta_row[r] = dl;
+        double Nr = vlen(Fv);
+        if (sN <= 0 || Nr <= 1e-12) continue;
+        v3 nrm = vscl(Fv, 1.0 / Nr), pr = vscl(Pw, 1.0 / sN);
+        t->Mst[r] = vsub(Tq, vscl(a, vdot(Tq, a)));   /* lane levers along the axle and stiffness moments, spin component removed */
+        t->pr[r] = pr; t->nr[r] = nrm; t->Fz_t[r] = fzs; t->Frim[r] = frs; t->N[r] = Nr;
+        t->dl[r] = dlw / sN; t->dlr[r] = dlrm;
+        nsum = vadd(nsum, Fv); psum = vadd(psum, vscl(pr, Nr));
+        t->Ntot += Nr; t->Fz += fzs; t->Fr += frs;
+        S->delta_row[r] = t->dl[r];
     }
     if (t->Ntot <= 1e-9) {
         t->contact = 0;
