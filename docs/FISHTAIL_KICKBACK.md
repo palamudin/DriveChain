@@ -135,3 +135,26 @@ Summaries are in `*/kickback_summary.csv`.
 - PAS caps the column kickback at ~3 N·m, which is physical but may feel numb. Use the manual rack (H) for a raw NA feel.
 - Gyroscopic kingpin spikes of 60–114 N·m last 10–20 ms. They are mostly cancelled by the column inertia, so their impulse is small.
 - Near the limit (56–60 km/h on the skidpad) the plug-in driver hunts by 23–25°. The 2 m step overshoots by 0.9 m, and the delayed-human driver shows mild pilot-induced oscillation (PIO).
+- **`lift_85kmh_R65 gp_human` fails the settle check (diagnosed, physical / driver-loop, not a core bug).**
+  - It passed up to 36a89d9 (3 swings, ζ 0.09, settle 2.0 s) and has failed since 72910b8, the stock 1990 NA
+    parameters (OEM dampers at ζ 0.2/0.4, tyre µ −13 %, trail factor 1.5): 5 swings, ζ 0.03, settle 3.2 s, β 3.8°.
+    β stays small; nothing spins.
+  - With the rim locked the same car does not oscillate (0 swings). An undelayed stiff driver (`ideal`) catches
+    it in 0.4 s. `arms` (0.2 s delay, finite strength) shows the same 5 swings at ζ 0.06. The free-control
+    steer–yaw mode at 85 km/h is lightly damped, and the stock parameters reduced its damping further.
+  - Sweeping only the gp_human reaction delay (thumb bandwidth 6 Hz):
+
+    | delay | swings | ζ | settle | verdict |
+    |---|---|---|---|---|
+    | 0 s | 2 | 0.14 | 1.11 s | ok |
+    | 0.10 s | 3 | 0.09 | 1.70 s | ok |
+    | 0.15 s | 4 | 0.08 | 2.36 s | ok |
+    | 0.20 s (test default) | 5 | 0.03 | 3.16 s | FAIL |
+
+    Doubling the thumb bandwidth to 12 Hz at a 0.2 s delay barely changes it (ζ 0.04, 3.08 s).
+  - Settle time is monotone in the reaction delay. This is the classic phase-margin loss of a delayed closed
+    loop around a lightly damped vehicle mode (McRuer crossover model), which real drivers also show at speed.
+  - The legacy core shows the same trend, and the energy/Newton-3 audits are clean. It is a driver-model plus
+    stock-damping outcome, not a solver artefact. The 2.5 s criterion dates from the pre-stock car.
+  - Proposal (not applied): treat it as a known residual like the free-wheel case, or keep it as a tracked
+    failure until the bushings/compliance phase adds damping.
