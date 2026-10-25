@@ -23,7 +23,7 @@ static double wrapa(double a) { while (a > M_PI) a -= 2 * M_PI; while (a < -M_PI
 
 void dc_driver_default_params(dc_driver_params* p) {
     memset(p, 0, sizeof *p);
-    p->arm_k = 10; p->arm_d = 1.0; p->arm_tmax = 20;   /* relaxed-but-firm grip, as the gamepad "arms" layer */
+    p->arm_k = 25; p->arm_d = 1.0; p->arm_tmax = 20;   /* driver-wheel stiffness 25 N m/rad: mid-range of the measured 10-46 (Xing et al. 2018, IEEE/ASME TMech, doi 10.1109/tmech.2018.2812643); 10 = most relaxed, hunts in the ~1-2 N m rim friction */
     p->delay = 0.18; p->bandwidth_hz = 3.0; p->rim_rate_max = 0;
     p->preview_time = 0.75; p->preview_min = 6.0; p->yaw_damp = 0.06; p->catch_gain = 0.5;
     p->speed_kp = 0.5; p->speed_ki = 0.15; p->brake_kp = 0.25; p->lock_frac = 1.0; p->lat_ki = 0.002; p->predict = 1.0;
