@@ -129,6 +129,10 @@ static void m_skidpad(const char* dir) {
     dc_driver_cmd cmd = {0}; cmd.steer_mode = DC_DRV_PATH; cmd.pedal_mode = DC_PED_SPEED; cmd.speed = 8; dc_driver_command(D, &cmd);
     double ay_max = 0, sw_at[3] = {0}, tq_at[3] = {0}; double ay_lvl[3] = {3.0, 5.0, 7.0}; int got[3] = {0};
     double sw_ay_lo = 0, ay_lo = 0; int lo_set = 0, lost = 0;
+    /* SAE J266 constant-radius method: R fixed, so the Ackermann angle L/R is constant and the slope of steer angle
+     * vs ay is the understeer gradient. Least-squares over the linear range 0.1-0.4 g (single first-crossing samples
+     * are dominated by path-driver hunting). Reported at the steering wheel and at the road wheels (mean front steer). */
+    double fn = 0, fx = 0, fxx = 0, fsw = 0, fxsw = 0, frw = 0, fxrw = 0;
     for (int i = 0; i < 120 * 60; i++) {
         double tt = SIMT; cmd.speed = 8 + 0.25 * tt; dc_driver_command(D, &cmd);
         tick(1);
@@ -138,13 +142,23 @@ static void m_skidpad(const char* dir) {
         if (fabs(st.lat_err) < 2.0 && ayf > ay_max) ay_max = ayf;
         for (int k = 0; k < 3; k++) if (!got[k] && ayf >= ay_lvl[k]) { got[k] = 1; sw_at[k] = T.sw_angle * DEG; tq_at[k] = T.column_torque; }
         if (!lo_set && ayf >= 3.0) { lo_set = 1; sw_ay_lo = T.sw_angle * DEG; ay_lo = ayf; }
+        if (ayf >= 0.1 * 9.81 && ayf <= 0.4 * 9.81 && fabs(st.lat_err) < 1.0) {
+            double g = ayf / 9.81, sw = fabs(T.sw_angle) * DEG, rw = fabs(0.5 * (T.w[0].steer + T.w[1].steer)) * DEG;
+            fn += 1; fx += g; fxx += g * g; fsw += sw; fxsw += g * sw; frw += rw; fxrw += g * rw; }
         if (fabs(st.lat_err) > 4.0) { lost = 1; break; }
     }
     fclose(CSV);
     SUM("skidpad_ay_max", ay_max / 9.81, "g");
     for (int k = 0; k < 3; k++) { char nm[64]; snprintf(nm, sizeof nm, "skidpad_sw_at_%.0fms2", ay_lvl[k]); SUM(nm, sw_at[k], "deg");
         snprintf(nm, sizeof nm, "skidpad_tq_at_%.0fms2", ay_lvl[k]); SUM(nm, tq_at[k], "Nm"); }
-    if (got[2] && lo_set) SUM("understeer_grad_sw", (sw_at[2] - sw_ay_lo) / ((ay_lvl[2] - ay_lo) / 9.81), "deg sw/g (incl. ackermann change)");
+    if (got[2] && lo_set) SUM("understeer_grad_sw", (sw_at[2] - sw_ay_lo) / ((ay_lvl[2] - ay_lo) / 9.81), "deg sw/g, OLD: two single samples 3->7 m/s2, noisy");
+    { double den = fn * fxx - fx * fx;
+      if (fn > 20 && den > 1e-9) {
+        double ksw = (fn * fxsw - fx * fsw) / den, krw = (fn * fxrw - fx * frw) / den;
+        SUM("usg_sw_fit", ksw, "deg sw/g, LSQ 0.1-0.4 g, constant R (J266 steering-wheel angle gradient)");
+        SUM("usg_rw_fit", krw, "deg road-wheel/g, LSQ 0.1-0.4 g (J266 understeer gradient K)");
+        SUM("usg_overall_ratio", krw > 1e-6 ? ksw / krw : 0, "sw/rw gradient ratio (rack ratio + column compliance)");
+        SUM("usg_fit_n", fn, "samples"); } }
     SUM("skidpad_lost_path", lost, "");
 }
 
