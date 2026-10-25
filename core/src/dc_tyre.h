@@ -10,7 +10,7 @@ typedef struct {
     double Ntot, Fz, Fr, delta_eff, a_eff;
     double Re, arm_x, Vcx, Vsy, Vr, sig_x, sig_y, Ctot, Cxtot;
     double ey_new, by_new, ex_star, D, Fx_star, kx, Fy, Mz_brush, mu_eff, lam;
-    double phi_new, Mt, grip, camber_l, rr_e, tp;
+    double phi_new, Mt, kt, grip, camber_l, rr_e, tp;   /* kt: tread-twist stiffness this step */
     double Fx;                       /* final */
     v3 F, tau;                       /* final world force and torque about wheel centre */
     double Trest;                    /* axial torque except Fx term */
@@ -19,6 +19,10 @@ typedef struct {
 } dc_tc;
 void dc_tyre_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc* t);
 void dc_tyre_phaseB(dc_car* c, int i, v3 cw, v3 a, double omega_new, double h, dc_tc* t, int commit);
+/* energy audit: shear (ex, ey) + tread-twist energy stored in the committed carcass state of wheel i, with this
+   step's stiffnesses (call after phase A). t->pe holds only the radial store until phase B commits the new shear
+   state, so a start-of-step energy is t->pe + dc_tyre_shear_store(). */
+double dc_tyre_shear_store(const dc_car* c, int i, const dc_tc* t);
 /* TARMAC tyre (tyre_model = 1): same interface, dispatched from dc_tyre_phaseA/B */
 /* telemetry only (no effect on forces): advance the reported transient slip of wheel i one step h */
 void dc_tyre_telem_slip(dc_car* c, int i, const dc_tc* t, double h, double* slip_angle, double* slip_ratio);

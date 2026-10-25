@@ -60,6 +60,7 @@ test: build/dc_tests build/mb_tests build/mbcar_tests build/reset_tests build/co
 	./build/dc_tests | tee results/summary.txt
 	mkdir -p results/mb && ./build/mb_tests | tee results/mb/phase0_summary.txt
 	./build/mbcar_tests cars/mx5_na.ini | tee results/mb/phase12_summary.txt
+	./build/mbcar_tests cars/hatch_fwd.ini energy | tee results/mb/energy_audit_hatch_fwd.txt
 	./build/reset_tests cars/mx5_na.ini cars/hatch_fwd.ini | tee results/reset_summary.txt
 	./build/contact_point_tests cars/mx5_na.ini | tee results/contact_point_summary.txt
 	$(MAKE) valvetest

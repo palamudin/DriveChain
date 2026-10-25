@@ -4,7 +4,10 @@
    2. statics: sum of contact normal forces = m g, momentum (Newton) residuals ~ 0, dissipation >= 0;
    3. Newton-3 per joint: every multi-body joint's constraint wrenches sum to zero force and zero moment;
    4. self-centring: with the hands off at speed, a steered wheel returns toward centre (positive trail/SAT);
-   5. energy: coasting, external work in = stored-energy change + dissipation (dissipation monotone >= 0).
+   5. energy: coasting, external work in = stored-energy change + dissipation (dissipation monotone >= 0);
+   6. energy audit per step (both tyre models): drive/lift-off, steer/release and a 30 mm road-step heave load and
+      unload the tyre carcass shear store; no step may create energy (regression: the audit once omitted the
+      committed carcass shear/twist store from E_start). `mbcar_tests <car.ini> energy` runs only section 6.
    Build: make mbcartest */
 #include "drivechain.h"
 #include "../core/src/dc_internal.h"
@@ -19,6 +22,11 @@ static int g_bush = 0;
 static int g_carrier = 0;  /* 1: carrier-inertia driveline (docs/CARRIER.md proposal values) */  /* 1: arm pivots as compliant bushings (docs/BUSHINGS.md estimates) */
 static int g_rmount = 0;  /* 1: rack housing on a compliant mount (propR estimate, docs/BUSHINGS.md) */
 static int g_jf = -1;   /* >= 0 overrides mb.jf (joint friction switch) */
+static int g_tyre = -1;  /* >= 0 overrides the tyre model on both axles (energy-audit section) */
+static double g_road_h = 0;  /* uniform road height (energy-audit heave step) */
+static double flat_road(void* u, double x, double y, double* nx, double* ny, double* nz, double* g) {
+    (void)u; (void)x; (void)y; *nx = 0; *ny = 0; *nz = 1; *g = 1; return g_road_h;
+}
 static dc_car* make(const char* ini, double v0, int steer_mode) {
     dc_car_params p; char err[256]; dc_default_params(&p);
     if (!dc_load_params(ini, &p, err, sizeof err)) { printf("load %s: %s\n", ini, err); return NULL; }
@@ -26,6 +34,7 @@ static dc_car* make(const char* ini, double v0, int steer_mode) {
     if (g_carrier) { p.mb.diff_inertia = 0.02; p.mb.gb_out_inertia = 0.01; }
     if (g_bush) for (int a = 0; a < 2; a++) { p.mb.bush_kr[a] = 2e6; p.mb.bush_ka[a] = 5e5; p.mb.bush_kt[a] = 300; }
     if (g_rmount) { p.mb.rack_mount_k = 8e6; p.mb.rack_mount_c = 1.9e4; }
+    if (g_tyre >= 0) { p.axle[0].tyre.model = g_tyre; p.axle[1].tyre.model = g_tyre; }
     dc_car* c = dc_create(&p); double z[3] = {0, 0, 0}; dc_reset(c, z, 0, v0);
     dc_input in; memset(&in, 0, sizeof in); in.gear = 0; in.steer_mode = steer_mode; dc_set_input(c, &in);
     return c;
@@ -56,9 +65,49 @@ static void joint_n3(dc_car* c, double* fmaxr, double* tmaxr, double* fref) {
         *fmaxr = fmax(*fmaxr, vlen(Fs)); *tmaxr = fmax(*tmaxr, vlen(Ts)); *fref = fmax(*fref, fm);
     }
 }
+/* section 6: minimum per-step dissipation over three carcass load/unload manoeuvres. Steps right after a
+   change of input are included; only the road teleport step (external work not in W_in) is skipped. */
+static void energy_audit(const char* ini) {
+    const char* nm[2] = {"brush", "TARMAC"};
+    /* J per 10 ms step. TARMAC keeps an O(h) residual of explicit start-of-step lane forces (heave: -0.0125 J mx5_na,
+       -0.048 J hatch_fwd at h = 10 ms, halves at 5 ms, -0.0015 J with friction off), so it gets a gross-failure bound */
+    const double tolv[2] = {-1e-3, -7.5e-2};
+    for (int ty = 0; ty < 2; ty++) {
+        const double tol = tolv[ty];
+        g_tyre = ty; double dmin = 1e9; const char* where = "-"; dc_telemetry t; dc_input in; dc_car* c;
+#define DSTEP(tag) do { double d0_ = t.dissipated; dc_step(c, 0.01); dc_get_telemetry(c, &t); if (t.dissipated - d0_ < dmin) { dmin = t.dissipated - d0_; where = tag; } } while (0)
+        /* (a) drive then lift-off at 8 m/s: longitudinal carcass store builds and releases */
+        c = make(ini, 8, DC_STEER_ANGLE); dc_set_road(c, flat_road, NULL); g_road_h = 0; dc_get_telemetry(c, &t);
+        memset(&in, 0, sizeof in); in.gear = 2; in.throttle = 0.2; in.steer_mode = DC_STEER_ANGLE; in.hands_k = 60; in.hands_d = 3; in.hands_tmax = 30; dc_set_input(c, &in);
+        for (int k = 0; k < 100; k++) dc_step(c, 0.01);   /* the reset leaves the engine at idle against road-speed wheels: let the driveline lock up first */
+        dc_get_telemetry(c, &t); in.throttle = 1; dc_set_input(c, &in);
+        for (int k = 0; k < 100; k++) DSTEP("drive");
+        in.throttle = 0; dc_set_input(c, &in); for (int k = 0; k < 100; k++) DSTEP("lift-off");
+        in.brake = 0.6; dc_set_input(c, &in); for (int k = 0; k < 60; k++) DSTEP("brake");
+        dc_destroy(c);
+        /* (b) steer and release at 15 m/s: lateral carcass store */
+        c = make(ini, 15, DC_STEER_ANGLE); dc_set_road(c, flat_road, NULL); dc_get_telemetry(c, &t);
+        memset(&in, 0, sizeof in); in.gear = 3; in.throttle = 0.25; in.steer_mode = DC_STEER_ANGLE; in.steer_target = 60 * M_PI / 180;
+        in.hands_k = 60; in.hands_d = 3; in.hands_tmax = 30; dc_set_input(c, &in);
+        for (int k = 0; k < 200; k++) DSTEP("steer");
+        in.steer_target = 0; dc_set_input(c, &in); for (int k = 0; k < 200; k++) DSTEP("release");
+        dc_destroy(c);
+        /* (c) braked at rest, 30 mm road step under all four wheels: heave bounce */
+        c = make(ini, 0, DC_STEER_ANGLE); dc_set_road(c, flat_road, NULL); dc_get_telemetry(c, &t);
+        memset(&in, 0, sizeof in); in.brake = 0.3; in.steer_mode = DC_STEER_ANGLE; in.hands_k = 60; in.hands_d = 3; in.hands_tmax = 30; dc_set_input(c, &in);
+        for (int k = 0; k < 200; k++) DSTEP("settle");
+        g_road_h = 0.03; dc_step(c, 0.01); dc_get_telemetry(c, &t);   /* teleport step: external work */
+        for (int k = 0; k < 300; k++) DSTEP("heave");
+        g_road_h = 0; dc_destroy(c);
+#undef DSTEP
+        CHECK(dmin > tol, "energy audit (%s tyre): min per-step dissipation %.2e J (at %s) > %.1e J, no step creates energy", nm[ty], dmin, where, tol);
+    }
+    g_tyre = -1;
+}
 int main(int argc, char** argv) {
     const char* ini = argc > 1 ? argv[1] : "cars/mx5_na.ini";
     printf("=== dc_mbcar Phase 1-2 (%s) ===\n", ini);
+    if (argc > 2 && !strcmp(argv[2], "energy")) { energy_audit(ini); printf(fails ? "=== %d FAILURES ===\n" : "=== ALL PASS ===\n", fails); return fails != 0; }
     dc_telemetry t;
     /* --- static */
     dc_car* c = make(ini, 0, DC_STEER_ANGLE);
@@ -197,6 +246,7 @@ int main(int argc, char** argv) {
         CHECK(mono && rf < 1e-2, "carrier: dissipation non-decreasing, momentum residual %.2e N", rf);
         dc_destroy(c);
     }
+    energy_audit(ini);
     printf(fails ? "=== %d FAILURES ===\n" : "=== ALL PASS ===\n", fails);
     return fails != 0;
 }

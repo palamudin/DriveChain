@@ -29,6 +29,16 @@ symplectic position update. About 130 µs per substep at 2 kHz on one core: real
 - **Energy:** `dissipated = W_ext − ΔE`, with E = kinetic + gravity + spring/bar/stop + tyre carcass energy, all
   evaluated at the same instant (start of step). W_ext = engine, aero, the driver's hands and
   the active assist. Dissipation is non-negative and non-decreasing to within 2 mJ per 10 ms (0.2 W) at rest.
+  The tyre carcass term is the radial store plus the committed shear and twist store
+  (½k_x·e_x² + ½k_y·e_y² + ½k_t·φ²). An earlier audit left the shear/twist part out of E(start), so carcass
+  unloading showed up as created energy: −0.016 J/step in the default-car bounce, −10.5 J/step at hatch_fwd
+  drive-off. With the shear store included, the brush tyre's worst step is −3e-5 J (mx5_na) and −8e-5 J
+  (hatch_fwd). Trajectories are unchanged. The TARMAC tyre keeps an O(h) residual from its explicit
+  start-of-step lane forces: −0.0125 J/step (mx5_na) and −0.048 J/step (hatch_fwd) in a 30 mm heave at h = 10 ms.
+  That residual halves at 5 ms and falls to −0.0015 J with friction off. The regression check is
+  `mbcar_tests <car> energy`, which covers drive and lift-off, steer and release, and heave on both tyre models.
+  `mbcompare` reports `health_min_step_dissipation` and `health_min_step_at`; set `DTRACE=<J>` to trace the
+  steps that fall below it.
 
 ## Validation (`make mbcartest`, part of `make test`)
 

@@ -378,6 +378,7 @@ void dc_tyre_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc
     double kt = T->twist_k * t->Ntot / T->fz0;
     if (kt * fabs(t->phi_new) > Mmax) t->phi_new = sgn(t->phi_new) * Mmax / fmax(kt, 1e-9);
     t->Mt = kt * t->phi_new;
+    t->kt = kt;
     t->rr_e = nodamp ? 0 : T->rr_factor * fmin(t->delta_eff, dlim) * tanh(Om * t->Re / 0.5);
     /* torques about the wheel centre, except the Fx term */
     v3 tau = V3(0, 0, 0);
@@ -423,8 +424,18 @@ void dc_tyre_phaseB(dc_car* c, int i, v3 cw, v3 a, double omega_new, double h, d
         S->ex = ex; S->ey = ey; S->phi = t->phi_new;
         double scale = 0.35 + 0.65 * fmin(S->pressure / T->pressure_ref, 1.5);
         t->pe += 0.5 * T->carcass_kx * scale * ex * ex + 0.5 * T->carcass_ky * scale * ey * ey;
+        t->pe += 0.5 * t->kt * t->phi_new * t->phi_new;
     }
     (void)a;
+}
+
+double dc_tyre_shear_store(const dc_car* c, int i, const dc_tc* t) {
+    const dc_tyre_state* S = &c->ty[i];
+    const dc_tyre_params* T = &c->P.axle[i / 2].tyre;
+    double tw = t->contact ? 0.5 * t->kt * S->phi * S->phi : 0;
+    if (T->model == DC_TYRE_TARMAC) { const dc_tm_tab* B = &c->tm[i / 2]; return 0.5 * B->kx * S->ex * S->ex + 0.5 * B->ky * S->ey * S->ey + tw; }
+    double scale = 0.35 + 0.65 * fmin(S->pressure / T->pressure_ref, 1.5);
+    return 0.5 * T->carcass_kx * scale * S->ex * S->ex + 0.5 * T->carcass_ky * scale * S->ey * S->ey + tw;
 }
 
 /* Reported transient slip (telemetry only, both cores, every tyre model).

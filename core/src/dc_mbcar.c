@@ -795,7 +795,7 @@ void dc_mbcar_step(dc_car* c) {
         mb_body* B = &W->B[b];
         E_start += 0.5 * B->m * vdot(B->v, B->v) + 0.5 * vdot(B->w, mv(&B->Iw, B->w)) + B->m * g * B->x.z;
     }
-    for (int i = 0; i < 4; i++) E_start += m->tc[i].pe;
+    for (int i = 0; i < 4; i++) E_start += m->tc[i].pe + dc_tyre_shear_store(c, i, &m->tc[i]);   /* radial (phase A) + committed shear/twist */
     double dgd[4] = {0, 0, 0, 0};
     for (int pass = 0; pass < 2; pass++) {
         mb_solve(W);

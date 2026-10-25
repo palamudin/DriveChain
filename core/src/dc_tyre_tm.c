@@ -503,8 +503,7 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
         double Mmax = Mtmax * fmax(0.0, 1 - fmin(t->lam, 1.0)) + 1e-9;
         if (kt * fabs(t->phi_new) > Mmax) t->phi_new = sgn(t->phi_new) * Mmax / fmax(kt, 1e-9);
         if (t->grip <= 0) t->phi_new = 0;
-        t->Mt = kt * t->phi_new;
-        t->pe += 0.5 * kt * t->phi_new * t->phi_new;
+        t->Mt = kt * t->phi_new; t->kt = kt;
     }
     /* rolling resistance (TARMAC: N crr Re as a resisting spin torque) */
     t->rr_e = nodamp ? 0 : B->crr * t->Re * tanh(Om * t->Re / 0.5);
@@ -550,6 +549,7 @@ void dc_tyre_tm_phaseB(dc_car* c, int i, v3 cw, v3 a, double omega_new, double h
         if (em > cap && em > 0) { ex *= cap / em; ey *= cap / em; }
         S->ex = ex; S->ey = ey; S->phi = t->phi_new;
         t->pe += 0.5 * B->kx * ex * ex + 0.5 * B->ky * ey * ey;
+        t->pe += 0.5 * t->kt * t->phi_new * t->phi_new;
     }
 }
 
