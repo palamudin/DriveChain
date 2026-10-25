@@ -288,6 +288,10 @@ DC_API void   dc_destroy(dc_car* c);
 DC_API void   dc_set_road(dc_car* c, dc_road_fn fn, void* user);
 #define DC_ROAD_HEIGHT_ONLY 1   /* road callback accepts nx/ny/nz == NULL: return height (and grip) only */
 DC_API void   dc_set_road_flags(dc_car* c, int flags); /* opt-in, call after dc_set_road (which resets it); lets the tyre lattice sampler skip the normal. Results are identical. */
+#define DC_ROAD_STATIC 2        /* opt-in: the road (callback or heightfield data) does not change over time, so the tyre samplers keep
+                                   world-lattice road nodes across steps in a per-wheel cache. Results are identical for a static road;
+                                   call dc_road_changed() after editing it. Leave unset for time-varying roads (shaker rigs, moving ground). */
+DC_API void   dc_road_changed(dc_car* c); /* drop cached road samples (needed only with DC_ROAD_STATIC, after the road changed) */
 DC_API void   dc_set_heightfield(dc_car* c, const dc_heightfield* hf); /* uses built-in bilinear road fn */
 DC_API void   dc_reset(dc_car* c, const double pos[3], double yaw, double speed); /* pos = ground point under CG */
 DC_API void   dc_set_input(dc_car* c, const dc_input* in);

@@ -46,9 +46,11 @@ static double wheel_steer(const dc_pose* p, const dc_kin* k) {
 
 DC_API const dc_car_params* dc_params(const dc_car* c) { return &c->P; }
 DC_API void dc_debug_flags(dc_car* c, int f) { c->dbg = f; }
-DC_API void dc_set_road(dc_car* c, dc_road_fn fn, void* user) { c->road = fn; c->road_user = user; c->road_flags = 0; }
-DC_API void dc_set_road_flags(dc_car* c, int flags) { c->road_flags = flags; }
-DC_API void dc_set_heightfield(dc_car* c, const dc_heightfield* hf) { c->hf = *hf; c->road = NULL; }
+void dc_rcache_clear(dc_car* c) { if (c->rc) for (int w = 0; w < 4; w++) c->rc[w].dw = 0; }   /* dw mismatch => tags wiped on next use */
+DC_API void dc_road_changed(dc_car* c) { dc_rcache_clear(c); }
+DC_API void dc_set_road(dc_car* c, dc_road_fn fn, void* user) { c->road = fn; c->road_user = user; c->road_flags = 0; dc_rcache_clear(c); }
+DC_API void dc_set_road_flags(dc_car* c, int flags) { c->road_flags = flags; dc_rcache_clear(c); }
+DC_API void dc_set_heightfield(dc_car* c, const dc_heightfield* hf) { c->hf = *hf; c->road = NULL; dc_rcache_clear(c); }
 DC_API void dc_set_input(dc_car* c, const dc_input* in) { c->in = *in; }
 DC_API double dc_ffb_torque(const dc_car* c) { return c->tel.column_torque; }
 DC_API void dc_puncture(dc_car* c, int w, double tau) { if (w >= 0 && w < 4) c->ty[w].leak_tau = tau; }
@@ -56,6 +58,7 @@ DC_API void dc_set_pressure(dc_car* c, int w, double pa) { if (w >= 0 && w < 4) 
 
 DC_API dc_car* dc_create(const dc_car_params* pin) {
     dc_car* c = (dc_car*)calloc(1, sizeof(dc_car));
+    if (c) { c->rc = (dc_rcache*)calloc(4, sizeof(dc_rcache)); if (!c->rc) { free(c); return NULL; } }
     if (!c) return NULL;
     c->P = *pin;
     dc_car_params* P = &c->P;
@@ -163,7 +166,7 @@ DC_API dc_car* dc_create(const dc_car_params* pin) {
     return c;
 }
 
-DC_API void dc_destroy(dc_car* c) { if (c && c->mb) dc_mbcar_destroy(c->mb); free(c); }
+DC_API void dc_destroy(dc_car* c) { if (!c) return; if (c->mb) dc_mbcar_destroy(c->mb); free(c->rc); free(c); }
 DC_API int dc_active_solver(const dc_car* c) { return c->mb ? DC_SOLVER_MULTIBODY : DC_SOLVER_REDUCED; }
 
 DC_API void dc_reset(dc_car* c, const double pos[3], double yaw, double speed) {
@@ -193,6 +196,7 @@ DC_API void dc_reset(dc_car* c, const double pos[3], double yaw, double speed) {
     c->t = 0; c->tick = 0; c->dissipated = 0; c->acc_dt = 0;
     memset(c->body_set, 0, sizeof c->body_set);
     memset(&c->tel, 0, sizeof c->tel);
+    dc_rcache_clear(c);
     if (c->mb) dc_mbcar_reset(c);
 }
 

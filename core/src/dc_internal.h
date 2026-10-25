@@ -55,6 +55,12 @@ typedef struct {
     double cp;               /* tread brush stiffness per unit area per unit deflection, N/m^3 (2 C_ref / patch0) */
 } dc_tm_tab;
 
+/* per-wheel persistent road-node cache (DC_ROAD_STATIC): toroidal, tagged by world lattice index */
+#define RC_N 64
+typedef struct { int i, j; double h, g; } dc_rc_ent;
+typedef struct { double dw; dc_rc_ent e[RC_N * RC_N]; } dc_rcache;
+void dc_rcache_clear(dc_car* c);
+
 struct dc_car {
     dc_car_params P;
     dc_kin K[4];
@@ -92,6 +98,7 @@ struct dc_car {
     double link_f[4][DC_MAX_LINKS+1];  /* two-force member loads (+ = tension), last = spring/strut axial share */
     double link_resid[4];
     dc_tm_tab tm[2];                 /* TARMAC tyre tables per axle */
+    dc_rcache* rc;                   /* [4] road-node caches, allocated at create, used only with DC_ROAD_STATIC */
     struct dc_mbcar* mb;             /* multibody solver state (solver = DC_SOLVER_MULTIBODY), else NULL */
 };
 

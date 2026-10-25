@@ -13,7 +13,7 @@ static int make_car(sim_t* S) {
     if (S->car) dc_destroy(S->car);
     S->car = dc_create(&S->P);
     if (!S->car) return 0;
-    dc_set_road(S->car, track_road_fn, S->trk); dc_set_road_flags(S->car, DC_ROAD_HEIGHT_ONLY);
+    dc_set_road(S->car, track_road_fn, S->trk); dc_set_road_flags(S->car, DC_ROAD_HEIGHT_ONLY | DC_ROAD_STATIC);   /* tracks are static */
     return 1;
 }
 

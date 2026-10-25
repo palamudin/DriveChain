@@ -237,7 +237,7 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
        left-handed lateral state ey: origin offset = sL ey, roll = -carcassRoll ey / H, e = -(y (a.s_R)) roll */
     const double by = S->ey, bx = S->ex;
     const double roll = -B->roll * by / B->H, asR = -vdot(a, sL);
-    rgrid GR; grid_init(&GR, cw.x, cw.y, dw);
+    rgrid GR; grid_init_w(&GR, c, i, cw.x, cw.y, dw);
     /* exact cull bound: highest grid node under the wheel's lower half */
     double hmax = -1e30;
     {

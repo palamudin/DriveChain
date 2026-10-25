@@ -1,0 +1,18 @@
+cars/mx5_na.ini, reduced core, envelope tyre
+  ok   static rough road: DC_ROAD_STATIC trajectory bit-identical
+  ok   road edited mid-run + dc_road_changed(): still bit-identical
+  ok   control: edit without dc_road_changed() is visible (cache active), max diff 3.2e+03
+cars/mx5_na.ini, reduced core, TARMAC tyre
+  ok   static rough road: DC_ROAD_STATIC trajectory bit-identical
+  ok   road edited mid-run + dc_road_changed(): still bit-identical
+  ok   control: edit without dc_road_changed() is visible (cache active), max diff 3.08e+03
+cars/mx5_na.ini, multibody core, envelope tyre
+  ok   static rough road: DC_ROAD_STATIC trajectory bit-identical
+  ok   road edited mid-run + dc_road_changed(): still bit-identical
+  ok   control: edit without dc_road_changed() is visible (cache active), max diff 3e+03
+cars/mx5_na.ini, multibody core, TARMAC tyre
+  ok   static rough road: DC_ROAD_STATIC trajectory bit-identical
+  ok   road edited mid-run + dc_road_changed(): still bit-identical
+  ok   control: edit without dc_road_changed() is visible (cache active), max diff 3.07e+03
+
+ROAD CACHE TESTS: PASS (0 failures)

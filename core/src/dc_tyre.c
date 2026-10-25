@@ -136,7 +136,7 @@ void dc_tyre_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc
     v3 fw = vcross(dn, a);
     v3 wperp = vsub(wc, vscl(a, vdot(wc, a)));
     double gsum = 0, gw = 0;
-    rgrid GR; if (!single) grid_init(&GR, cw.x, cw.y, dw);
+    rgrid GR; if (!single) grid_init_w(&GR, c, i, cw.x, cw.y, dw);
     t->nrows = nrows;
     v3 nsum = V3(0, 0, 0), psum = V3(0, 0, 0);
     const int nlane = single ? 1 : (int)ceil(w / nrows / fmin(LANE_PITCH, dw) - 1e-9);

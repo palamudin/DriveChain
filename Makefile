@@ -46,6 +46,11 @@ valvetest: build/valve_tests
 	mkdir -p results/valve && ./build/valve_tests cars/mx5_na.ini cars/hatch_fwd.ini | tee results/valve/valve_summary.txt
 	-python3 tools/plot_valve.py results/valve
 .PHONY: valvetest
+build/road_cache_tests: tests/road_cache_tests.c build/libdrivechain.a
+	$(CC) -O2 -std=gnu11 -Icore/include -o $@ $< build/libdrivechain.a -lm
+roadcachetest: build/road_cache_tests
+	./build/road_cache_tests cars/mx5_na.ini | tee results/road_cache_summary.txt
+.PHONY: roadcachetest
 resettest: build/reset_tests
 	./build/reset_tests cars/mx5_na.ini cars/hatch_fwd.ini | tee results/reset_summary.txt
 .PHONY: resettest
@@ -56,12 +61,13 @@ mbtest: build/mb_tests
 	./build/mb_tests | tee results/mb/phase0_summary.txt
 .PHONY: mbtest
 
-test: build/dc_tests build/mb_tests build/mbcar_tests build/reset_tests build/contact_point_tests build/valve_tests
+test: build/dc_tests build/mb_tests build/mbcar_tests build/reset_tests build/contact_point_tests build/valve_tests build/road_cache_tests
 	./build/dc_tests | tee results/summary.txt
 	mkdir -p results/mb && ./build/mb_tests | tee results/mb/phase0_summary.txt
 	./build/mbcar_tests cars/mx5_na.ini | tee results/mb/phase12_summary.txt
 	./build/mbcar_tests cars/hatch_fwd.ini energy | tee results/mb/energy_audit_hatch_fwd.txt
 	./build/reset_tests cars/mx5_na.ini cars/hatch_fwd.ini | tee results/reset_summary.txt
+	./build/road_cache_tests cars/mx5_na.ini | tee results/road_cache_summary.txt
 	./build/contact_point_tests cars/mx5_na.ini | tee results/contact_point_summary.txt
 	$(MAKE) valvetest
 	python3 tests/plot.py results
