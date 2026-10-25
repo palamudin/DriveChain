@@ -11,7 +11,7 @@ Set-up (car frame, x fwd, y left, z up; air moves -x at U relative to the car):
   ground plane lifted 10 mm into the tyres (standard contact-patch treatment), no prism layers (wall functions).
 usage: foam_case.py <car.obj> <case_dir> [--offset=..] [--U 30] [--yaw 0] [--level 3]
 """
-import os, sys, argparse
+import os, sys, re, argparse
 import numpy as np
 sys.path.insert(0, os.path.dirname(__file__))
 from objload import load, wheel_x
@@ -29,7 +29,7 @@ xf, xr, zg = wheel_x(V, F, G); wb = xf - xr; xm = 0.5 * (xf + xr)
 z0 = zg + 0.010
 os.makedirs(f"{a.case}/constant/triSurface", exist_ok=True); os.makedirs(f"{a.case}/system", exist_ok=True)
 os.makedirs(f"{a.case}/0", exist_ok=True)
-wheel = np.array([g.lower().startswith(("tyre", "rim", "geo_disc", "geo_hub", "brake")) for g in G])
+wheel = np.array([bool(re.match(r"(tyre|tire|rim|brake|\w*disc|\w*hub)", g, re.I)) for g in G])   # wheel/brake groups
 with open(f"{a.case}/constant/triSurface/car.stl", "w") as f:
     for name, m in (("body", ~wheel), ("wheels", wheel)):
         f.write(f"solid {name}\n")
