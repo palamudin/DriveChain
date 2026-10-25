@@ -953,7 +953,7 @@ void dc_mbcar_step(dc_car* c) {
     T->valve_p[0] = m->vp[0]; T->valve_p[1] = m->vp[1]; T->valve_p[2] = m->vp[2];
     T->pump_flow = m->vQp; T->hyd_energy = m->vmodel ? dc_valve_energy(&m->vlv, m->vp, c->r) : 0;
     T->valve_nfail = m->v_fail;
-    T->pgs_iters = W->pgs_it; T->box_rows = W->nbox; T->box_dropped = W->box_dropped;
+    T->pgs_iters = W->pgs_it; T->box_rows = W->nbox; T->box_dropped = W->box_dropped; T->pgs_capped = W->pgs_ncapped;
     for (int i = 0; i < 4; i++) {
         dc_wheel_telem* Wt = &T->w[i]; dc_tc* t = &m->tc[i]; const dc_kin* k = &c->K[i]; dc_pose* p = &c->pose[i];
         Wt->fz = t->Ntot; Wt->fx = t->Fx; Wt->fy = t->Fy; Wt->mz = t->Mz_brush + t->Mt - t->ey_new * t->Fx;

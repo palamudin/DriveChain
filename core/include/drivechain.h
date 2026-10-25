@@ -268,7 +268,8 @@ typedef struct {
     int engine_running, pad2;
     double proj_work;           /* cumulative KE change from the momentum projection (J), reported for honesty */
     double rack_fric_force, col_fric_torque;  /* MB core: rack friction force on the rack (N), column bearing friction torque (N m) */
-    int pgs_iters, box_rows, box_dropped, pad3; /* MB core: box-LCP sweeps, active box rows, rows dropped by MB_MAXBOX (should be 0) */
+    int pgs_iters, box_rows, box_dropped, pgs_capped; /* MB core: box-LCP sweeps, active box rows, rows dropped by MB_MAXBOX (should be 0),
+                                                     solves that hit the sweep cap since creation (perf regression: should stay ~0) */
     double valve_p[3];                        /* MB core, valve_model > 0: cylinder chamber A (+rack side), chamber B, pump supply gauge pressure, Pa */
     double pump_flow, hyd_energy;             /* pump delivery m^3/s, oil compression energy J (included in potential) */
     double valve_nfail;                       /* cumulative valve Newton non-convergences since reset (health counter, expect 0) */
