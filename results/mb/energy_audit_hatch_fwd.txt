@@ -1,4 +1,6 @@
 === dc_mbcar Phase 1-2 (cars/hatch_fwd.ini) ===
   ok   energy audit (brush tyre): min per-step dissipation -8.43e-05 J (at settle) > -1.0e-03 J, no step creates energy
   ok   energy audit (TARMAC tyre): min per-step dissipation -4.77e-02 J (at heave) > -7.5e-02 J, no step creates energy
+  ok   energy audit (brush carcass_store=1 tyre): min per-step dissipation -8.69e-05 J (at settle) > -1.0e-03 J, no step creates energy
+  ok   carcass_store = 1 is book-keeping only: steer/release trajectory bit-identical (v 14.618657 yaw 0.002227 ay 0.032565)
 === ALL PASS ===

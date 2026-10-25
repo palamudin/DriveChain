@@ -32,4 +32,6 @@
   ok   carrier: dissipation non-decreasing, momentum residual 5.80e-04 N
   ok   energy audit (brush tyre): min per-step dissipation -2.80e-05 J (at heave) > -1.0e-03 J, no step creates energy
   ok   energy audit (TARMAC tyre): min per-step dissipation -1.25e-02 J (at heave) > -7.5e-02 J, no step creates energy
+  ok   energy audit (brush carcass_store=1 tyre): min per-step dissipation -4.09e-04 J (at heave) > -1.0e-03 J, no step creates energy
+  ok   carcass_store = 1 is book-keeping only: steer/release trajectory bit-identical (v 14.203952 yaw 0.001974 ay 0.027896)
 === ALL PASS ===
