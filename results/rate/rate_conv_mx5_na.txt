@@ -1,0 +1,17 @@
+mechanics-rate convergence, cars/mx5_na.ini, outer tick 240 Hz, reference = 1920 Hz
+metric                                   240 Hz       480 Hz       960 Hz      1920 Hz   tolerance
+skidpad ay [m/s2]                       6.492 .      6.501 .      6.508 .      6.503     abs 0.03 or rel 1%
+skidpad yaw rate [deg/s]               22.323 .     22.354 .     22.379 .     22.361     abs 0.2 or rel 1%
+step: yaw-rate peak [deg/s]            19.592 .     19.662 .     19.698 .     19.696     abs 0.3 or rel 2%
+step: yaw-rate t90 [ms]               208.428 .    205.883 .    204.710 .    203.997     abs 8
+step: yaw rate @3 s [deg/s]            15.162 .     15.173 .     15.187 .     15.183     abs 0.2 or rel 1%
+lift-off: d(yaw) 1 s [deg]              3.047 .      3.083 .      3.095 .      3.087     abs 0.2 or rel 3%
+lift-off: d(yaw rate) 1 s [deg/s]       4.121 .      4.167 .      4.161 .      4.125     abs 0.3 or rel 5%
+bump: peak Fz front [N]              7137.452 .   6897.728 .   6932.827 .   6942.902     rel 5%
+bump: peak Fz rear [N]               6956.946 .   6779.927 .   6809.792 .   6800.091     rel 5%
+bump: body z range [mm]                 8.219 X      8.677 .      8.898 .      8.986     abs 0.5 or rel 5%
+understeer gradient [deg/g]             0.595 .      0.590 .      0.588 .      0.590     abs 0.1
+WOT 0-8 s: v_end [km/h]                94.254 .     94.259 .     94.261 .     94.246     abs 0.3 or rel 0.5%
+cost [us wall per ms sim, 1 core]        57.0        105.2        213.3        419.7  
+converged (all within tolerance)         fail         PASS         PASS          ref  
+minimum converging rate: 480 Hz (2 substeps per 240 Hz tick), 105.2 us per ms of sim

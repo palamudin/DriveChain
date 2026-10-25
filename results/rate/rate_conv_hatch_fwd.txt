@@ -1,0 +1,17 @@
+mechanics-rate convergence, cars/hatch_fwd.ini, outer tick 240 Hz, reference = 1920 Hz
+metric                                   240 Hz       480 Hz       960 Hz      1920 Hz   tolerance
+skidpad ay [m/s2]                       5.451 .      5.444 .      5.444 .      5.443     abs 0.03 or rel 1%
+skidpad yaw rate [deg/s]               18.720 .     18.695 .     18.693 .     18.693     abs 0.2 or rel 1%
+step: yaw-rate peak [deg/s]            15.014 .     14.946 .     14.950 .     14.952     abs 0.3 or rel 2%
+step: yaw-rate t90 [ms]               191.930 .    191.783 .    191.756 .    191.744     abs 8
+step: yaw rate @3 s [deg/s]            12.329 .     12.265 .     12.264 .     12.264     abs 0.2 or rel 1%
+lift-off: d(yaw) 1 s [deg]              1.782 .      1.733 .      1.735 .      1.735     abs 0.2 or rel 3%
+lift-off: d(yaw rate) 1 s [deg/s]       1.604 .      1.562 .      1.565 .      1.566     abs 0.3 or rel 5%
+bump: peak Fz front [N]              7946.158 .   8043.602 .   8021.815 .   7992.054     rel 5%
+bump: peak Fz rear [N]               6924.611 .   6887.258 .   6801.762 .   6857.137     rel 5%
+bump: body z range [mm]                 6.960 .      6.938 .      6.965 .      6.967     abs 0.5 or rel 5%
+understeer gradient [deg/g]             0.991 .      0.992 .      0.992 .      0.992     abs 0.1
+WOT 0-8 s: v_end [km/h]                75.306 .     75.313 .     75.305 .     75.307     abs 0.3 or rel 0.5%
+cost [us wall per ms sim, 1 core]        25.7         50.8        101.3        202.1  
+converged (all within tolerance)         PASS         PASS         PASS          ref  
+minimum converging rate: 240 Hz (1 substeps per 240 Hz tick), 25.7 us per ms of sim
