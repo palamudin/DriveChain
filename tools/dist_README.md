@@ -145,6 +145,12 @@ You spawn at the **start hub**: a painted box on the flat dynamics pad inside th
 - `cars/`:
   - `miata_ac.ini`: hardpoints, springs, dampers, tyres, steering and engine, privately calibrated from third-party mod data, then corrected to stock 1990 values.
   - `mx5_na.ini` and `hatch_fwd.ini`: reference cars. Edit `car.ini` to switch.
+  - `*_tarmac.ini`: the same car on the TARMAC tyre model (`tyre_model = 1`, a port of the project owner's TARMAC
+    Vehicle Dynamics Lab tyre). `*_tarmac_brush.ini` adds the brush-saturation option (`tyre_tm_shape = 1`).
+    - Faithful TARMAC peaks early (≈ 2.5° slip) and loses grip quickly once sliding, so it spins where the default tyre
+      recovers.
+    - Add `tyre_tm_slide_floor = 1.0` (or 0.85) under `[front]` and `[rear]` for a gentler slide.
+    - The default envelope tyre remains the recommended model; see `docs/TYRE_TARMAC.md`.
 - `assets/miata_mesh/`: the car mesh (LOD B), with wheels, calipers/hubs and the steering wheel split out so each is posed from the physics.
 
 ## Countersteer and drift
