@@ -41,7 +41,7 @@ int mb_add_joint(mb_world* W, int type, const char* name, int a, int b) {
     J->type = type; J->nb = 2; J->b[0] = a; J->b[1] = b; J->b[2] = J->b[3] = -1;
     J->compl = REG; J->proj = 1; J->active = 1; J->q0.w = 1;
     snprintf(J->name, sizeof J->name, "%s", name ? name : "");
-    static const int rows[] = {3, 5, 4, 3, 1, 5, 6, 2, 1};
+    static const int rows[] = {3, 5, 4, 3, 1, 5, 6, 2, 1, 5};
     J->m = rows[type];
     return W->nj++;
 }
@@ -72,6 +72,12 @@ int mb_revolute(mb_world* W, const char* nm, int a, int b, v3 p, v3 axis) {
     axis = vnorm(axis);
     W->Jt[j].pa = to_local(W, a, p); W->Jt[j].pb = to_local(W, b, p);
     W->Jt[j].aa = dir_local(W, a, axis); W->Jt[j].ab = dir_local(W, b, axis); return j;
+}
+int mb_bushing(mb_world* W, const char* nm, int a, int b, v3 p, v3 axis) {
+    int j = mb_add_joint(W, MBJ_BUSH, nm, a, b); if (j < 0) return j;
+    axis = vnorm(axis);
+    W->Jt[j].pa = to_local(W, a, p); W->Jt[j].pb = to_local(W, b, p);
+    W->Jt[j].aa = dir_local(W, a, axis); W->Jt[j].ab = dir_local(W, b, axis); W->Jt[j].proj = 0; return j;
 }
 int mb_distance(mb_world* W, const char* nm, int a, v3 pa, int b, v3 pb) {
     int j = mb_add_joint(W, MBJ_DISTANCE, nm, a, b); if (j < 0) return j;
@@ -168,6 +174,16 @@ static void eval_std(const mb_world* W, const mb_joint* J, double Jo[6][MB_JB][6
             rowa(a, c, 1, Jo[r][0]); rowa(b, c, -1, Jo[r][1]); phi[r] = vdot(ea, eb); r++;
         }
         break; }
+    case MBJ_BUSH: {
+        /* translation rows along the sleeve axis and two radial directions (fixed in b), tilt rows about the radials */
+        v3 nb = dw_of(W, b, J->ab), na = dw_of(W, a, J->aa), t1, t2; perp2(nb, &t1, &t2);
+        v3 u[3] = {nb, t1, t2}, e = vcross(nb, na), d = vsub(pa, pb);
+        /* both translation forces act at the common midpoint: a massless rubber element transmits an equal and opposite wrench
+           (forces at pa and pb separately would leave a spurious couple (pa - pb) x F) */
+        v3 pm = vscl(vadd(pa, pb), 0.5);
+        for (int k = 0; k < 3; k++, r++) { rowp(W, a, pm, u[k], 1, Jo[r][0]); rowp(W, b, pm, u[k], -1, Jo[r][1]); phi[r] = vdot(d, u[k]); }
+        for (int k = 1; k < 3; k++, r++) { rowa(a, u[k], 1, Jo[r][0]); rowa(b, u[k], -1, Jo[r][1]); phi[r] = vdot(e, u[k]); }
+        break; }
     case MBJ_DISTANCE: {
         v3 d = vsub(pa, pb); double l = vlen(d); v3 u = l > 1e-12 ? vscl(d, 1 / l) : V3(1, 0, 0);
         rowp(W, a, pa, u, 1, Jo[0][0]); rowp(W, b, pb, u, -1, Jo[0][1]); phi[0] = l - J->L; r = 1;
@@ -187,6 +203,22 @@ void mb_eval_joint(mb_world* W, int j) {
     if (J->type == MBJ_CUSTOM) return;
     memset(J->J, 0, sizeof J->J);
     eval_std(W, J, J->J, J->phi);
+    if (J->type == MBJ_BUSH) {
+        /* implicit spring-damper row: lam = h f, f = -k (phi + h Jv+) - c Jv+  =>  Jv+ + lam/(h^2 k + h c) = -k phi/(h k + c) */
+        double h = W->h > 0 ? W->h : 1e-3;
+        for (int r = 0; r < J->m; r++) {
+            double k = J->sk[r], c = J->sc[r] > 0 ? J->sc[r] : 0;
+            if (k <= 0) { J->rc[r] = J->compl; J->t[r] = 0; continue; }
+            J->rc[r] = 1 / (h * (h * k + c)); J->t[r] = -k * J->phi[r] / (h * k + c);
+        }
+    }
+}
+double mb_bushing_energy(const mb_world* W, int j) {
+    if (j < 0) return 0;
+    const mb_joint* J = &W->Jt[j]; if (J->type != MBJ_BUSH) return 0;
+    double Jo[6][MB_JB][6], phi[6], e = 0; eval_std(W, J, Jo, phi);
+    for (int r = 0; r < J->m; r++) if (J->sk[r] > 0) e += 0.5 * J->sk[r] * phi[r] * phi[r];
+    return e;
 }
 
 /* ------------------------------------------------------------------ symbolic analysis */
@@ -445,7 +477,7 @@ static void assemble(mb_world* W) {
         int nd = W->node_of_joint[j]; if (nd < 0) continue;
         mb_joint* J = &W->Jt[j]; int m = J->m;
         double* D = W->D + 36 * nd; double* r = W->r + W->off[nd];
-        for (int a = 0; a < m; a++) { D[a * m + a] = -J->compl; r[a] = J->t[a]; }
+        for (int a = 0; a < m; a++) { D[a * m + a] = J->type == MBJ_BUSH ? -J->rc[a] : -J->compl; r[a] = J->t[a]; }
         for (int k = 0; k < J->nb; k++) {
             int b = J->b[k]; if (b < 0) continue;
             double M[36]; for (int a = 0; a < m; a++) for (int q = 0; q < 6; q++) M[a * 6 + q] = J->J[a][k][q];

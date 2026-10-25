@@ -15,11 +15,13 @@
 static int fails = 0;
 #define CHECK(cond, ...) do { int ok_ = (cond); printf("  %-4s ", ok_ ? "ok" : "FAIL"); printf(__VA_ARGS__); printf("\n"); if (!ok_) fails++; } while (0)
 
+static int g_bush = 0;  /* 1: arm pivots as compliant bushings (docs/BUSHINGS.md estimates) */
 static int g_jf = -1;   /* >= 0 overrides mb.jf (joint friction switch) */
 static dc_car* make(const char* ini, double v0, int steer_mode) {
     dc_car_params p; char err[256]; dc_default_params(&p);
     if (!dc_load_params(ini, &p, err, sizeof err)) { printf("load %s: %s\n", ini, err); return NULL; }
     p.solver = DC_SOLVER_MULTIBODY; if (g_jf >= 0) p.mb.jf = g_jf;
+    if (g_bush) for (int a = 0; a < 2; a++) { p.mb.bush_kr[a] = 2e6; p.mb.bush_ka[a] = 5e5; p.mb.bush_kt[a] = 300; }
     dc_car* c = dc_create(&p); double z[3] = {0, 0, 0}; dc_reset(c, z, 0, v0);
     dc_input in; memset(&in, 0, sizeof in); in.gear = 0; in.steer_mode = steer_mode; dc_set_input(c, &in);
     return c;
@@ -109,6 +111,34 @@ int main(int argc, char** argv) {
     dc_get_telemetry(c, &t);
     CHECK(fabs(t.sw_angle) < 0.35 * fabs(sw0), "self-centring: hands off at %.0f deg (column %.2f N m) -> %.1f deg after 1.5 s", sw0 * 180 / M_PI, col0, t.sw_angle * 180 / M_PI);
     dc_destroy(c);
+    /* --- compliant arm bushings: same audits; pose departs from the rigid kinematics by the bush deflection only */
+    {
+        g_bush = 1; c = make(ini, 0, DC_STEER_ANGLE); g_bush = 0;
+        printf("       bushings: %d arm pivots compliant\n", c->mb->nbush);
+        dmin = 1e9; dprev = 0; mono = 1;
+        for (int k = 0; k < 400; k++) { dc_step(c, 0.01); dc_get_telemetry(c, &t); if (k > 50 && t.dissipated < dprev - 1e-2) mono = 0; dprev = t.dissipated; dmin = fmin(dmin, t.dissipated); }
+        sfz = t.w[0].fz + t.w[1].fz + t.w[2].fz + t.w[3].fz;
+        CHECK(c->mb->nbush == 8 && fabs(sfz - mg) < 1e-3 * mg, "bushed static: %d bushes, sum Fz = m g (err %.2e)", c->mb->nbush, fabs(sfz - mg) / mg);
+        CHECK(dmin > -1e-6 && mono, "bushed static: dissipation >= 0 and non-decreasing (min %.3g J)", dmin);
+        joint_n3(c, &fr, &tr, &fref);
+        CHECK(fr < 1e-9 * fmax(fref, 1) && tr < 1e-8 * fmax(fref, 1), "bushed static: Newton-3 per joint %.2e N, %.2e N m", fr, tr);
+        dc_destroy(c);
+        g_bush = 1; c = make(ini, 15, DC_STEER_ANGLE); g_bush = 0;
+        memset(&in, 0, sizeof in); in.gear = 3; in.throttle = 0.25; in.steer_mode = DC_STEER_ANGLE;
+        in.steer_target = 60 * M_PI / 180; in.hands_k = 60; in.hands_d = 3; in.hands_tmax = 30; dc_set_input(c, &in);
+        emax = 0; frm = 0; trm = 0; mono = 1; dprev = 0;
+        for (int k = 0; k < 500; k++) {
+            dc_step(c, 0.01); dc_get_telemetry(c, &t);
+            if (k > 100) { e = kin_err(c, &ea); emax = fmax(emax, e); joint_n3(c, &fr, &tr, &fref); frm = fmax(frm, fr / fmax(fref, 1)); trm = fmax(trm, tr / fmax(fref, 1)); }
+            if (k > 10 && t.dissipated < dprev - 1e-2) mono = 0; dprev = t.dissipated;
+        }
+        rf = sqrt(t.resid_force[0]*t.resid_force[0]+t.resid_force[1]*t.resid_force[1]+t.resid_force[2]*t.resid_force[2]);
+        printf("       bushed cornering: ay %.2f m/s^2, yaw %.3f rad/s, max pose departure from rigid kinematics %.2f mm\n", t.ay, t.yaw_rate, emax * 1e3);
+        CHECK(frm < 1e-9 && trm < 1e-8, "bushed cornering: Newton-3 per joint (rel %.2e, %.2e m)", frm, trm);
+        CHECK(mono && rf < 1e-2, "bushed cornering: dissipation non-decreasing, momentum residual %.2e N", rf);
+        CHECK(emax > 1e-5 && emax < 5e-3, "bushed cornering: bush deflection visible but small (%.2f mm)", emax * 1e3);
+        dc_destroy(c);
+    }
     printf(fails ? "=== %d FAILURES ===\n" : "=== ALL PASS ===\n", fails);
     return fails != 0;
 }

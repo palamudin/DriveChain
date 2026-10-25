@@ -121,12 +121,13 @@ typedef struct {
 } dc_axle_params;
 
 /* Multibody solver parameters (solver = DC_SOLVER_MULTIBODY). Index [0] front, [1] rear. Lengths m, masses kg.
-   Zero bushing rates mean a rigid joint (revolute) at that pivot. */
+   Zero bushing rates mean a rigid joint (revolute) at that pivot; kr, ka and kt all > 0 make both arm pivots of that axle
+   compliant bushings (5 implicit spring-damper rows, docs/BUSHINGS.md). rack_mount_k/c are parsed but not yet used. */
 typedef struct {
     double uca_mass[2], lca_mass[2], knuckle_mass[2], wheel_mass[2];   /* wheel_mass = rim + tyre + hub/rotor */
     double knuckle_inertia[2][3];   /* knuckle (+caliper) about x,y,z, kg m^2 */
     double wheel_inertia_t[2];      /* wheel transverse inertia (spin inertia is tyre_spin_inertia) */
-    double bush_kr[2], bush_ka[2], bush_kt[2];   /* arm pivot bushings: radial N/m, axial N/m, conical (tilt) N m/rad */
+    double bush_kr[2], bush_ka[2], bush_kt[2];   /* per bush (two per arm): radial N/m, axial N/m, conical (tilt) N m/rad */
     double bush_damp;               /* bushing damping as a loss factor: c = bush_damp * k / (2 pi 10 Hz) */
     double rack_mount_k, rack_mount_c;   /* rack housing to body along the rack axis, N/m, N s/m (0 = rigid) */
     double arb_arm[2], arb_link_frac[2], arb_bar_dz[2];  /* bar lever length, drop-link point along the lower arm (0 inner..1 ball joint), bar axis height above the lower-arm axis */

@@ -63,6 +63,8 @@ In both cores the front wheels follow the front axle's slip angle up to full loc
 
 - Valve: by default the steady-state open-centre law. `mb_valve_model = 1/2` adds the rotary-valve bridge with chamber
   and supply pressure states, hose compliance and emergent lag/back-drive (opt-in, docs/VALVE.md).
+- Bushings: arm pivots are rigid revolutes by default. `mb_bush_kr/ka/kt > 0` makes them compliant rows (`MBJ_BUSH`, opt-in,
+  docs/BUSHINGS.md). Rack mount, ARB and top-mount bushes are still rigid.
 - Tyre lateral force still explicit (Phase 4). Both cores creep backward at about 1 mm/s when parked with no brake
   on a flat road (low-speed tyre regularisation). Phase 4 adds the 0 km/h slope-hold test.
 - Bushings rigid (Phase 5). Half-shafts/CV joints not separate bodies yet (Phase 6). AWD uses the legacy core.

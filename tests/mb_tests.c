@@ -327,6 +327,52 @@ static void t_momentum(void) {
     mb_destroy(W);
 }
 
+/* ---- 6b. compliant bushing rows: static rates, energy (no gain), momentum */
+static void t_bushing(void) {
+    printf("[bushing] MBJ_BUSH: static deflection = F/k per mode, undamped energy never grows, free-pair momentum\n");
+    double kr = 2e6, ka = 5e5, kc = 3e3, h = 1.0 / 2000;
+    {   /* static: 2 kg body on a grounded bush (axis y), load in z (radial), y (axial), moment about x (conical) */
+        mb_world* W = mb_create();
+        int b = mb_add_body(W, "arm", 2, diag3(0.02, 0.01, 0.02), V3(0, 0, 0), QI);
+        int j = mb_bushing(W, "bush", b, -1, V3(0, 0, 0), V3(0, 1, 0));
+        double kk[5] = {ka, kr, kr, kc, kc};
+        for (int r = 0; r < 5; r++) { W->Jt[j].sk[r] = kk[r]; W->Jt[j].sc[r] = 0.02 * kk[r]; }
+        mb_finalize(W);
+        double Fz = -500, Fy = 300, Mx = 40;
+        for (int s = 0; s < 4000; s++) { mb_begin(W, h); W->B[b].F = V3(0, Fy, Fz); W->B[b].T = V3(Mx, 0, 0); mb_solve(W); mb_integrate(W, 1); }
+        mb_body* B = &W->B[b]; v3 ez = mv(&B->R, V3(0, 0, 1));
+        check("radial deflection error (z = Fz/kr) [rel]", (B->x.z - Fz / kr) / (Fz / kr), 2e-3);
+        check("axial deflection error (y = Fy/ka) [rel]", (B->x.y - Fy / ka) / (Fy / ka), 2e-3);
+        check("conical tilt error (rx = Mx/kc) [rel]", (asin(-ez.y) - Mx / kc) / (Mx / kc), 5e-3);
+        double e = mb_bushing_energy(W, j), e0 = 0.5 * (Fz * Fz / kr + Fy * Fy / ka + Mx * Mx / kc);
+        check("stored energy 1/2 F^2/k [rel]", (e - e0) / e0, 1e-2);
+        mb_destroy(W);
+    }
+    {   /* two free bodies, undamped bush, initial relative velocity and spin, no gravity */
+        mb_world* W = mb_create();
+        int a = mb_add_body(W, "a", 5, diag3(0.2, 0.3, 0.4), V3(0, 0, 0), QI);
+        int b = mb_add_body(W, "b", 2, diag3(0.05, 0.02, 0.05), V3(0.3, 0.1, 0), QI);
+        W->B[a].v = V3(0.3, -0.2, 0.1); W->B[a].w = V3(0.5, 1.0, -0.3);
+        W->B[b].v = V3(-0.2, 0.4, 0.3); W->B[b].w = V3(2, 8, -1);
+        int j = mb_bushing(W, "bush", b, a, V3(0.3, 0.1, 0), V3(0, 1, 0));
+        double kk[5] = {ka, kr, kr, kc, kc};
+        for (int r = 0; r < 5; r++) W->Jt[j].sk[r] = kk[r];
+        mb_finalize(W);
+        v3 P0, L0, P, L; double ep = 0, el = 0, gain = 0;
+        MOM(P0, L0);
+        double E0 = mb_kinetic(W) + mb_bushing_energy(W, j), Eprev = E0;
+        for (int s = 0; s < 10000; s++) {
+            mb_begin(W, h); mb_solve(W); mb_integrate(W, 1);
+            MOM(P, L); ep = fmax(ep, vlen(vsub(P, P0))); el = fmax(el, vlen(vsub(L, L0)));
+            double E = mb_kinetic(W) + mb_bushing_energy(W, j); gain = fmax(gain, (E - Eprev) / E0); Eprev = E;
+        }
+        check("linear momentum change [N s]", ep, 1e-10);
+        check("angular momentum change / |L| over 5 s", el / vlen(L0), 2e-3);
+        check("max per-step energy gain / E0 (implicit rows dissipate only)", fmax(gain, 0), 1e-6);
+        mb_destroy(W);
+    }
+}
+
 /* ---- 7. zero allocation + benchmark on a car-sized tree (35 bodies, ~120 rows) */
 static void t_bench(void) {
     printf("[bench] car-sized mechanism: chassis + 4 x (2 arms, knuckle, wheel, link) + 5 steering + 4 ARB + 3 driveline\n");
@@ -374,7 +420,7 @@ static void t_bench(void) {
 int main(void) {
     if (system("mkdir -p results/mb")) {}
     printf("=== dc_mb Phase 0 ===\n");
-    t_pendulum(); t_slider_crank(); t_fourbar(); t_static(); t_friction(); t_jfric(); t_momentum(); t_bench();
+    t_pendulum(); t_slider_crank(); t_fourbar(); t_static(); t_friction(); t_jfric(); t_momentum(); t_bushing(); t_bench();
     printf("=== %s (%d failures) ===\n", fails ? "FAIL" : "ALL PASS", fails);
     return fails ? 1 : 0;
 }

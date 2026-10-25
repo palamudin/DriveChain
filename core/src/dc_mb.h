@@ -25,7 +25,7 @@
 #define MB_MAXBOX 112                /* box (Schur) rows per step */
 #define MB_FSRC 4                    /* normal-reaction sources per friction joint */
 
-enum { MBJ_SPHERICAL, MBJ_REVOLUTE, MBJ_UJOINT, MBJ_UJOINT_SLIP, MBJ_DISTANCE, MBJ_PRISMATIC, MBJ_WELD, MBJ_POINTLINE, MBJ_CUSTOM };
+enum { MBJ_SPHERICAL, MBJ_REVOLUTE, MBJ_UJOINT, MBJ_UJOINT_SLIP, MBJ_DISTANCE, MBJ_PRISMATIC, MBJ_WELD, MBJ_POINTLINE, MBJ_CUSTOM, MBJ_BUSH };
 
 typedef struct {
     double m; m3 Ib, Ibinv;          /* mass, body-frame inertia about COM */
@@ -48,6 +48,9 @@ typedef struct {
     int active;                      /* box rows only */
     int proj;                        /* include in position projection */
     double compl;                    /* regularisation / compliance (velocity per impulse) */
+    /* compliant rows (MBJ_BUSH): row r is an implicit spring-damper of stiffness sk[r] and damping sc[r] (N/m, N s/m or
+       N m/rad, N m s/rad) instead of a rigid constraint; sk <= 0 keeps the row rigid. Not position-projected. */
+    double sk[6], sc[6], rc[6];
     /* load-dependent Coulomb bound (box joints with nsrc > 0): every row r obeys |lam_r| <= B, or the row vector
        |lam| <= B when cone = 1, with  B = pre + sum_k c_k * max(0, |N_k| - d_k)
        N_k = impulse vector of rows r0..r0+nr-1 of factorised joint j (minus its component along ax when nr = 3 and
@@ -114,6 +117,10 @@ double mb_debug_residual(mb_world* W);
 /* convenience joint constructors from WORLD points/axes at the current (design) pose */
 int  mb_spherical(mb_world* W, const char* nm, int a, int b, v3 p);
 int  mb_revolute(mb_world* W, const char* nm, int a, int b, v3 p, v3 axis);
+/* rubber bushing at p with axis: rows 0 axial, 1-2 radial (translation), 3-4 conical (tilt); rotation about the axis is
+   free (as a revolute). Rates per row in J->sk/sc (all rigid until set). Frame fixed in b (the body the sleeve is pressed into). */
+int  mb_bushing(mb_world* W, const char* nm, int a, int b, v3 p, v3 axis);
+double mb_bushing_energy(const mb_world* W, int j);   /* elastic energy 1/2 sum k phi^2 at the current configuration, J */
 int  mb_distance(mb_world* W, const char* nm, int a, v3 pa, int b, v3 pb);
 int  mb_prismatic(mb_world* W, const char* nm, int a, int b, v3 axis);
 int  mb_pointline(mb_world* W, const char* nm, int a, v3 pa, v3 axis, int b, v3 pb);

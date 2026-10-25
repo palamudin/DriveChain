@@ -24,6 +24,7 @@ typedef struct dc_mbcar {
     int kn[4], wh[4];                        /* knuckle (upright + hub carrier), wheel (rim+tyre+hub+rotor) */
     int narm[4], arm[4][3], arm_l[4][3][2];  /* A-arm bodies built from link pairs sharing an upright point */
     int j_arm_rev[4][3], j_arm_bj[4][3];
+    int nbush;                      /* arm pivots built as compliant bushings (0 = all rigid revolutes) */
     int j_link[4][DC_MAX_LINKS];             /* distance joint for unpaired links (tie rod/toe link/multilink rods), else -1 */
     int j_hub[4], j_strut[4];
     int lo_body[4];                          /* body carrying the spring lower seat (lower arm or knuckle) */

@@ -38,21 +38,25 @@ for name, keys in SETS.items():
     open(f[:-4] + "_" + name + ".ini", "w", newline='').write("\r\n".join(x.rstrip("\r") for x in out) + "\r\n")
 PY
 done
-# opt-in hydraulic-valve proposal for every base car (docs/VALVE.md; defaults unchanged): _propV = rotary-valve
-# pressure states (mb_valve_model = 1, contoured edges) with the pump at full flow from idle (assist_rpm_full = 800).
-for f in $D/cars/*.ini; do case "$f" in *_tarmac*|*_prop*) continue;; esac; python3 - "$f" <<'PY'
+# opt-in proposals for every base car (defaults unchanged); each writes <car>_<suffix>.ini with keys appended to [car]:
+#  _propV = rotary-valve pressure states (mb_valve_model = 1, contoured edges), pump at full flow from idle (docs/VALVE.md)
+#  _propB = compliant arm-pivot bushings at documented estimates (docs/BUSHINGS.md)
+mkprop() { suffix=$1; shift; for f in $D/cars/*.ini; do case "$f" in *_tarmac*|*_prop*) continue;; esac
+python3 - "$f" "$suffix" "$@" <<'PY'
 import sys, re
-f = sys.argv[1]; lines = open(f, newline='').read().splitlines(); out, sec = [], None
-KEYS = ["; hydraulic-valve proposal propV (docs/VALVE.md)", "mb_valve_model = 1", "assist_rpm_full = 800"]
+f, suffix, KEYS = sys.argv[1], sys.argv[2], sys.argv[3:]
+lines = open(f, newline='').read().splitlines(); out, sec = [], None
 for l in lines:
     m = re.match(r"\s*\[(\w+)\]", l)
     if m and sec == "car": out += KEYS
     if m: sec = m.group(1)
     out.append(l)
 if sec == "car": out += KEYS
-open(f[:-4] + "_propV.ini", "w", newline='').write("\r\n".join(x.rstrip("\r") for x in out) + "\r\n")
+open(f[:-4] + "_" + suffix + ".ini", "w", newline='').write("\r\n".join(x.rstrip("\r") for x in out) + "\r\n")
 PY
-done
+done; }
+mkprop propV "; hydraulic-valve proposal propV (docs/VALVE.md)" "mb_valve_model = 1" "assist_rpm_full = 800"
+mkprop propB "; compliant-bushing proposal propB (docs/BUSHINGS.md)" "mb_bush_kr = 2e6, 2e6" "mb_bush_ka = 5e5, 5e5" "mb_bush_kt = 300, 300"
 # private mesh maps (owner's testing only): every private/tracks/<name> with a track.cfg -> tracks/<name> (F6 in the demo)
 for t in private/tracks/*/; do [ -f "$t/track.cfg" ] || continue; n=$(basename "$t"); mkdir -p $D/tracks/$n
   for f in track.cfg collider.bin scenery.bin line.csv pitline.csv CREDITS.md; do [ -f "$t/$f" ] && cp "$t/$f" $D/tracks/$n/; done; done

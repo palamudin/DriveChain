@@ -254,7 +254,18 @@ dc_mbcar* dc_mbcar_create(dc_car* c) {
                 int n = m->narm[i]++;
                 m->arm[i][n] = addb(m, lower ? "lca" : "uca", ma, Ib, cg, qid()); ACC(m->arm[i][n]);
                 m->arm_l[i][n][0] = l; m->arm_l[i][n][1] = q;
-                m->j_arm_rev[i][n] = mb_revolute(W, lower ? "lca_pivot" : "uca_pivot", m->arm[i][n], m->ch, vscl(vadd(pts[0], pts[1]), 0.5), vsub(pts[1], pts[0]));
+                v3 pmid = vscl(vadd(pts[0], pts[1]), 0.5), pax = vsub(pts[1], pts[0]);
+                if (M->bush_kr[a] > 0 && M->bush_ka[a] > 0 && M->bush_kt[a] > 0) {
+                    /* two rubber bushes at the inner pivots, lumped at their midpoint as one compliant row set (docs/BUSHINGS.md):
+                       translation 2 kr / 2 ka; tilt 2 kt + 2 kr (L/2)^2 (the pair resists tilt by opposite radial deflection);
+                       rotation about the pivot axis free (torsion carried by the spring). Damping c = loss * k / (2 pi 10 Hz). */
+                    double L = vlen(pax), kr = 2 * M->bush_kr[a], ka = 2 * M->bush_ka[a], kc = 2 * M->bush_kt[a] + 0.5 * M->bush_kr[a] * L * L;
+                    int j = m->j_arm_rev[i][n] = mb_bushing(W, lower ? "lca_bush" : "uca_bush", m->arm[i][n], m->ch, pmid, pax);
+                    double kk[5] = {ka, kr, kr, kc, kc}, cf = fmax(M->bush_damp, 0) / (2 * M_PI * 10);
+                    for (int q = 0; q < 5; q++) { W->Jt[j].sk[q] = kk[q]; W->Jt[j].sc[q] = cf * kk[q]; }
+                    m->nbush++;
+                } else
+                    m->j_arm_rev[i][n] = mb_revolute(W, lower ? "lca_pivot" : "uca_pivot", m->arm[i][n], m->ch, pmid, pax);
                 m->j_arm_bj[i][n] = mb_spherical(W, lower ? "lca_bj" : "uca_bj", m->arm[i][n], m->kn[i], bj);
                 if (jf) {   /* ball-in-socket friction torque <= T0 + mu r |F|, isotropic (all three relative rotations) */
                     int fb2[2] = {m->arm[i][n], m->kn[i]};
@@ -728,6 +739,7 @@ void dc_mbcar_step(dc_car* c) {
     /* ---- 6. solve (re-solve once if the linearised Fx overshoots the friction circle) */
     for (int b = 0; b < W->nb; b++) { m->v_save[b] = W->B[b].v; m->w_save[b] = W->B[b].w; }
     /* stored energy at the start of the step, every term at the same instant (energy audit) */
+    if (m->nbush) for (int i = 0; i < 4; i++) for (int n = 0; n < m->narm[i]; n++) pe += mb_bushing_energy(W, m->j_arm_rev[i][n]);
     double E_start = pe;
     if (m->vmodel) { double eh = dc_valve_energy(&m->vlv, m->vp, r); E_start += eh; pe += eh; }
     for (int b = 0; b < W->nb; b++) {
