@@ -13,4 +13,16 @@
   ok   cornering: dissipation non-decreasing (28431.9 J after 5 s)
   ok   cornering: momentum residual 1.58e-03 N
   ok   self-centring: hands off at 88 deg (column 2.31 N m) -> -6.4 deg after 1.5 s
+       bushings: 8 arm pivots compliant
+  ok   bushed static: 8 of 8 arm pivots bushed, sum Fz = m g (err 1.65e-04)
+  ok   bushed static: dissipation >= 0 and non-decreasing (min 71 J)
+  ok   bushed static: Newton-3 per joint 0.00e+00 N, 1.44e-12 N m
+       bushed cornering: ay 4.22 m/s^2, yaw 0.302 rad/s, max pose departure from rigid kinematics 0.90 mm
+  ok   bushed cornering: Newton-3 per joint (rel 0.00e+00, 2.73e-11 m)
+  ok   bushed cornering: dissipation non-decreasing, momentum residual 2.74e-03 N
+  ok   bushed cornering: bush deflection visible but small (0.90 mm)
+  ok   carrier: reset KE adds 1/2 I_d wc^2 + 1/2 I_go (fd wc)^2 = 490.66 J (got 490.66 J, wc 69.2 rad/s)
+  ok   carrier: ratio chain holds (carrier = wheel mean, propshaft = fd x carrier), rel err 2.97e-07
+  ok   carrier: Newton-3 per joint under drive and in neutral (rel 0.00e+00, 1.32e-11 m)
+  ok   carrier: dissipation non-decreasing, momentum residual 5.80e-04 N
 === ALL PASS ===

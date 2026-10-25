@@ -34,9 +34,41 @@
 [momentum] two free bodies, revolute + implicit torsion spring element, gyroscopic spin, no gravity
   linear momentum change [N s]                        2.505e-12  (limit 1.0e-10)  PASS
   angular momentum change / |L| over 5 s (implicit gyro, O(h))    9.659e-04  (limit 2.0e-03)  PASS
+[bushing] MBJ_BUSH: static deflection = F/k per mode, undamped energy never grows, free-pair momentum
+  radial deflection error (z = Fz/kr) [rel]          -2.385e-15  (limit 2.0e-03)  PASS
+  axial deflection error (y = Fy/ka) [rel]           -3.253e-15  (limit 2.0e-03)  PASS
+  conical tilt error (rx = Mx/kc) [rel]              -2.783e-03  (limit 5.0e-03)  PASS
+  stored energy 1/2 F^2/k [rel]                      -3.573e-03  (limit 1.0e-02)  PASS
+  linear momentum change [N s]                        2.366e-14  (limit 1.0e-10)  PASS
+  angular momentum change / |L| over 5 s              1.394e-03  (limit 2.0e-03)  PASS
+  max per-step energy gain / E0 (implicit rows dissipate only)    0.000e+00  (limit 1.0e-06)  PASS
+[beam] MBJ_BEAM: cantilever static deflection (axial, 2 bending planes, torsion, shear), 1st mode, passivity, free-pair momentum
+  axial  dx = F L/EA         got 1.190476e-05  continuum 1.190476e-05  discrete N=10 1.190476e-05
+  axial  dx = F L/EA vs discrete-rod closed form [rel]   -2.276e-11  (limit 1.0e-03)  PASS
+  axial  dx = F L/EA vs continuum (N=10, O(1/N^2)) [rel]   -2.276e-11  (limit 4.0e-03)  PASS
+  bend z dz = P L^3/3EIy     got -1.484372e-03  continuum -1.488095e-03  discrete N=10 -1.484375e-03
+  bend z dz = P L^3/3EIy vs discrete-rod closed form [rel]   -2.252e-06  (limit 1.0e-03)  PASS
+  bend z dz = P L^3/3EIy vs continuum (N=10, O(1/N^2)) [rel]   -2.502e-03  (limit 4.0e-03)  PASS
+  bend z stored energy = 1/2 P delta (Clapeyron) [rel]   -1.170e-06  (limit 1.0e-03)  PASS
+  bend y dy = P L^3/3EIz     got 2.968723e-03  continuum 2.976190e-03  discrete N=10 2.968750e-03
+  bend y dy = P L^3/3EIz vs discrete-rod closed form [rel]   -9.053e-06  (limit 1.0e-03)  PASS
+  bend y dy = P L^3/3EIz vs continuum (N=10, O(1/N^2)) [rel]   -2.509e-03  (limit 4.0e-03)  PASS
+  torsion rx = T L/GJ        got 3.369454e-03  continuum 3.369454e-03  discrete N=10 3.369454e-03
+  torsion rx = T L/GJ vs discrete-rod closed form [rel]    4.731e-09  (limit 1.0e-03)  PASS
+  torsion rx = T L/GJ vs continuum (N=10, O(1/N^2)) [rel]    4.731e-09  (limit 4.0e-03)  PASS
+  Timoshenko z (kappa 5/6)   got -1.486223e-03  continuum -1.489947e-03  discrete N=10 -1.486227e-03
+  Timoshenko z (kappa 5/6) vs discrete-rod closed form [rel]   -2.280e-06  (limit 1.0e-03)  PASS
+  Timoshenko z (kappa 5/6) vs continuum (N=10, O(1/N^2)) [rel]   -2.499e-03  (limit 4.0e-03)  PASS
+  zero rates -> rigid: tip deflection [m]            -2.665e-12  (limit 1.0e-07)  PASS
+  1st bending mode 14.451 Hz (Euler-Bernoulli 14.472 Hz, N = 20), energy after 1 s 0.4258 of E0 (implicit Euler)
+  1st bending frequency vs Euler-Bernoulli [rel]     -1.444e-03  (limit 1.0e-02)  PASS
+  max per-step energy gain / E0 (undamped, implicit rows dissipate only)    0.000e+00  (limit 1.0e-09)  PASS
+  free pair: linear momentum change [N s]             2.681e-14  (limit 1.0e-10)  PASS
+  free pair: angular momentum change / |L| over 5 s    8.625e-04  (limit 2.0e-03)  PASS
+  free pair: max per-step energy gain / E0            0.000e+00  (limit 1.0e-06)  PASS
 [bench] car-sized mechanism: chassis + 4 x (2 arms, knuckle, wheel, link) + 5 steering + 4 ARB + 3 driveline
   bodies 30, joints 41, nodes 67, unknowns 333, factor blocks 2916 doubles
   heap allocations during 4000 steps                  0.000e+00  (limit 0.0e+00)  PASS
-  70.1 us per step (target <= 250 us)
+  65.8 us per step (target <= 250 us)
   step time over 250 us budget [us]                   0.000e+00  (limit 0.0e+00)  PASS
 === ALL PASS (0 failures) ===
