@@ -25,10 +25,10 @@ are game developers.
     loads act;
   * wind enters only through the relative velocity;
   * nothing about the sign or size of lift is imposed.
-* **Newtonian impact theory, option (c), is falsified on our mesh.** It gives
-  *downforce* (CL = −0.26) where the real car makes lift. Tuning Cp_max to 1 makes
-  Cd = 0.376 match the real car, yet lift stays wrong-signed (−0.13). This is the
-  textbook example of a fitted coefficient hiding wrong physics.
+* **Newtonian impact theory, option (c), is falsified on a real car surface.** It gives
+  *downforce* where real cars make lift, and tuning Cp_max can bring Cd onto the target
+  while lift stays wrong-signed. This is the textbook example of a fitted coefficient
+  hiding wrong physics (§4).
 * **A runtime panel/VLM method, option (b), is rejected.** It is attached-flow only: base
   pressure and separation cannot come out of it without prescribing separation lines,
   which would be an imposed gate. It is also too expensive (~70+ µs per sim-ms) once the
@@ -37,11 +37,11 @@ are game developers.
   At a 240 Hz aero tick that is **~9 µs per sim-ms, about 2% of the current MB core
   (~450 µs per sim-ms)**. 256 panels costs ~1.5–1.9 µs per sim-ms.
 * **CFD does run on this box.** OpenFOAM v1912 (Debian) runs simpleFoam with k-ω SST,
-  snappyHexMesh and a moving ground. The first coarse Miata case ran with 1.2 M cells
-  (results in §5). **Geometry alone gave net lift, CL ≈ +0.11–0.12, with rear > front
-  (CLR ≈ +0.15, CLF ≈ −0.04).** Pressure-drag Cd_p ≈ 0.47, against Mazda's 0.44 top
-  down. The mesh is coarse with no layers: P2 has to converge this and validate the
-  front split.
+  snappyHexMesh and a moving ground. A first coarse case (~1.2 M cells) ran on the private
+  test mesh (§5). Geometry alone gave net lift with rear > front, as the §3 targets
+  expect; the numbers stay in private notes. The mesh is coarse with no layers: P2 has to
+  converge this and validate the front split against the public targets (Mazda Cd
+  0.38 / 0.44, A 1.644 m²; SAE 840297 for the Uno).
 * **Other vehicles (§12):** a passing truck or a car ahead changes only the air at our
   panels, through per-type CFD field maps plus pair-CFD corrections at close range. The
   steering kick comes out of the tyres. The incident-pressure lower bound for a truck at
@@ -115,7 +115,7 @@ sim-ms.
 | | (a) Offline CFD maps → per-panel loads | (b) Runtime panel/VLM + ground image | (c) Newtonian impact | (d) Hybrid: (a) + POD + quasi-steady unsteady filter |
 |---|---|---|---|---|
 | Physics | Full RANS (later DES) incl. separation, base pressure, underbody, ground, cooling | Inviscid, attached flow; separation only if separation lines are *prescribed* (Maskew-type wake models) | Momentum of particles hitting windward faces; **no suction, no ground effect, no wake** (Anderson, *Hypersonic and High-Temperature Gas Dynamics*, ch. 3 [S]: valid for hypersonic flow) | As (a), plus a gust/yaw transient filter calibrated from transient CFD |
-| Net lift from geometry? | Yes (subject to validation, §5) | Partial: gets upper-surface suction but not wake/base; separation input = imposed gate | **No: wrong sign** ([M] §4) | Yes |
+| Net lift from geometry? | Yes (subject to validation, §5) | Partial: gets upper-surface suction but not wake/base; separation input = imposed gate | **No: wrong sign** (§4) | Yes |
 | Wind/yaw/gusts | Yaw and ride states in the map; gust via quasi-steady | Natively (instantaneous) | Natively but wrong | Map + local v_rel per panel + admittance filter |
 | Runtime cost | ~9 µs per sim-ms (1024 panels, [M]) | ≥ ~70 µs per sim-ms with a fixed LU; AIC must be rebuilt (N³) when ground-image geometry changes with heave/pitch → ms per update [M estimate] | ~2–5 µs per sim-ms (raster) | ~9 µs per sim-ms (POD K=16: 8.6 µs, 0.34 MB [M]) |
 | Offline cost | High (CFD sweep: hours to days CPU) | None | None | High (same as a) |
@@ -156,13 +156,12 @@ sim-ms.
 | Cd, top down | **0.44** | same Mazda spec sheet [S] |
 | Frontal area | 1.644 m² (17.7 ft²) | Car and Driver road test, Sept 1989, as quoted on forum.miata.net (threads t=185634, t=395995) [S2] |
 | Frontal area | 1.71 m² (18.42 ft²) | forum.miata.net t=5087, provenance unknown [S2] |
-| Frontal area of our mesh (top down, incl. wheels) | **1.627 m²** | [M] `meshcheck.py` raster (1.624 m² from the `newtonian.py` raster) |
 | CdA top up | 0.62–0.65 m² | derived; current ini 0.63 |
-| Wheelbase | 2.265 m | Mazda spec [S]; mesh axle x: +1.099 / −1.167 m [M] |
+| Wheelbase | 2.265 m | Mazda spec [S] |
 | Lift, stock | **none published found** | [U] — see the trend data below |
 | Lift trend (indirect) | Net lift, rear > front | Occam's Racers wind-tunnel results, https://occamsracers.com/results/ and /results/open-top-chop-top-hard-top-and-fastback/ [S2]: all modified cars (air dam, plywood boot, windows open, no wing). Hardtop + VGs: CLF 0.22 / CLR 0.38 / CL 0.59, Cd 0.49. Chop top: 0.11 / 0.20 / 0.31, Cd 0.48. Fastback: 0.16 / 0.18 / 0.35, Cd 0.38. The author's remark that stock CL is "high 0.30s" is unsourced [U]. |
 
-**Acceptance for the Miata (top down, matching the mesh):**
+**Acceptance for the Miata (top down):**
 * Cd within ±15% of 0.44;
 * **CL > 0 from geometry alone**;
 * CLR > CLF.
@@ -198,92 +197,54 @@ There is **no Uno geometry on the box**; see the open questions.
 
 ---
 
-## 4. Newtonian falsification (option c) — [M]
+## 4. Newtonian falsification (option c)
 
 Tool: `tools/aero/newtonian.py`.
 * A visibility raster normal to U finds each cell's first-hit triangle.
 * `Cp = Cp_max·sin²θ`, applied to the windward faces only (classical modified Newtonian).
 * Lee-side Cp = 0.
-* Same LOD A mesh as the CFD, top down, with wheels.
 
-| Case | Cd | CL | CLF | CLR | CS | Verdict |
-|---|---|---|---|---|---|---|
-| β = 0, Cp_max = 2 | 0.753 | **−0.262** | −0.034 | −0.227 | 0 | FAIL (downforce) |
-| β = 10°, Cp_max = 2 | 0.654 | −0.196 | — | — | −0.134 | FAIL |
-| β = 0, Cp_max = 1 ("tuned") | **0.376** | **−0.131** | — | — | — | FAIL: Cd "matches", lift wrong sign |
-
-* At β = 0, 69% of the impacted cells push *down*: the bonnet, windscreen and boot
-  surfaces face partly upward-forward.
+Result on a real car surface (top down, with wheels): **FAIL**. The method gives net
+*downforce* at β = 0 and β = 10°, because most impacted cells on the bonnet, windscreen
+and boot face partly upward-forward. A "tuned" Cp_max = 1 brings Cd near the public target
+(Mazda 0.38–0.44) while lift keeps the wrong sign. Measured results on the private test mesh are kept out of this public document (private notes only).
 * Newtonian theory has no mechanism for the suction over these surfaces, which is the
-  dominant source of lift on a real car. It also has no ground effect and no base
-  pressure.
-* The Cp_max = 1 row shows why tuned coefficients are unacceptable: a fitted constant
-  reproduces the drag while the lift remains physically wrong.
+  dominant source of lift on a real car (Hucho ch. 4 [S]). It also has no ground effect
+  and no base pressure.
+* The tuned case shows why fitted coefficients are unacceptable: a constant reproduces
+  the drag while the lift remains physically wrong.
 
 ---
 
-## 5. CFD on the box — first coarse Miata run (top down)
+## 5. CFD on the box — first coarse car run (top down)
 
 **Case:**
-* generated by `tools/aero/foam_case.py` into `/workspace/aero_scratch/miata_u30` (not in
-  git);
+* generated by `tools/aero/foam_case.py` into a scratch directory under
+  `/workspace/aero_scratch/` (not in git; it holds the private mesh);
 * OpenFOAM v1912 (Debian package);
 * steady simpleFoam with k-ω SST (Menter, AIAA J. 32(8), 1994 [S]).
 
 **Setup:**
 * U = 30 m/s; moving ground at road speed; slip far field.
-* Domain x −16..+8 m, y ±5 m, height 5 m (blockage ≈ 1.627 / (10·5) = 3.3%).
+* Domain x −16..+8 m, y ±5 m, height 5 m (blockage ≈ 3% for A ≈ 1.6 m²).
 * blockMesh 0.25 m. snappyHexMesh surface level 3–4 (31–16 mm), near box level 3, wake
-  box level 2, **no prism layers**.
-* 1,204,991 cells. snappy took 72 s on 4 cores.
-* checkMesh: one failed check, 42 highly skewed faces (max 12.3), which is tolerable for
-  a first look.
-
-**Geometry:** LOD A source mesh, with glass, wheels and underbody.
-* surfaceCheck: not closed, 200 illegal triangles.
-* snappy closes sub-cell gaps. Flow can enter the cockpit, which is physically right for
-  top down, and the engine bay through the grille *without radiator resistance*.
+  box level 2, **no prism layers**. ~1.2 M cells.
 
 **Forces:** `tools/aero/foam_forces.py` integrates pressure only. The function-object
 route aborts in this OpenFOAM build ("error in IOstream sha1", a Debian toolchain bug).
 Viscous drag is excluded, typically ~5–10% of the total on a car per Hucho [S], so
 `Cd_p < Cd`.
 
-**Results [M]:**
-
-| Snapshot | Cd_p (pressure only) | CL | CLF | CLR | CPM | CS |
-|---|---|---|---|---|---|---|
-| iteration 600 | 0.473 | **+0.120** | −0.036 | **+0.155** | −0.095 | −0.005 |
-| iteration 700 | 0.476 | **+0.110** | −0.041 | **+0.152** | −0.096 | +0.005 |
-
-A = 1.627 m², U = 30 m/s, ρ = 1.2. Forces: drag ≈ 416–418 N, lift ≈ +97–105 N.
-
-* **Acceptance criterion met at first-look level.** The bare geometry gives **net lift
-  (CL ≈ +0.11–0.12)** with **rear lift > front lift**. No sign or coefficient was
-  imposed anywhere: the same solver and mesh pipeline just integrated the surface
-  pressure.
-* **Front is near zero / slightly negative.** CLF ≈ −0.04, i.e. a slight front
-  downforce.
-  * Occam's modified cars show a positive front lift, but those cars differ (air dam,
-    hardtop/chop top).
-  * This case has an open grille path with no radiator resistance and stationary
-    wheels.
-  * The front split is therefore *not yet validated*. It is a P2 item: porous radiator,
-    rotating wheels and mesh convergence.
-* **Drag.** Cd_p ≈ 0.47–0.48, against Mazda's 0.44 top down (total, including skin
-  friction). The pressure-only value is already ~8% high. That is the expected direction
-  for a coarse, layer-free mesh, which typically over-predicts separation. The Cd target
-  is not yet met: within 15% if friction is small, but it must be confirmed in P2.
-* **Lift is a small difference of large numbers.** The upward-looking surfaces contribute
-  CL ≈ +2.44 (suction over the bonnet, screen and deck). The downward-looking surfaces
-  contribute ≈ −2.32 (floor). So **CL is sensitive to the floor/underbody and to
-  mesh resolution**: mesh convergence (P2) is mandatory before the map sweep.
-* **x-station breakdown** (iteration 600): lift is generated mainly from the cockpit to
-  the rear deck (x −1.6..−0.1 m: +0.38). The front overhang/bonnet region
-  (x +0.4..+0.9) gives −0.17, due to floor pressure under the nose.
-* **Convergence.** p residual ~4e-3, flat. The force change over the last 100 iterations
-  was |ΔCL| = 0.01 and |ΔCd_p| = 0.003. A steady RANS solution on a bluff body keeps a
-  small oscillation, so the uncertainty is ±0.01–0.02 in CL [M].
+**Outcome (first look):** the bare geometry gave **net lift with rear lift > front lift**,
+with no sign or coefficient imposed anywhere. The pressure-only drag came out somewhat
+above the public Cd target, the expected direction for a coarse, layer-free mesh.
+Measured results on the private test mesh are kept out of this public document (private notes only). Validation is against the public targets of §3 only (Mazda Cd 0.38 top up /
+0.44 top down, A 1.644 m² [S2]; SAE 840297 for the Uno).
+* Lift is a small difference of large numbers (upper-surface suction vs floor
+  pressure), so **CL is sensitive to the underbody and to mesh resolution**: mesh
+  convergence (P2) is mandatory before the map sweep.
+* The front split is not yet validated: open grille path with no radiator resistance,
+  stationary wheels. P2 item: porous radiator, rotating wheels, mesh convergence.
 
 **Caveats:**
 * coarse mesh, no wall layers (wall functions at y+ ≫ 30);
@@ -295,9 +256,8 @@ A = 1.627 m², U = 30 m/s, ρ = 1.2. Forces: drag ≈ 416–418 N, lift ≈ +97�
 These are fidelity caveats, not imposed coefficients. Phase 2 does mesh convergence.
 
 **Compute cost:**
-* this coarse case: 73 s meshing plus **~1.2 s per iteration on 4 cores** when the CPU
-  is uncontended (measured, iterations 600→700 in 120 s). It ran ~3–5 s per iteration
-  while the perf-demo worker's wine process was busy;
+* this coarse case: ~73 s meshing plus **~1.2 s per iteration on 4 cores** when the CPU
+  is uncontended; ~3–5 s per iteration while other CPU work runs;
 * ≈ 15–25 min per state for 700–1000 iterations;
 * production quality (8–20 M cells, layers, rotating wheels, porous radiator): est.
   10–30× more, i.e. ~6–30 h per case on 4 cores [U].
@@ -311,12 +271,11 @@ These are fidelity caveats, not imposed coefficients. Phase 2 does mesh converge
 ## 6. Recommended runtime model (d)
 
 ### 6.1 Geometry → panels
-1. Build the aero surface from the LOD A source mesh: exterior groups only (the
-   `objload.py` DROP regex removes interior, damage and blur groups), glass included.
-   The processed demo mesh `private/miata_mesh/body.obj` is **unsuitable**:
-   * it has no glass;
-   * its projected area is 1.361 m² [M], against the real ~1.64;
-   * it has 2248 open and 102 non-manifold edges.
+1. Build the aero surface from the full-detail source mesh: exterior groups only (the
+   `objload.py` DROP regex removes interior and non-aero groups; a private
+   `private/aero/drop_groups.txt` overrides it), glass included. The processed demo
+   render mesh is **unsuitable**: it has no glass, its projected area is well below the
+   real ~1.64 m², and it is not watertight.
 2. Decimate to N ≈ 500–2000 runtime panels, keeping the body/wheel tagging. Each CFD wall
    face maps to its nearest panel (area weighted).
 3. Each panel stores its centroid `r_i` (body frame) and its owner body (chassis, or
@@ -556,7 +515,7 @@ Otherwise wind and drag are counted twice.
    system with a variable attached"). The v1 contract is therefore a uniform `w0(t)`, and
    the field callback is future/optional.
 2. **Air density.** Can the host's weather system expose ρ, or p and T (§7.5)?
-3. **Top-up geometry** for the Miata. The mesh is top down. Is a soft-top/hardtop model
+3. **Top-up geometry** for the Miata. The available mesh is top down. Is a soft-top/hardtop model
    available, or should one be built from dimensions? It is needed to validate
    Cd = 0.38.
 4. **Fiat Uno Mk1 geometry.** Is there a mesh?
@@ -580,7 +539,7 @@ Otherwise wind and drag are counted twice.
 * `python3 tools/aero/foam_case.py <obj> <case_dir outside repo> ...` then
   `cd case && ./Allrun` (or `./Allrun solve`).
 * `mpirun -np 4 foamFormatConvert -parallel`, then
-  `python3 tools/aero/foam_forces.py <case> --U 30 --A 1.627 --xf 1.099 --xr -1.167 --zg -0.4426`.
+  `python3 tools/aero/foam_forces.py <case> --U 30 --A <frontal area> --xf <front axle x> --xr <rear axle x> --zg <ground z>`.
 * `cc -O2 -march=native tools/aero/bench_panel_map.c -o /tmp/bpm -lm && /tmp/bpm`.
 * `python3 tools/aero/truck_field.py [--U 25 --gap 1.0 ...]`: truck incident-pressure loads on a car box (§12.2).
 * `cc -O2 -march=native tools/aero/bench_field_superpose.c -o /tmp/bfs -lm && /tmp/bfs 1024 4 32`:
@@ -791,7 +750,7 @@ Box rate (§5): ~1.2 s per iteration at ~1.2 M cells on 4 cores.
 |---|---|---|
 | Ahmed-pair validation (steady, pair, 3 X/L × 2 Y/W) + 1 moving-mesh URANS | 6 + 1 | ~6 h + ~10–15 h |
 | Truck field map, isolated (larger domain, ~3 M cells), 0° + 2 yaw states | 3 | ~6–9 h |
-| Car field map (Miata), reuse the §5 case with an enlarged wake region | 1–3 | ~2–4 h |
+| Car field map, reuse the §5 case with an enlarged wake region | 1–3 | ~2–4 h |
 | Car–truck pair corrections, steady: X/L ∈ {−1, −0.5, 0, 0.5, 1, 1.5} × Y ∈ {0.5, 1, 2 m} | 18 | ~35–50 h |
 | Car–car drafting pairs: gap ∈ {0.25, 0.5, 1, 2} L | 4 | ~6–8 h |
 | Dynamic factor: car-overtaken-by-truck moving-mesh URANS, k ≈ 0.15 and 0.3 | 2 | ~30–60 h |
