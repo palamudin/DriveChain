@@ -234,6 +234,49 @@ static void m_slalom(const char* dir) {
     SUM("slalom_col_torque_max", tqmax, "Nm");
 }
 
+/* steering hysteresis: a stiff rim servo (steering robot, not the human arm model) drives a slow sine
+ * theta0 + A sin(2 pi f t) about the held rim angle, straight (~0 g) and on a 40 m circle at ~0.6 g.
+ * Rim torque is fitted over whole cycles as a + b sin + c cos: c is the part in phase with rim velocity;
+ * for Coulomb friction c = 4 Tf / pi, so pi c / 4 is the equivalent rim friction. Vehicle lag also adds to c,
+ * so compare joint_friction 1 vs 0: the difference is the joint friction seen at the rim. */
+static void hyst_case(const char* dir, const char* name, double ay_target) {
+    double v = 20, A = 3 / DEG, f = 0.1;
+    start(v, 3); csv_open(dir, name);
+    dc_driver_cmd cmd = {0}; cmd.steer_mode = DC_DRV_OFF; cmd.pedal_mode = DC_PED_SPEED; cmd.speed = v; dc_driver_command(D, &cmd);
+    IN.steer_mode = DC_STEER_ANGLE; IN.hands_k = 3000; IN.hands_d = 30; IN.hands_tmax = 500;
+    /* find the rim angle for the target ay: slow integral trim (25 s), then hold 5 s */
+    double th0 = 0;
+    for (int i = 0; i < 120 * 30; i++) {
+        if (i < 120 * 25 && ay_target > 0) th0 = fmin(th0 + 0.03 * (ay_target * 9.81 - fabs(T.ay)) * DT * fmin(1, i * DT / 3), 3.0);
+        IN.steer_target = th0; tick(1);
+    }
+    double S[3][3] = {{0}}, Y[3] = {0}, rf = 0, cf = 0, ays = 0; int n = 0;
+    int ncyc = 3, pre = (int)(120 / f);   /* one cycle run-in (drops the start transient), then ncyc fitted */
+    for (int i = 0; i < pre + (int)(120 * ncyc / f); i++) {
+        double ph = 2 * M_PI * f * (i * DT);
+        IN.steer_target = th0 + A * sin(ph);
+        tick(1); if (i % 6 == 0) csv_row();
+        if (i >= pre) { double r[3] = {1, sin(ph), cos(ph)}, y = T.driver_torque;
+            for (int a = 0; a < 3; a++) { Y[a] += r[a] * y; for (int b = 0; b < 3; b++) S[a][b] += r[a] * r[b]; }
+            rf += fabs(T.rack_fric_force); cf += fabs(T.col_fric_torque); ays += fabs(T.ay); n++; }
+    }
+    fclose(CSV);
+    /* 3x3 normal equations (Cramer) */
+    double det = S[0][0] * (S[1][1] * S[2][2] - S[1][2] * S[2][1]) - S[0][1] * (S[1][0] * S[2][2] - S[1][2] * S[2][0]) + S[0][2] * (S[1][0] * S[2][1] - S[1][1] * S[2][0]);
+    double c = (S[0][0] * (S[1][1] * Y[2] - Y[1] * S[2][1]) - S[0][1] * (S[1][0] * Y[2] - Y[1] * S[2][0]) + Y[0] * (S[1][0] * S[2][1] - S[1][1] * S[2][0])) / det;
+    double b = (S[0][0] * (Y[1] * S[2][2] - S[1][2] * Y[2]) - Y[0] * (S[1][0] * S[2][2] - S[1][2] * S[2][0]) + S[0][2] * (S[1][0] * Y[2] - Y[1] * S[2][0])) / det;
+    double a = (Y[0] - S[0][1] * b - S[0][2] * c) / S[0][0];
+    char nm[64];
+    snprintf(nm, sizeof nm, "%s_ay", name); SUM(nm, ays / n / 9.81, "g mean");
+    snprintf(nm, sizeof nm, "%s_rim0", name); SUM(nm, th0 * DEG, "deg");
+    snprintf(nm, sizeof nm, "%s_tq_mean", name); SUM(nm, a, "Nm");
+    snprintf(nm, sizeof nm, "%s_tq_grad", name); SUM(nm, b / (A * DEG), "Nm/deg in phase with angle");
+    snprintf(nm, sizeof nm, "%s_fric_eq", name); SUM(nm, M_PI * c / 4, "Nm equiv Coulomb at rim (pi c/4)");
+    snprintf(nm, sizeof nm, "%s_rack_fric", name); SUM(nm, rf / n, "N mean |rack friction|");
+    snprintf(nm, sizeof nm, "%s_col_fric", name); SUM(nm, cf / n, "Nm mean |column friction|");
+}
+static void m_hyst(const char* dir) { hyst_case(dir, "hyst0g", 0); hyst_case(dir, "hyst06g", 0.6); }
+
 int main(int argc, char** argv) {
     if (argc < 3) { fprintf(stderr, "usage: mbcompare car.ini outdir [solver] [manoeuvre|all] [tag]\n"); return 1; }
     const char* dir = argv[2]; int solver = argc > 3 ? atoi(argv[3]) : 0; const char* what = argc > 4 ? argv[4] : "all";
@@ -252,7 +295,7 @@ int main(int argc, char** argv) {
     char cmd[600]; snprintf(cmd, sizeof cmd, "mkdir -p '%s'", dir); if (system(cmd)) {}
 #define RUN(nm, fn) if (!strcmp(what, "all") || !strcmp(what, nm)) fn(dir)
     RUN("settle", m_settle); RUN("bounce", m_bounce); RUN("skidpad", m_skidpad); RUN("step", m_step); RUN("liftoff", m_liftoff);
-    RUN("handsoff", m_handsoff); RUN("bump", m_bump); RUN("slalom", m_slalom);
+    RUN("handsoff", m_handsoff); RUN("bump", m_bump); RUN("slalom", m_slalom); if (!strcmp(what, "hyst")) m_hyst(dir);
     SUM("cpu_per_sim_s", CPU / fmax(SIMT, 1e-9), "(last manoeuvre normalised; see total)");
     return 0;
 }
