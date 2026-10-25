@@ -33,8 +33,6 @@ Results are in `perf_summary.txt`.
 | 40 % launch 8 s | 9.1 ms | 5.2 ms | 3073 µs/tick | 1354 µs/tick |
 | rolling WOT, 4th | 11.7 ms | 2.6 ms | 1146 µs/tick | 992 µs/tick |
 
-On the worst mesh-map case, the worst 100 ms window went from 12.0 ms to 2.1 ms per 1 ms tick, and the worst single tick from 41 ms to 3 ms.
-
 **Default behaviour change.** This is a solver-convergence change only: the same LCP is solved to tolerance. Comparison against the previous build over a WOT launch, a step steer at 80 km/h, lift-off, braking, and a parking steer, sampled every 250 ms (max |Δ| / max |value|):
 
 | metric | mx5_na |
