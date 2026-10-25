@@ -41,7 +41,7 @@ int mb_add_joint(mb_world* W, int type, const char* name, int a, int b) {
     J->type = type; J->nb = 2; J->b[0] = a; J->b[1] = b; J->b[2] = J->b[3] = -1;
     J->compl = REG; J->proj = 1; J->active = 1; J->q0.w = 1;
     snprintf(J->name, sizeof J->name, "%s", name ? name : "");
-    static const int rows[] = {3, 5, 4, 3, 1, 5, 6, 2, 1, 5};
+    static const int rows[] = {3, 5, 4, 3, 1, 5, 6, 2, 1, 5, 6};
     J->m = rows[type];
     return W->nj++;
 }
@@ -78,6 +78,20 @@ int mb_bushing(mb_world* W, const char* nm, int a, int b, v3 p, v3 axis) {
     axis = vnorm(axis);
     W->Jt[j].pa = to_local(W, a, p); W->Jt[j].pb = to_local(W, b, p);
     W->Jt[j].aa = dir_local(W, a, axis); W->Jt[j].ab = dir_local(W, b, axis); W->Jt[j].proj = 0; return j;
+}
+int mb_beam(mb_world* W, const char* nm, int a, int b, v3 p, v3 axis, v3 t1) {
+    int j = mb_add_joint(W, MBJ_BEAM, nm, a, b); if (j < 0) return j;
+    mb_joint* J = &W->Jt[j];
+    axis = vnorm(axis); t1 = vnorm(vsub(t1, vscl(axis, vdot(t1, axis))));
+    J->pa = to_local(W, a, p); J->pb = to_local(W, b, p);
+    J->ab = dir_local(W, b, axis); J->eb = dir_local(W, b, t1);
+    J->q0 = qmul(qconj(q_of(W, b)), q_of(W, a)); J->proj = 0; return j;
+}
+void mb_beam_section(mb_world* W, int j, double l, double E, double G, double A, double I1, double I2, double Jt,
+                     double kappa, double tau) {
+    mb_joint* J = &W->Jt[j];
+    double k[6] = {E * A / l, kappa > 0 ? kappa * G * A / l : 0, kappa > 0 ? kappa * G * A / l : 0, G * Jt / l, E * I1 / l, E * I2 / l};
+    for (int r = 0; r < 6; r++) { J->sk[r] = k[r]; J->sc[r] = tau > 0 ? tau * k[r] : 0; }
 }
 int mb_distance(mb_world* W, const char* nm, int a, v3 pa, int b, v3 pb) {
     int j = mb_add_joint(W, MBJ_DISTANCE, nm, a, b); if (j < 0) return j;
@@ -184,6 +198,15 @@ static void eval_std(const mb_world* W, const mb_joint* J, double Jo[6][MB_JB][6
         for (int k = 0; k < 3; k++, r++) { rowp(W, a, pm, u[k], 1, Jo[r][0]); rowp(W, b, pm, u[k], -1, Jo[r][1]); phi[r] = vdot(d, u[k]); }
         for (int k = 1; k < 3; k++, r++) { rowa(a, u[k], 1, Jo[r][0]); rowa(b, u[k], -1, Jo[r][1]); phi[r] = vdot(e, u[k]); }
         break; }
+    case MBJ_BEAM: {
+        /* frame fixed in b: axis, t1, t2; translation rows at the midpoint (equal and opposite wrench, as MBJ_BUSH),
+           rotation rows on the relative-orientation error against the design orientation q0 (as MBJ_WELD) */
+        v3 n = dw_of(W, b, J->ab), t1 = dw_of(W, b, J->eb), t2 = vcross(n, t1);
+        v3 u[3] = {n, t1, t2}, d = vsub(pa, pb), pm = vscl(vadd(pa, pb), 0.5);
+        v3 e = rot_err(q_of(W, a), q_of(W, b), J->q0);
+        for (int k = 0; k < 3; k++, r++) { rowp(W, a, pm, u[k], 1, Jo[r][0]); rowp(W, b, pm, u[k], -1, Jo[r][1]); phi[r] = vdot(d, u[k]); }
+        for (int k = 0; k < 3; k++, r++) { rowa(a, u[k], 1, Jo[r][0]); rowa(b, u[k], -1, Jo[r][1]); phi[r] = vdot(e, u[k]); }
+        break; }
     case MBJ_DISTANCE: {
         v3 d = vsub(pa, pb); double l = vlen(d); v3 u = l > 1e-12 ? vscl(d, 1 / l) : V3(1, 0, 0);
         rowp(W, a, pa, u, 1, Jo[0][0]); rowp(W, b, pb, u, -1, Jo[0][1]); phi[0] = l - J->L; r = 1;
@@ -203,7 +226,7 @@ void mb_eval_joint(mb_world* W, int j) {
     if (J->type == MBJ_CUSTOM) return;
     memset(J->J, 0, sizeof J->J);
     eval_std(W, J, J->J, J->phi);
-    if (J->type == MBJ_BUSH) {
+    if (J->type == MBJ_BUSH || J->type == MBJ_BEAM) {
         /* implicit spring-damper row: lam = h f, f = -k (phi + h Jv+) - c Jv+  =>  Jv+ + lam/(h^2 k + h c) = -k phi/(h k + c) */
         double h = W->h > 0 ? W->h : 1e-3;
         for (int r = 0; r < J->m; r++) {
@@ -215,7 +238,7 @@ void mb_eval_joint(mb_world* W, int j) {
 }
 double mb_bushing_energy(const mb_world* W, int j) {
     if (j < 0) return 0;
-    const mb_joint* J = &W->Jt[j]; if (J->type != MBJ_BUSH) return 0;
+    const mb_joint* J = &W->Jt[j]; if (J->type != MBJ_BUSH && J->type != MBJ_BEAM) return 0;
     double Jo[6][MB_JB][6], phi[6], e = 0; eval_std(W, J, Jo, phi);
     for (int r = 0; r < J->m; r++) if (J->sk[r] > 0) e += 0.5 * J->sk[r] * phi[r] * phi[r];
     return e;
@@ -477,7 +500,7 @@ static void assemble(mb_world* W) {
         int nd = W->node_of_joint[j]; if (nd < 0) continue;
         mb_joint* J = &W->Jt[j]; int m = J->m;
         double* D = W->D + 36 * nd; double* r = W->r + W->off[nd];
-        for (int a = 0; a < m; a++) { D[a * m + a] = J->type == MBJ_BUSH ? -J->rc[a] : -J->compl; r[a] = J->t[a]; }
+        for (int a = 0; a < m; a++) { D[a * m + a] = (J->type == MBJ_BUSH || J->type == MBJ_BEAM) ? -J->rc[a] : -J->compl; r[a] = J->t[a]; }
         for (int k = 0; k < J->nb; k++) {
             int b = J->b[k]; if (b < 0) continue;
             double M[36]; for (int a = 0; a < m; a++) for (int q = 0; q < 6; q++) M[a * 6 + q] = J->J[a][k][q];

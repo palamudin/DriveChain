@@ -373,6 +373,105 @@ static void t_bushing(void) {
     }
 }
 
+/* ---- 6b. compliant beam (MBJ_BEAM): a cantilever as a discrete elastic rod vs Euler-Bernoulli / Timoshenko closed forms */
+/* N node bodies at x = i l (i = 1..N, tip mass halved), joints at the element midpoints (i - 1/2) l, root node = ground */
+static mb_world* cantilever(int N, double L, double rho, double E, double G, double A, double Iy, double Iz, double Jt,
+                            double by, double hz, double kappa, double tau, int* jt) {
+    mb_world* W = mb_create(); double l = L / N; int prev = -1;
+    for (int i = 1; i <= N; i++) {
+        double m = rho * A * l * (i == N ? 0.5 : 1), ls = i == N ? 0.5 * l : l;
+        int b = mb_add_body(W, "node", m, diag3(m * (by * by + hz * hz) / 12, m * (ls * ls + hz * hz) / 12, m * (ls * ls + by * by) / 12), V3(i * l, 0, 0), QI);
+        int j = mb_beam(W, "beam", b, prev, V3((i - 0.5) * l, 0, 0), V3(1, 0, 0), V3(0, 1, 0));
+        mb_beam_section(W, j, l, E, G, A, Iy, Iz, Jt, kappa, tau);
+        if (jt) jt[i - 1] = j;
+        prev = b;
+    }
+    mb_finalize(W); return W;
+}
+static double beam_pe(const mb_world* W) { double e = 0; for (int j = 0; j < W->nj; j++) e += mb_bushing_energy(W, j); return e; }
+static void t_beam(void) {
+    printf("[beam] MBJ_BEAM: cantilever static deflection (axial, 2 bending planes, torsion, shear), 1st mode, passivity, free-pair momentum\n");
+    const double E = 210e9, G = 81e9, rho = 7850, L = 1.0;
+    {   /* rectangular steel bar 20 mm (y) x 40 mm (z): different bending stiffness per plane checks the body-fixed frame */
+        double by = 0.02, hz = 0.04, A = by * hz, Iy = by * hz * hz * hz / 12, Iz = hz * by * by * by / 12;
+        double Jt = 0.229 * hz * by * by * by;   /* Roark: beta(a/b = 2) = 0.229 */
+        int N = 10; double h = 1e-3, Nd = N;
+        double disc = (Nd * Nd * Nd / 3 - Nd / 12) / (Nd * Nd * Nd);   /* discrete midpoint-rod factor on L^3/EI (exact 1/3 as N->inf) */
+        struct { const char* nm; v3 F, T; double kappa; } lc[5] = {
+            {"axial  dx = F L/EA", {2000, 0, 0}, {0, 0, 0}, 0}, {"bend z dz = P L^3/3EIy", {0, 0, -100}, {0, 0, 0}, 0},
+            {"bend y dy = P L^3/3EIz", {0, 50, 0}, {0, 0, 0}, 0}, {"torsion rx = T L/GJ", {0, 0, 0}, {20, 0, 0}, 0},
+            {"Timoshenko z (kappa 5/6)", {0, 0, -100}, {0, 0, 0}, 5.0 / 6} };
+        for (int c = 0; c < 5; c++) {
+            mb_world* W = cantilever(N, L, rho, E, G, A, Iy, Iz, Jt, by, hz, lc[c].kappa, 2e-3, NULL);
+            int tip = N - 1;
+            for (int s = 0; s < 1500; s++) { mb_begin(W, h); W->B[tip].F = lc[c].F; W->B[tip].T = lc[c].T; mb_solve(W); mb_integrate(W, 1); }
+            mb_body* B = &W->B[tip]; double got, ex, exd; char nm[96];
+            if (c == 0) { got = B->x.x - L; ex = exd = 2000 * L / (E * A); }
+            else if (c == 1) { got = B->x.z; ex = -100 * L * L * L / (3 * E * Iy); exd = -100 * L * L * L * disc / (E * Iy); }
+            else if (c == 2) { got = B->x.y; ex = 50 * L * L * L / (3 * E * Iz); exd = 50 * L * L * L * disc / (E * Iz); }
+            else if (c == 3) { v3 ey = mv(&B->R, V3(0, 1, 0)); got = asin(ey.z); ex = exd = 20 * L / (G * Jt); }
+            else { got = B->x.z; double sh = -100 * L / (5.0 / 6 * G * A); ex = -100 * L * L * L / (3 * E * Iy) + sh; exd = -100 * L * L * L * disc / (E * Iy) + sh; }
+            printf("  %-26s got %.6e  continuum %.6e  discrete N=%d %.6e\n", lc[c].nm, got, ex, N, exd);
+            snprintf(nm, sizeof nm, "%s vs discrete-rod closed form [rel]", lc[c].nm); check(nm, (got - exd) / exd, 1e-3);
+            snprintf(nm, sizeof nm, "%s vs continuum (N=10, O(1/N^2)) [rel]", lc[c].nm); check(nm, (got - ex) / ex, 4e-3);
+            if (c == 1) {
+                double e = beam_pe(W), e0 = 0.5 * 100 * fabs(got);   /* Clapeyron: U = 1/2 P delta */
+                check("bend z stored energy = 1/2 P delta (Clapeyron) [rel]", (e - e0) / e0, 1e-3);
+            }
+            mb_destroy(W);
+        }
+        {   /* rates <= 0: rows rigid (a weld chain) */
+            mb_world* W = cantilever(N, L, rho, E, G, A, Iy, Iz, Jt, by, hz, 0, 0, NULL);
+            for (int j = 0; j < W->nj; j++) for (int r = 0; r < 6; r++) W->Jt[j].sk[r] = 0;
+            for (int s = 0; s < 200; s++) { mb_begin(W, h); W->B[N - 1].F = V3(0, 0, -100); mb_solve(W); mb_integrate(W, 1); }
+            check("zero rates -> rigid: tip deflection [m]", W->B[N - 1].x.z, 1e-7);
+            mb_destroy(W);
+        }
+    }
+    {   /* round bar d = 20 mm, N = 20: first bending mode vs Euler-Bernoulli 1.8751^2/(2 pi L^2) sqrt(EI/rho A); passivity */
+        double d = 0.02, A = M_PI * d * d / 4, I = M_PI * d * d * d * d / 64, Jt = 2 * I, h = 1e-4;
+        int N = 20, tip = N - 1;
+        mb_world* W = cantilever(N, L, rho, E, G, A, I, I, Jt, d, d, 0, 2e-3, NULL);
+        for (int s = 0; s < 6000; s++) { mb_begin(W, h); W->B[tip].F = V3(0, 0, -10); mb_solve(W); mb_integrate(W, 1); }
+        for (int j = 0; j < W->nj; j++) for (int r = 0; r < 6; r++) W->Jt[j].sc[r] = 0;   /* release, undamped */
+        double E0 = mb_kinetic(W) + beam_pe(W), Eprev = E0, gain = 0, zp = W->B[tip].x.z, tp = 0, t0 = -1, t1 = -1; int nc = 0;
+        for (int s = 1; s <= 10000; s++) {
+            mb_begin(W, h); mb_solve(W); mb_integrate(W, 1);
+            double z = W->B[tip].x.z, t = s * h;
+            if (zp < 0 && z >= 0) { double tc = tp + h * (-zp) / (z - zp); if (t0 < 0) t0 = tc; t1 = tc; nc++; }
+            double En = mb_kinetic(W) + beam_pe(W); gain = fmax(gain, (En - Eprev) / E0); Eprev = En; zp = z; tp = t;
+        }
+        double f = nc > 1 ? (nc - 1) / (t1 - t0) : 0, f1 = 1.8751 * 1.8751 / (2 * M_PI * L * L) * sqrt(E * I / (rho * A));
+        printf("  1st bending mode %.3f Hz (Euler-Bernoulli %.3f Hz, N = %d), energy after 1 s %.4f of E0 (implicit Euler)\n", f, f1, N, Eprev / E0);
+        check("1st bending frequency vs Euler-Bernoulli [rel]", (f - f1) / f1, 1e-2);
+        check("max per-step energy gain / E0 (undamped, implicit rows dissipate only)", fmax(gain, 0), 1e-9);
+        mb_destroy(W);
+    }
+    {   /* two free bodies, undamped beam joint with unequal planes, initial relative motion, no gravity */
+        mb_world* W = mb_create(); double h = 1.0 / 2000;
+        int a = mb_add_body(W, "a", 5, diag3(0.2, 0.3, 0.4), V3(0, 0, 0), QI);
+        int b = mb_add_body(W, "b", 2, diag3(0.05, 0.02, 0.05), V3(0.3, 0.1, 0), QI);
+        W->B[a].v = V3(0.3, -0.2, 0.1); W->B[a].w = V3(0.5, 1.0, -0.3);
+        W->B[b].v = V3(-0.2, 0.4, 0.3); W->B[b].w = V3(2, 8, -1);
+        int j = mb_beam(W, "beam", b, a, V3(0.15, 0.05, 0), V3(1, 1, 0.2), V3(0, 0, 1));
+        double kk[6] = {5e6, 1e6, 2e6, 2e3, 4e3, 1e3};
+        for (int r = 0; r < 6; r++) W->Jt[j].sk[r] = kk[r];
+        mb_finalize(W);
+        v3 P0, L0, P, Lm; double ep = 0, el = 0, gain = 0;
+        MOM(P0, L0);
+        double E0 = mb_kinetic(W) + mb_bushing_energy(W, j), Eprev = E0;
+        for (int s = 0; s < 10000; s++) {
+            mb_begin(W, h); mb_solve(W); mb_integrate(W, 1);
+            MOM(P, Lm); ep = fmax(ep, vlen(vsub(P, P0))); el = fmax(el, vlen(vsub(Lm, L0)));
+            double En = mb_kinetic(W) + mb_bushing_energy(W, j); gain = fmax(gain, (En - Eprev) / E0); Eprev = En;
+        }
+        check("free pair: linear momentum change [N s]", ep, 1e-10);
+        check("free pair: angular momentum change / |L| over 5 s", el / vlen(L0), 2e-3);
+        check("free pair: max per-step energy gain / E0", fmax(gain, 0), 1e-6);
+        mb_destroy(W);
+    }
+}
+
 /* ---- 7. zero allocation + benchmark on a car-sized tree (35 bodies, ~120 rows) */
 static void t_bench(void) {
     printf("[bench] car-sized mechanism: chassis + 4 x (2 arms, knuckle, wheel, link) + 5 steering + 4 ARB + 3 driveline\n");
@@ -420,7 +519,7 @@ static void t_bench(void) {
 int main(void) {
     if (system("mkdir -p results/mb")) {}
     printf("=== dc_mb Phase 0 ===\n");
-    t_pendulum(); t_slider_crank(); t_fourbar(); t_static(); t_friction(); t_jfric(); t_momentum(); t_bushing(); t_bench();
+    t_pendulum(); t_slider_crank(); t_fourbar(); t_static(); t_friction(); t_jfric(); t_momentum(); t_bushing(); t_beam(); t_bench();
     printf("=== %s (%d failures) ===\n", fails ? "FAIL" : "ALL PASS", fails);
     return fails ? 1 : 0;
 }

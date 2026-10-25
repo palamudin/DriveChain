@@ -25,7 +25,7 @@
 #define MB_MAXBOX 112                /* box (Schur) rows per step */
 #define MB_FSRC 4                    /* normal-reaction sources per friction joint */
 
-enum { MBJ_SPHERICAL, MBJ_REVOLUTE, MBJ_UJOINT, MBJ_UJOINT_SLIP, MBJ_DISTANCE, MBJ_PRISMATIC, MBJ_WELD, MBJ_POINTLINE, MBJ_CUSTOM, MBJ_BUSH };
+enum { MBJ_SPHERICAL, MBJ_REVOLUTE, MBJ_UJOINT, MBJ_UJOINT_SLIP, MBJ_DISTANCE, MBJ_PRISMATIC, MBJ_WELD, MBJ_POINTLINE, MBJ_CUSTOM, MBJ_BUSH, MBJ_BEAM };
 
 typedef struct {
     double m; m3 Ib, Ibinv;          /* mass, body-frame inertia about COM */
@@ -48,7 +48,7 @@ typedef struct {
     int active;                      /* box rows only */
     int proj;                        /* include in position projection */
     double compl;                    /* regularisation / compliance (velocity per impulse) */
-    /* compliant rows (MBJ_BUSH): row r is an implicit spring-damper of stiffness sk[r] and damping sc[r] (N/m, N s/m or
+    /* compliant rows (MBJ_BUSH, MBJ_BEAM): row r is an implicit spring-damper of stiffness sk[r] and damping sc[r] (N/m, N s/m or
        N m/rad, N m s/rad) instead of a rigid constraint; sk <= 0 keeps the row rigid. Not position-projected. */
     double sk[6], sc[6], rc[6];
     /* load-dependent Coulomb bound (box joints with nsrc > 0): every row r obeys |lam_r| <= B, or the row vector
@@ -120,7 +120,15 @@ int  mb_revolute(mb_world* W, const char* nm, int a, int b, v3 p, v3 axis);
 /* rubber bushing at p with axis: rows 0 axial, 1-2 radial (translation), 3-4 conical (tilt); rotation about the axis is
    free (as a revolute). Rates per row in J->sk/sc (all rigid until set). Frame fixed in b (the body the sleeve is pressed into). */
 int  mb_bushing(mb_world* W, const char* nm, int a, int b, v3 p, v3 axis);
-double mb_bushing_energy(const mb_world* W, int j);   /* elastic energy 1/2 sum k phi^2 at the current configuration, J */
+double mb_bushing_energy(const mb_world* W, int j);   /* elastic energy 1/2 sum k phi^2 of a BUSH or BEAM joint now, J */
+/* compliant beam joint (one element of a discrete elastic rod, docs/BEAM.md): full 6-DOF connection at p with design
+   relative orientation, rows in a frame fixed in b: 0 axial (axis), 1-2 shear (t1, axis x t1), 3 torsion, 4-5 bending
+   about t1 / axis x t1. Rigid (a weld) until rates are set in J->sk/sc, e.g. by mb_beam_section. Not position-projected. */
+int  mb_beam(mb_world* W, const char* nm, int a, int b, v3 p, v3 axis, v3 t1);
+/* element rates for a segment of length l: EA/l, kappa G A/l (kappa <= 0: shear-rigid, Euler-Bernoulli), G Jt/l,
+   E I1/l, E I2/l (I1 about t1, I2 about axis x t1); Kelvin-Voigt damping c = tau k (tau in s, 0 = undamped) */
+void mb_beam_section(mb_world* W, int j, double l, double E, double G, double A, double I1, double I2, double Jt,
+                     double kappa, double tau);
 int  mb_distance(mb_world* W, const char* nm, int a, v3 pa, int b, v3 pb);
 int  mb_prismatic(mb_world* W, const char* nm, int a, int b, v3 axis);
 int  mb_pointline(mb_world* W, const char* nm, int a, v3 pa, v3 axis, int b, v3 pb);

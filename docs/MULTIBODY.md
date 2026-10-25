@@ -67,6 +67,8 @@ In both cores the front wheels follow the front axle's slip angle up to full loc
   docs/BUSHINGS.md). Rack mount, ARB and top-mount bushes are still rigid.
 - Driveline: the propshaft and diff carrier are massless (one overall-ratio row) by default. `mb_diff_inertia` / `mb_gb_out_inertia > 0`
   adds them as geared rotors (opt-in, docs/CARRIER.md). Half-shafts are still rigid.
+- Flex: all parts are rigid. The compliant-beam element (`MBJ_BEAM`, a rigid-finite-element rod, validated against beam
+  theory) exists in the library but is not wired into any car part yet (docs/BEAM.md).
 - Tyre lateral force still explicit (Phase 4). Both cores creep backward at about 1 mm/s when parked with no brake
   on a flat road (low-speed tyre regularisation). Phase 4 adds the 0 km/h slope-hold test.
 - Bushings rigid (Phase 5). Half-shafts/CV joints not separate bodies yet (Phase 6). AWD uses the legacy core.
