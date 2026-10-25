@@ -3,7 +3,7 @@
 This plug-in lets a bot, a script or Python drive the car the way a human does. It applies **torque to the steering rim through finite-strength "arms"** and works the pedals; it never sets wheel angles or body states. This means the self-aligning torque, kickback and the valve still act on the bot's hands, and the physics under test is never bypassed. A human can take over at any instant.
 
 ## Core: `dc_driver` (core/src/dc_driver.c, C ABI)
-- **Hands:** a PD on the rim angle, `T = clamp(k·(θ_cmd−θ) − d·ω, ±tmax)`. Defaults: k 10 N·m/rad, d 1 N·m·s/rad, tmax 20 N·m.
+- **Hands:** a PD on the rim angle, `T = clamp(k·(θ_cmd−θ) − d·ω, ±tmax)`. Defaults: k 25 N·m/rad, d 1 N·m·s/rad, tmax 20 N·m. The stiffness is the measured driver–wheel arm stiffness, 10–46 N·m/rad, up to ~80 with co-contraction (Xing et al. 2018, IEEE/ASME Trans. Mechatronics, doi:10.1109/TMECH.2018.2812643). The old 10 N·m/rad sat at the bottom of that range and let the path driver hunt ±0.7 m against on-centre joint friction (docs/JOINT_FRICTION.md).
 - **Command shaping:** human-like reaction delay (0.18 s), bandwidth (3 Hz) and rim rate limit.
 - **Steer modes:**
   - `off`
