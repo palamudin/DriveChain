@@ -2,8 +2,17 @@
 import re
 import numpy as np
 
-DROP = re.compile(r"damage|blur|light_beam|int_|_int|cockpit|steer|gauge|arrow_|needle|cinture|belt|seat|carpet|dash|gear|handbrake|"
-                  r"interior|button|white_circle|mirror_middle|bulb|szelepsapka|collider", re.I)
+import os
+# Groups that are not part of the exterior aero surface. Generic names by default; a mesh-specific
+# regex (one line) can be supplied via $AERO_DROP_FILE or private/aero/drop_groups.txt (kept private).
+_DEFAULT_DROP = r"interior|cockpit|steer|gauge|needle|belt|seat|carpet|dash|gear|handbrake|button|bulb|collider"
+def _drop_regex():
+    here = os.path.dirname(os.path.abspath(__file__))
+    for f in (os.environ.get("AERO_DROP_FILE"), os.path.join(here, "..", "..", "private", "aero", "drop_groups.txt")):
+        if f and os.path.isfile(f):
+            return open(f).read().strip()
+    return _DEFAULT_DROP
+DROP = re.compile(_drop_regex(), re.I)
 
 def load(path, offset=(0, 0, 0), frame="yup", exterior=True):
     V, F, G, g = [], [], [], "default"

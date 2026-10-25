@@ -3,7 +3,7 @@
 
 usage: meshcheck.py <car.obj> [--offset dx,dy,dz] [--frame yup|phys] [--cell 0.01]
 
-Reports, for the exterior aero surface (drops damage/blur/light-beam/interior/gauge groups):
+Reports, for the exterior aero surface (drops interior and non-aero groups, see objload.DROP):
   - bounding box, ground plane (lowest tyre vertex), wheelbase-ish extents
   - frontal area A (projection on the y-z plane, rasterised at --cell; includes wheels, mirrors)
   - topology: open (boundary) edges, non-manifold edges, duplicate-vertex welding at 0.5 mm
@@ -23,8 +23,7 @@ ap.add_argument("--cell", type=float, default=0.01)
 a = ap.parse_args()
 off = np.array([float(t) for t in a.offset.split(",")])
 
-DROP = re.compile(r"damage|blur|light_beam|int_|_int|cockpit|steer|gauge|arrow_|needle|cinture|belt|seat|carpet|dash|gear|handbrake|"
-                  r"interior|button|white_circle|mirror_middle|bulb|szelepsapka|collider", re.I)
+from objload import DROP
 V = []; F = []; G = []; gname = "default"; groups = []
 for ln in open(a.obj, errors="replace"):
     if ln.startswith("v "): V.append([float(t) for t in ln.split()[1:4]])

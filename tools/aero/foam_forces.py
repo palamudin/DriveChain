@@ -7,15 +7,15 @@ Pressure only (zeroGradient on walls -> face p = owner-cell p); viscous drag is 
 cars skin friction is a small part of Cd, Hucho 1998 ch. 4; lift is pressure-dominated).
 Prints Cd_p, CL, CLF, CLR (SAE J1594: CPM about the wheelbase centre at ground, incl. drag moment), plus a
 breakdown of the lift by surface class (upper-facing vs lower-facing faces) and by x-station.
-usage: foam_forces.py <case> --U 30 --A 1.624 --xf 1.099 --xr -1.167 --zg -0.4426 [--time latest]
+usage: foam_forces.py <case> --U 30 --A <frontal area m2> --xf <front axle x> --xr <rear axle x> --zg <ground z> [--time latest]
 """
 import os, re, glob, argparse
 import numpy as np
 
 ap = argparse.ArgumentParser()
-ap.add_argument("case"); ap.add_argument("--U", type=float, default=30.0); ap.add_argument("--A", type=float, default=1.624)
-ap.add_argument("--xf", type=float, default=1.099); ap.add_argument("--xr", type=float, default=-1.167)
-ap.add_argument("--zg", type=float, default=-0.4426); ap.add_argument("--rho", type=float, default=1.2)
+ap.add_argument("case"); ap.add_argument("--U", type=float, default=30.0); ap.add_argument("--A", type=float, required=True)
+ap.add_argument("--xf", type=float, required=True); ap.add_argument("--xr", type=float, required=True)
+ap.add_argument("--zg", type=float, required=True); ap.add_argument("--rho", type=float, default=1.2)
 ap.add_argument("--patches", default="body,wheels"); ap.add_argument("--time", default="latest")
 a = ap.parse_args()
 
