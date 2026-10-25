@@ -28,6 +28,8 @@
 | rigid, legacy core | 3.6 | 0.24 | 0.21 |
 | rigid, MB, TARMAC tyre | 5.1 | 0.34 | 0.26 |
 | bushed (`_propB`), MB | 28.7 | 1.91 | 0.63 |
+| rigid + rack mount (`_propR`), MB | 7.0 | 0.47 | 0.27 |
+| bushed + rack mount (`_propB` + `_propR` keys), MB | 36.7 | 2.45 | 0.99 |
 
 - In the bushed car, the gap between K (1.91) and the actual-wheel gradient (0.63) is front compliance steer from the arm
   bushes. The overall SW/wheel ratio rises with load (16.7 at 0.1 g to 18.2 at 0.7 g), whereas the rigid car stays flat
@@ -55,7 +57,9 @@ No measured NA MX-5 understeer gradient has been found in public sources. Source
   consistent with the HVE tyre-only figure, because a rigid model has no steering-system or bush compliance.
 - **Bushed proposal.** The `_propB` bush estimates give 1.9 deg/g, inside the sourced range for a sporty car. The
   bushes are not too soft by this measure.
-- **Rack mount.** Steering-system compliance (rack mount, column) is still almost absent: rigid SW/wheel is about 15.5
-  against a static 15. In a real car this is a significant understeer term, so modelling the rack mount would raise K
-  further. If it does, the bush rates should be revisited together with it.
+- **Rack mount.** The `_propR` proposal (rack housing on a compliant mount, 8 kN/mm along the rack axis, docs/BUSHINGS.md)
+  adds about 0.1 deg/g on the rigid car (0.36 to 0.47) and about 0.5 deg/g with the bushes (1.91 to 2.45). At 0.49 g
+  the housing moves 0.13 mm under about 1 kN rack force. Sensitivity (skidpad only): 4 / 8 / 16 kN/mm give rigid
+  K 0.55 / 0.47 / 0.41 and bushed 2.39 / 2.34 / 2.23 deg/g. Bushes plus rack mount land in the middle of the sourced
+  2–3 deg/g band. Column compliance (other than the torsion bar) is still not modelled.
 - The NA-specific target remains an estimate: low 2s deg/g for a light, near-50/50, sporty RWD car.

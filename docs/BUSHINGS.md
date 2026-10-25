@@ -70,7 +70,25 @@ Fishtail-settle check (`drivetest fishcheck`, propB rates):
 - lift_85kmh_R65 ideal settles in 0.61 s, against the 0.6 s limit (rigid: 0.40 s), so that run fails.
 - The free-wheel 85 km/h known residual passes.
 
+## Rack-mount compliance (proposal `_propR`)
+
+- With `mb_rack_mount_k > 0` the rack housing becomes its own body (3 kg) on an `MBJ_BEAM` joint to the chassis. The joint
+  is rigid in five directions and an implicit spring-damper (`mb_rack_mount_k`, `mb_rack_mount_c`) along the rack axis.
+  The rack prismatic, the rack-and-pinion gear row, the pinion and valve-input bearings, rack friction, the rack stop and
+  the assist cylinder all react on the housing; the column bearing and the driver's hands react on the chassis, and the
+  slip U-joint takes up the housing shift. Rack travel `r` is measured in the housing. With `k = 0` (default) the
+  housing is the chassis and every manoeuvre CSV is byte-identical to the previous commit.
+- Proposal: k = 8e6 N/m (8 kN/mm, two rubber clamp bushes at about 4 kN/mm each in axial shear), c = 1.9e4 N s/m
+  (the bush loss-factor convention above: 0.15 · k / (2π · 10 Hz)). These are estimates: no public axial rate for
+  production rack mounts was found. Rubber-mounted rack housings and their deliberate lateral compliance are described
+  in US patent 6,102,416 (GM, elastomeric rack mount with directional compliance) and US 2007/0035117 (rack mount
+  compliance used to add understeer above a steering-force threshold).
+- `mbcar_tests` (rack-mount section, 5 s cornering at 0.49 g): housing shift 0.13 mm, k·x = 1031 N against 993 N tie-rod
+  rack force (quasi-static balance, housing and rack inertia make up the rest); Newton 3 per joint 1e-11; dissipation
+  non-decreasing; momentum residual 2e-3 N.
+- Effect (mx5_na, MB, `mbcompare … 1 all`): K 0.36 → 0.47 deg/g rigid and 1.91 → 2.45 deg/g with propB (UNDERSTEER.md);
+  step yaw-rate steady state 15.9 → 15.5 deg/s (rigid); bounce, lift-off and hands-off unchanged within 2 %.
+
 ## Not done yet
 
-- Rack-mount compliance (`mb_rack_mount_k/c` are parsed but unused). It needs the rack housing as a body on soft rows.
 - Torsional bush rate, frequency-dependent (fractional or Maxwell) rubber damping, the ARB bushes, and the strut top mount.
