@@ -16,7 +16,8 @@
  *   Footprint by membrane equilibrium: the deepest overlap cells, down to a ring displacement chosen so that the
  *   contact area = Kz δ / (κ p); pressure in it ∝ overlap - ring. Load point Pc and normal n = pressure-weighted
  *   means of the hit points / surface normals; half length from the pressure second moment (parabola: Var = a²/5).
- *   N = max(0, Kz δ + cz δ') + rim pinch (k_rim (δmax - bottom) + c_rim δ'), at Pc along n.
+ *   N = max(0, Kz δ + cz δ') at Pc along n; rim pinch k_rim (δn,max - bottom) + c_rim δ' as a second row at the
+ *   deepest flange point along its own surface normal (TARMAC: summed into N along n; see phaseA).
  * Tangential (physics.js):
  *   brush (carcass) deflection b, F = K b_new + c_d s_new, b_new = (b + h s)/(1 + h |vx| / σ),
  *   σ = σ_ref g, g = max(0.05, 2ρ/(1+ρ)), ρ = A a / (A a)_ref: tread brush in series with the carcass.
@@ -44,6 +45,22 @@ static double tm_invert(const dc_tm_tab* B, double V) {
     if (V >= B->bpV[n - 1]) return (V + B->bpT[n - 1]) / B->bpS[n - 1];
     while (hi - lo > 1) { int mid = (lo + hi) >> 1; if (B->bpV[mid] <= V) lo = mid; else hi = mid; }
     return (V + B->bpT[lo]) / B->bpS[lo];
+}
+
+/* inverse of the circular-segment area (radius R) -> depth; Newton (same as dc_tyre.c invert_area) */
+static double tm_seg_area(double d, double R) {
+    if (d <= 0) return 0; if (d >= 2 * R) return M_PI * R * R;
+    return R * R * acos(1 - d / R) - (R - d) * sqrt(2 * R * d - d * d);
+}
+static double tm_invert_area(double A, double R) {
+    if (A <= 0) return 0;
+    double d = pow(3.0 * A / (4.0 * sqrt(2.0 * R)), 2.0 / 3.0);
+    for (int k = 0; k < 6; k++) {
+        double f = tm_seg_area(d, R) - A, df = 2 * sqrt(fmax(2 * R * d - d * d, 1e-12));
+        double st = f / df; d -= st; if (d < 0) d = 1e-9; if (d > 2 * R) d = 2 * R;
+        if (fabs(st) < 1e-13) break;
+    }
+    return d;
 }
 
 typedef struct { double pen, area, len, lf, q; v3 P, n; double g; int lane; } tm_cell;
@@ -231,7 +248,7 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
         for (int ii = i0; ii <= i1; ii++) for (int jj = j0; jj <= j1; jj++) { double hn = grid_node(&GR, c, ii, jj, &gd); if (hn > hmax) hmax = hn; }
     }
     tm_cell C[TM_NC]; int nc = 0;
-    double Vsum = 0, dmax = 0;
+    double Vsum = 0, dmax = 0; int nfill = 0;
     v3 dir[DC_TM_NR];
     for (int k = 0; k < DC_TM_NR; k++) dir[k] = vadd(vscl(dn, B->cth[k]), vscl(fw, B->sth[k]));
     for (int j = 0; j < nl; j++) {
@@ -248,6 +265,16 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
             if (th < 0) continue;
             double pen = R0 - th;
             if (pen <= 0) continue;
+            if (th <= 0 && ts <= 0) {
+                /* ray origin inside the solid (a face taller than the wheel centre beside the lane: the lane is in a
+                   wall). The ray reads its full length whatever the depth, so it has no depth gradient: it is no tread
+                   contact and carries no load (TARMAC's lanes are tread columns; a sidewall jammed against a wall is
+                   outside the model and left to the flange row of the lanes still outside and to body contact).
+                   Kept in, its top-surface normal pointed a full-radius flange pinch straight up (1.3 m wall at 10 deg:
+                   car launched, +155 % KE) and its volume read as a 0.25 m vertical squash along the face normal. */
+                nfill++;
+                continue;
+            }
             tm_cell* cl = &C[nc++];
             cl->pen = pen; cl->area = B->w[k] * fabs(d.z) * B->laneW; cl->len = cl->area / B->laneW;
             cl->P = vmad(o, d, th); cl->n = nh; cl->g = gg; cl->lane = j;
@@ -255,6 +282,7 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
             if (pen > dmax) dmax = pen;
         }
     }
+    (void)nfill;
     if (nc == 0) goto airborne;
     double delta = tm_invert(B, Vsum / nl);
     double Ns = Kz * delta;
@@ -278,18 +306,71 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
     /* normal load (TARMAC substep): carcass + rim-flange pinch, along n at Pc */
     v3 vp = vadd(vc, vcross(wperp, vsub(Pc, cw)));
     double rate = -vdot(vp, n);
-    double pinch = dmax - B->bottom;
-    double Frim = pinch > 0 ? fmax(0, B->krim * pinch + (nodamp ? 0 : B->crim * rate)) : 0;
+    /* rim-flange pinch. TARMAC: k_rim (deltaMax - bottom) + c_rim rate, summed into N along the footprint normal,
+       i.e. the flange circle (radius Rf = R0 - bottom) bottoming through the crushed casing. Here the same circle is a
+       conservative column potential, exactly the envelope tyre's rim construction (dc_tyre.c): per lane, vertical
+       columns at wheel-fixed stations; overlap area Ar -> flange depth e = seg^-1(Ar, Rf); U = k_rim/nl e^2/2; force =
+       its exact gradient (stiffness) + Hunt-Crossley damping along it, as a separate row. On a flat road e = deltaMax -
+       bottom and the force is k_rim e along the normal: TARMAC's value. Elsewhere (step riser, wall) the deepest-ray
+       form has no potential: its line of action and its slant depth switch with the ray (face -> top edge), which
+       pumped energy into wall strikes (crash suite +155 % KE at 1.3 m, +68 % at 0.3 m). A face taller than the flange
+       fills the chord and adds no more (column cap), as in the envelope. */
+    double Frim = 0, pinch = 0; v3 Pr = Pc, nr = n;
+    {
+        const double Rf = R0 - B->bottom, dsr = fmin(0.004, dw / 6.0), e = 0.003;
+        const int ns = 2 * (int)ceil(Rf / dsr), nsr = ns > 1024 ? 1024 : ns;
+        const double ds = 2 * Rf / nsr;
+        v3 Fs = V3(0, 0, 0), Ms = V3(0, 0, 0); double U = 0;
+        hcell HC = {INT32_MIN, INT32_MIN, 0, 0, 0, 0, 0, 0, 0, 0};
+        if (cw.z + Rf * dn.z < hmax)                      /* lowest flange point below the highest node, else no touch */
+        for (int j = 0; j < nl; j++) {
+            v3 o = vmad(cw, a, B->lane[j]);               /* the rim is rigid: no belt shift / roll */
+            double Ar = 0; v3 Gr = V3(0, 0, 0), Mr = V3(0, 0, 0);
+            for (int k = 0; k < nsr; k++) {
+                double x = -Rf + (k + 0.5) * ds, Sr = sqrt(fmax(Rf * Rf - x * x, 0));
+                v3 off = vadd(vscl(fw, x), vscl(dn, Sr)), pb = vadd(o, off);
+                if (pb.z >= hmax) continue;
+                double Hx, Hy, gg, H = grid_hc(&GR, &HC, c, pb.x, pb.y, &Hx, &Hy, &gg);
+                double u = H - pb.z, umax = -2 * Sr * dn.z, ph, dph;
+                if (u <= 0) continue;
+                if (u >= umax) { u = umax; ph = umax < e ? umax * umax / (2 * e) : umax - e / 2; dph = 0; }
+                else if (u < e) { ph = u * u / (2 * e); dph = u / e; } else { ph = u - e / 2; dph = 1; }
+                v3 fi = vscl(V3(Hx, Hy, -1), -dph * ds);
+                Ar += ph * ds; Gr = vadd(Gr, fi); Mr = vadd(Mr, vcross(off, fi));
+            }
+            if (Ar <= 0) continue;
+            double el = tm_invert_area(Ar, Rf), chr = 2 * sqrt(fmax(2 * Rf * el - el * el, 1e-10));
+            double sc = B->krim / nl * el / chr;
+            Fs = vmad(Fs, Gr, sc);
+            Ms = vadd(Ms, vadd(vcross(vsub(o, cw), vscl(Gr, sc)), vscl(Mr, sc)));
+            U += 0.5 * B->krim / nl * el * el; if (el > pinch) pinch = el;
+        }
+        double Fl = vlen(Fs);
+        if (Fl > 1e-9 && vdot(Fs, n) > 0) {
+            nr = vscl(Fs, 1 / Fl);
+            /* a point on the line of action: the stiffness force's moment about the wheel centre is Ms */
+            Pr = vadd(cw, vscl(vcross(Fs, Ms), 1 / (Fl * Fl)));
+            Pr = vmad(Pr, nr, vdot(vsub(Pc, Pr), nr));     /* slid along the line to the footprint's level */
+            double rate_r = -vdot(vadd(vc, vcross(wperp, vsub(Pr, cw))), nr);
+            Frim = fmax(0, Fl + (nodamp ? 0 : B->crim * fmin(pinch / 0.004, 1.0) * rate_r));
+            t->pe += U;
+        }
+    }
     double Nel = fmax(0, Ns + (nodamp ? 0 : B->cz * rate));
     double N = Nel + Frim;
-    t->pe = 0.5 * Kz * delta * delta + (pinch > 0 ? 0.5 * B->krim * pinch * pinch : 0);
+    t->pe += 0.5 * Kz * delta * delta;
     if (N <= 1e-9) goto airborne;
     t->contact = 1;
     t->p = Pc; t->n = n;
     t->xc = vnorm(vcross(a, n)); t->yc = vcross(n, t->xc);
     t->camber_l = -vdot(a, n);
-    t->N[0] = N; t->nr[0] = n; t->orow[0] = Pc; t->pr[0] = Pc; t->Fz_t[0] = Nel; t->Frim[0] = Frim;
-    t->dl[0] = delta; t->dlr[0] = pinch > 0 ? pinch : 0; t->a_r[0] = half;
+    t->N[0] = Nel; t->nr[0] = n; t->orow[0] = Pc; t->pr[0] = Pc; t->Fz_t[0] = Nel; t->Frim[0] = 0;
+    t->dl[0] = delta; t->dlr[0] = 0; t->a_r[0] = half;
+    if (Frim > 0) {
+        t->nrows = 2;
+        t->N[1] = Frim; t->nr[1] = nr; t->orow[1] = Pr; t->pr[1] = Pr; t->Fz_t[1] = 0; t->Frim[1] = Frim;
+        t->dl[1] = 0; t->dlr[1] = pinch; t->a_r[1] = half;
+    }
     t->Ntot = N; t->Fz = Nel; t->Fr = Frim; t->delta_eff = delta; t->a_eff = half;
     t->grip = gsum / sw;
     if (c->dbg & DC_DBG_NO_FRICTION) t->grip = 0;
@@ -414,8 +495,9 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
     t->rr_e = nodamp ? 0 : B->crr * t->Re * tanh(Om * t->Re / 0.5);
     /* torques about the wheel centre except the Fx term. The normal load is a radial tread pressure resultant:
        it does not torque the spin axis (TARMAC applies it to the chassis/suspension only). */
-    v3 tau = vcross(vsub(Pc, cw), vscl(n, N));
-    tau = vsub(tau, vscl(a, vdot(tau, a)));
+    v3 tau = vcross(vsub(Pc, cw), vscl(n, Nel));
+    if (Frim > 0) tau = vadd(tau, vcross(vsub(Pr, cw), vscl(nr, Frim)));
+    tau = vsub(tau, vscl(a, vdot(tau, a)));   /* both are radial pressure resultants (tread / flange) */
     tau = vadd(tau, vcross(vsub(Pc, cw), vscl(t->yc, t->Fy)));
     tau = vadd(tau, vscl(n, t->Mz_brush + t->Mt));
     tau = vadd(tau, vscl(t->yc, -t->rr_e * N));
@@ -443,6 +525,7 @@ void dc_tyre_tm_phaseB(dc_car* c, int i, v3 cw, v3 a, double omega_new, double h
     t->Fx = Fx;
     if (Fy != t->Fy) { t->tau = vadd(t->tau, vcross(vsub(t->p, cw), vscl(t->yc, Fy - t->Fy))); t->Fy = Fy; }
     t->F = vadd(vadd(vscl(t->xc, Fx), vscl(t->yc, Fy)), vscl(t->nr[0], t->N[0]));
+    if (t->nrows > 1) t->F = vadd(t->F, vscl(t->nr[1], t->N[1]));
     t->tau = vadd(t->tau, vcross(vsub(t->p, cw), vscl(t->xc, Fx)));
     if (commit) {
         double ey = t->by_new;
