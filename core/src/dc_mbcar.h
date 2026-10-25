@@ -32,6 +32,7 @@ typedef struct dc_mbcar {
     double L_up[4], L_dn[4], MR_up[4], MR_dn[4], L_hard[4]; int j_hard[4];
     int steer;                               /* steering chain present */
     int rack, pin, inp, ish, rim;
+    int hsg, j_rmount;                       /* rack housing body (= ch when the mount is rigid) and its mount joint (-1) */
     int j_rack, j_pin, j_inp, j_rim, j_u1, j_u2, j_gear;
     v3 e_rim, e_is, e_in;                    /* shaft axes in the chassis (K) frame, pointing toward the driver */
     double th_prev_raw, th_acc, pin_prev_raw, pin_acc, inp_prev_raw, inp_acc;

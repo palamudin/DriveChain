@@ -17,6 +17,7 @@ static int fails = 0;
 
 static int g_bush = 0;
 static int g_carrier = 0;  /* 1: carrier-inertia driveline (docs/CARRIER.md proposal values) */  /* 1: arm pivots as compliant bushings (docs/BUSHINGS.md estimates) */
+static int g_rmount = 0;  /* 1: rack housing on a compliant mount (propR estimate, docs/BUSHINGS.md) */
 static int g_jf = -1;   /* >= 0 overrides mb.jf (joint friction switch) */
 static dc_car* make(const char* ini, double v0, int steer_mode) {
     dc_car_params p; char err[256]; dc_default_params(&p);
@@ -24,6 +25,7 @@ static dc_car* make(const char* ini, double v0, int steer_mode) {
     p.solver = DC_SOLVER_MULTIBODY; if (g_jf >= 0) p.mb.jf = g_jf;
     if (g_carrier) { p.mb.diff_inertia = 0.02; p.mb.gb_out_inertia = 0.01; }
     if (g_bush) for (int a = 0; a < 2; a++) { p.mb.bush_kr[a] = 2e6; p.mb.bush_ka[a] = 5e5; p.mb.bush_kt[a] = 300; }
+    if (g_rmount) { p.mb.rack_mount_k = 8e6; p.mb.rack_mount_c = 1.9e4; }
     dc_car* c = dc_create(&p); double z[3] = {0, 0, 0}; dc_reset(c, z, 0, v0);
     dc_input in; memset(&in, 0, sizeof in); in.gear = 0; in.steer_mode = steer_mode; dc_set_input(c, &in);
     return c;
@@ -140,6 +142,28 @@ int main(int argc, char** argv) {
         CHECK(frm < 1e-9 && trm < 1e-8, "bushed cornering: Newton-3 per joint (rel %.2e, %.2e m)", frm, trm);
         CHECK(mono && rf < 1e-2, "bushed cornering: dissipation non-decreasing, momentum residual %.2e N", rf);
         CHECK(emax > 1e-5 && emax < 5e-3, "bushed cornering: bush deflection visible but small (%.2f mm)", emax * 1e3);
+        dc_destroy(c);
+    }
+    /* --- compliant rack mount: housing body on a beam joint, soft only along the rack axis */
+    {
+        g_rmount = 1; c = make(ini, 15, DC_STEER_ANGLE); g_rmount = 0;
+        dc_mbcar* m = c->mb; mb_world* W = m->W;
+        CHECK(m->j_rmount >= 0 && m->hsg != m->ch, "rack mount: housing is its own body (%d) on joint %d", m->hsg, m->j_rmount);
+        memset(&in, 0, sizeof in); in.gear = 3; in.throttle = 0.25; in.steer_mode = DC_STEER_ANGLE;
+        in.steer_target = 60 * M_PI / 180; in.hands_k = 60; in.hands_d = 3; in.hands_tmax = 30; dc_set_input(c, &in);
+        frm = 0; trm = 0; mono = 1; dprev = 0;
+        for (int k = 0; k < 500; k++) {
+            dc_step(c, 0.01); dc_get_telemetry(c, &t);
+            if (k > 100) { joint_n3(c, &fr, &tr, &fref); frm = fmax(frm, fr / fmax(fref, 1)); trm = fmax(trm, tr / fmax(fref, 1)); }
+            if (k > 10 && t.dissipated < dprev - 1e-2) mono = 0; dprev = t.dissipated;
+        }
+        mb_eval_joint(W, m->j_rmount);
+        double dx = W->Jt[m->j_rmount].phi[0], Fm = 8e6 * dx;
+        rf = sqrt(t.resid_force[0]*t.resid_force[0]+t.resid_force[1]*t.resid_force[1]+t.resid_force[2]*t.resid_force[2]);
+        printf("       rack mount: ay %.2f m/s^2, housing shift %.3f mm, k x %.0f N vs tie-rod rack force %.0f N\n", t.ay, dx * 1e3, Fm, t.rack_force);
+        CHECK(fabs(fabs(Fm) - fabs(t.rack_force)) < 0.1 * fabs(t.rack_force) + 20, "rack mount: |k x| matches the rack force within 10%% (quasi-static)");
+        CHECK(frm < 1e-9 && trm < 1e-8, "rack mount cornering: Newton-3 per joint (rel %.2e, %.2e m)", frm, trm);
+        CHECK(mono && rf < 1e-2, "rack mount cornering: dissipation non-decreasing, momentum residual %.2e N", rf);
         dc_destroy(c);
     }
     /* --- carrier inertia: propshaft + diff carrier as geared rotors */

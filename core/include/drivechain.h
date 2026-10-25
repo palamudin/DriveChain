@@ -122,7 +122,8 @@ typedef struct {
 
 /* Multibody solver parameters (solver = DC_SOLVER_MULTIBODY). Index [0] front, [1] rear. Lengths m, masses kg.
    Zero bushing rates mean a rigid joint (revolute) at that pivot; kr, ka and kt all > 0 make both arm pivots of that axle
-   compliant bushings (5 implicit spring-damper rows, docs/BUSHINGS.md). rack_mount_k/c are parsed but not yet used. */
+   compliant bushings (5 implicit spring-damper rows, docs/BUSHINGS.md). rack_mount_k > 0 makes the rack housing its own
+   body, rigid to the body except along the rack axis (spring rack_mount_k, damper rack_mount_c; 0 = rigid housing). */
 typedef struct {
     double uca_mass[2], lca_mass[2], knuckle_mass[2], wheel_mass[2];   /* wheel_mass = rim + tyre + hub/rotor */
     double knuckle_inertia[2][3];   /* knuckle (+caliper) about x,y,z, kg m^2 */

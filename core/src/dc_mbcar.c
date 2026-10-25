@@ -203,15 +203,23 @@ dc_mbcar* dc_mbcar_create(dc_car* c) {
         double Lis = vlen(vsub(u1, u2));
         m->ish = addb(m, "ishaft", 0.8, axis_inertia(m->e_is, M->ishaft_inertia, 0.8 * Lis * Lis / 12), vscl(vadd(u1, u2), 0.5), qid()); ACC(m->ish);
         m->rim = addb(m, "rim", 3.0, axis_inertia(m->e_rim, M->rim_inertia + P->column_inertia, 0.03), rim, qid()); ACC(m->rim);
-        m->j_rack = mb_prismatic(W, "rack_hsg", m->rack, m->ch, EY);
-        m->j_pin = mb_revolute(W, "pinion_brg", m->pin, m->ch, pp, m->e_in);
-        m->j_inp = mb_revolute(W, "input_brg", m->inp, m->ch, pp, m->e_in);
+        /* rack housing: rigid part of the chassis unless mb_rack_mount_k > 0, then its own body on a beam joint that is rigid
+           except along the rack axis (rubber clamp bushings: lateral housing shift = steering-system compliance) */
+        m->hsg = m->ch; m->j_rmount = -1;
+        if (M->rack_mount_k > 0) {
+            m->hsg = addb(m, "rack_housing", 3.0, mdiag(0.15, 2e-3, 0.15), rp, qid()); ACC(m->hsg);
+            m->j_rmount = mb_beam(W, "rack_mount", m->hsg, m->ch, rp, EY, EX);
+            W->Jt[m->j_rmount].sk[0] = M->rack_mount_k; W->Jt[m->j_rmount].sc[0] = M->rack_mount_c > 0 ? M->rack_mount_c : 0;
+        }
+        m->j_rack = mb_prismatic(W, "rack_hsg", m->rack, m->hsg, EY);
+        m->j_pin = mb_revolute(W, "pinion_brg", m->pin, m->hsg, pp, m->e_in);
+        m->j_inp = mb_revolute(W, "input_brg", m->inp, m->hsg, pp, m->e_in);
         m->j_rim = mb_revolute(W, "column_brg", m->rim, m->ch, rim, m->e_rim);
         m->j_u1 = mb_ujoint(W, "ujoint_up", m->rim, m->ish, u1, m->e_rim, m->e_is, 0);
         m->j_u2 = mb_ujoint(W, "ujoint_lo", m->ish, m->inp, u2, m->e_is, m->e_in, 1);
-        int gb[3] = {m->rack, m->pin, m->ch};
+        int gb[3] = {m->rack, m->pin, m->hsg};
         m->j_gear = mb_custom(W, "rack_pinion", 1, 0, 3, gb); W->Jt[m->j_gear].proj = 1;
-        int fb[2] = {m->rack, m->ch}; m->j_rfric = mb_custom(W, "rack_fric", 1, 1, 2, fb);
+        int fb[2] = {m->rack, m->hsg}; m->j_rfric = mb_custom(W, "rack_fric", 1, 1, 2, fb);
         m->j_rstop = mb_custom(W, "rack_stop", 1, 1, 2, fb);
         int cb[2] = {m->rim, m->ch}; m->j_cfric = mb_custom(W, "col_fric", 1, 1, 2, cb);
         if (jf) {   /* load-dependent bounds (docs/JOINT_FRICTION.md); source order is relied on in the step */
@@ -220,11 +228,12 @@ dc_mbcar* dc_mbcar_create(dc_car* c) {
             mb_fric_source(W, m->j_rfric, m->j_rack, 2, 3, 2 * M->rack_bush_mu / M->rack_bush_span, EY);  /* misalignment moment -> edge loads */
             mb_fric_source(W, m->j_cfric, m->j_rim, 0, 3, M->brg_mu * M->col_brg_radius, V3(0, 0, 0));
             mb_fric_source(W, m->j_cfric, m->j_rim, 3, 2, 2 * M->brg_mu * M->col_brg_radius / M->col_brg_span, V3(0, 0, 0));
-            int pb_[2] = {m->pin, m->ch}; m->j_pfric = mb_custom(W, "pin_fric", 1, 1, 2, pb_);
+            int pb_[2] = {m->pin, m->hsg}; m->j_pfric = mb_custom(W, "pin_fric", 1, 1, 2, pb_);
             mb_fric_source(W, m->j_pfric, m->j_pin, 0, 3, M->brg_mu * M->pin_brg_radius, V3(0, 0, 0));
             mb_fric_source(W, m->j_pfric, m->j_pin, 3, 2, 2 * M->brg_mu * M->pin_brg_radius / M->pin_brg_span, V3(0, 0, 0));
         }
-        mb_couple(W, m->inp, m->pin); mb_couple(W, m->rim, m->ch); mb_couple(W, m->rack, m->ch);
+        mb_couple(W, m->inp, m->pin); mb_couple(W, m->rim, m->ch); mb_couple(W, m->rack, m->hsg);
+        if (m->hsg != m->ch) { mb_couple(W, m->hsg, m->ch); mb_couple(W, m->rack, m->ch); }
     }
     /* ---------------- corners */
     for (int i = 0; i < 4; i++) {
@@ -380,7 +389,8 @@ dc_mbcar* dc_mbcar_create(dc_car* c) {
        otherwise the implicit k/c coupling is silently dropped from the system matrix */
     for (int i = 0; i < 4; i++) mb_couple(W, m->lo_body[i], m->ch);
     for (int a = 0; a < 2; a++) if (m->has_bar[a]) mb_couple(W, m->bar[a][0], m->bar[a][1]);
-    if (m->steer) { mb_couple(W, m->inp, m->pin); mb_couple(W, m->rack, m->ch); mb_couple(W, m->rim, m->ch); }
+    if (m->steer) { mb_couple(W, m->inp, m->pin); mb_couple(W, m->rack, m->hsg); mb_couple(W, m->rim, m->ch);
+                    if (m->hsg != m->ch) { mb_couple(W, m->hsg, m->ch); mb_couple(W, m->rack, m->ch); } }
     m->vmodel = (m->steer && P->assist && M->valve_model > 0.5) ? (M->valve_model >= 1.5 ? 2 : 1) : 0;
     if (m->vmodel) dc_valve_setup(&m->vlv, c);
     W->phi_cb = phi_refresh; W->cb_user = c;
@@ -436,14 +446,18 @@ static void steer_angles(dc_car* c, double* th, double* thp, double* thi, double
     *th = *thp = *thi = *r = 0;
     if (!m->steer) return;
     double a1 = rel_angle(W, m->ch, m->rim, m->qd[m->rim], m->e_rim);
-    double a2 = rel_angle(W, m->ch, m->pin, m->qd[m->pin], m->e_in);
-    double a3 = rel_angle(W, m->ch, m->inp, m->qd[m->inp], m->e_in);
+    double a2 = rel_angle(W, m->hsg, m->pin, m->qd[m->pin], m->e_in);
+    double a3 = rel_angle(W, m->hsg, m->inp, m->qd[m->inp], m->e_in);
     *th = m->th_acc + wrapd(a1 - m->th_prev_raw);
     *thp = m->pin_acc + wrapd(a2 - m->pin_prev_raw);
     *thi = m->inp_acc + wrapd(a3 - m->inp_prev_raw);
     const mb_body* Ch = &W->B[m->ch];
     v3 d = mtv(&Ch->R, vsub(W->B[m->rack].x, Ch->x));
     *r = vadd(d, m->cgc).y - m->xd[m->rack].y;
+    if (m->hsg != m->ch) {   /* rack travel in its housing = rack shift minus housing shift (both in the chassis frame) */
+        v3 dh = mtv(&Ch->R, vsub(W->B[m->hsg].x, Ch->x));
+        *r -= vadd(dh, m->cgc).y - m->xd[m->hsg].y;
+    }
     if (commit) { m->th_acc = *th; m->pin_acc = *thp; m->inp_acc = *thi; m->th_prev_raw = a1; m->pin_prev_raw = a2; m->inp_prev_raw = a3; }
 }
 static void phi_refresh(void* user) {
@@ -548,12 +562,12 @@ void dc_mbcar_step(dc_car* c) {
         v3 xr = W->B[m->rack].x, ein = mv(&R, m->e_in);
         J->J[0][0][0] = yw.x; J->J[0][0][1] = yw.y; J->J[0][0][2] = yw.z;
         row_an(ein, -c->r_p, J->J[0][1]);
-        double o[6]; row_pt(W, m->ch, xr, yw, -1, o); for (int q = 0; q < 6; q++) J->J[0][2][q] = o[q];
+        double o[6]; row_pt(W, m->hsg, xr, yw, -1, o); for (int q = 0; q < 6; q++) J->J[0][2][q] = o[q];
         J->J[0][2][3] += c->r_p * ein.x; J->J[0][2][4] += c->r_p * ein.y; J->J[0][2][5] += c->r_p * ein.z;
         J->phi[0] = r - c->r_p * thp; J->t[0] = 0;
         /* Coulomb friction: rack in its housing, column in its bearings (exact stick/slip box rows) */
         mb_joint* F = &W->Jt[m->j_rfric]; memset(F->J, 0, sizeof F->J);
-        F->J[0][0][0] = yw.x; F->J[0][0][1] = yw.y; F->J[0][0][2] = yw.z; row_pt(W, m->ch, xr, yw, -1, F->J[0][1]);
+        F->J[0][0][0] = yw.x; F->J[0][0][1] = yw.y; F->J[0][0][2] = yw.z; row_pt(W, m->hsg, xr, yw, -1, F->J[0][1]);
         F->lo[0] = nodamp ? 0 : -P->rack_friction * h; F->hi[0] = -F->lo[0]; F->t[0] = 0;
         /* rack end stop solid (steel on steel): rigid inelastic unilateral row, speculative */
         mb_joint* Rs = &W->Jt[m->j_rstop]; memcpy(Rs->J, F->J, sizeof Rs->J);
@@ -701,10 +715,10 @@ void dc_mbcar_step(dc_car* c) {
         mb_elem_add(W, 2, bt, jt, -tau, -ktb, nodamp ? 0 : -P->torsion_c);
         pe += 0.5 * ktb * tw * tw; m->tau_tb = tau;
         /* rack: hydraulic assist (open-centre valve law, pump flow limit, back-drive orifice damping), stops */
-        int br[2] = {m->rack, m->ch}; double jr[2][6];
+        int br[2] = {m->rack, m->hsg}; double jr[2][6];
         v3 xr = W->B[m->rack].x;
         jr[0][0] = yw.x; jr[0][1] = yw.y; jr[0][2] = yw.z; jr[0][3] = jr[0][4] = jr[0][5] = 0;
-        row_pt(W, m->ch, xr, yw, -1, jr[1]);
+        row_pt(W, m->hsg, xr, yw, -1, jr[1]);
         double rd = mb_row_vel(W, 2, br, jr);
         double f = 0, kk = 0, cc = 0;
         if (P->assist && m->vmodel) {
@@ -774,6 +788,7 @@ void dc_mbcar_step(dc_car* c) {
     for (int b = 0; b < W->nb; b++) { m->v_save[b] = W->B[b].v; m->w_save[b] = W->B[b].w; }
     /* stored energy at the start of the step, every term at the same instant (energy audit) */
     if (m->nbush) for (int i = 0; i < 4; i++) for (int n = 0; n < m->narm[i]; n++) pe += mb_bushing_energy(W, m->j_arm_rev[i][n]);
+    if (m->steer && m->j_rmount >= 0) pe += mb_bushing_energy(W, m->j_rmount);
     double E_start = pe;
     if (m->vmodel) { double eh = dc_valve_energy(&m->vlv, m->vp, r); E_start += eh; pe += eh; }
     for (int b = 0; b < W->nb; b++) {
@@ -830,7 +845,7 @@ void dc_mbcar_step(dc_car* c) {
         if (m->steer) {
             v3 er = mv(&R, m->e_rim);
             Win += h * m->T_hands * (vdot(W->B[m->rim].w, er) - vdot(Ch->w, er));
-            v3 dvr = vsub(W->B[m->rack].v, mb_point_vel(Ch, W->B[m->rack].x));
+            v3 dvr = vsub(W->B[m->rack].v, mb_point_vel(&W->B[m->hsg], W->B[m->rack].x));
             Win += h * F_act * vdot(dvr, yw);
             if (m->vmodel) {   /* commit the pressure states with the solved rack velocity; the pump is the power source */
                 double rdn = vdot(dvr, yw), Pn[3], d_[3];
@@ -884,7 +899,7 @@ void dc_mbcar_step(dc_car* c) {
         steer_angles(c, &th2, &thp2, &thi2, &r2, 1);
         c->th = th2; c->r = r2;
         c->thd = vdot(vsub(W->B[m->rim].w, Ch->w), mv(&Rn, m->e_rim));
-        v3 dv = vsub(W->B[m->rack].v, mb_point_vel(Ch, W->B[m->rack].x));
+        v3 dv = vsub(W->B[m->rack].v, mb_point_vel(&W->B[m->hsg], W->B[m->rack].x));
         c->rd = vdot(dv, yw);
     }
     c->we = vdot(W->B[m->eng].w, xw) - vdot(Ch->w, xw);
