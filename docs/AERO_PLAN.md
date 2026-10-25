@@ -442,10 +442,22 @@ panel:
 
 ### 7.5 Integration contract with the host game
 **The host supplies, each aero tick (240 Hz):**
-1. **Wind velocity, minimum level.** A uniform world-frame vector `w0` (m/s), meaning
-   the air velocity relative to the ground. It is zero in calm air.
-2. **Wind velocity, optional level.** A field/gust callback `w(x, t)`, sampled by
-   drivechain at the panel points (or a coarse subset). It is batched as
+1. **Wind velocity: v1 contract, required.** A uniform, time-varying world-frame vector
+   `w0(t)` (m/s), supplied every tick. It is the air velocity relative to the ground and
+   is zero in calm air.
+   * This matches the host's wind: "one system with a variable attached" (user,
+     2026-10-25). That is a single map-wide wind whose magnitude and direction vary over
+     time, with no spatial field.
+   * **With a uniform wind, the only spatial variation of relative air velocity across
+     the car comes from:**
+     * the car's own motion, `v_cg + ω × r` per panel (yaw rate, pitch and roll rates);
+     * the optional near-ground mean profile `U(z)` that drivechain applies to the
+       host's wind (§7.1, profile on by default when `z0` is configured; otherwise off).
+   * **Time variation of `w0(t)`** is handled by the gust admittance filter (§7.4).
+     Because the field is uniform, a host gust reaches every panel at the same instant.
+     There is no nose-to-tail convection lag unless a field is supplied later.
+2. **Wind velocity, optional / future.** A spatial field/gust callback `w(x, t)`, sampled
+   by drivechain at the panel points (or a coarse subset). It is not needed for v1. It is batched as
    `host_wind_sample(const float *pts_world, int n, double t, float *w_out)`.
    * It can carry the near-ground profile, turbulence, gust fronts and obstacle/vehicle
      wakes.
@@ -500,8 +512,9 @@ Otherwise wind and drag are counted twice.
    the relative velocity matters).
 4. **Energy audit closes** with aero on (`Win` from point velocities).
 5. **Balance shift.** Imposed nose-down pitch reduces front lift, as in the CFD map.
-6. **Crosswind step.** The yaw moment leads the side-force build-up as the gust passes
-   nose to tail. The response settles to the quasi-steady map value.
+6. **Crosswind step.** With a field callback, the yaw moment leads the side-force
+   build-up as the gust passes nose to tail. With the v1 uniform wind, the step reaches
+   the whole car at once, and the transient comes only from the admittance filter. The response settles to the quasi-steady map value.
 7. **Symmetry.** ±β gives mirrored CS, yaw moment and roll moment, with identical CL.
 8. **Cost.** < 15 µs per sim-ms at 1024 panels in the real core.
 9. **Steady uniform-wind reduction.** Car at speed V, steady uniform wind w0, no
@@ -533,8 +546,9 @@ Otherwise wind and drag are counted twice.
 ## 10. Open questions for the user
 1. **~~Wind representation~~ (answered 2026-10-25).** The host applies wind as a
    physicalised force with a mesh-based drag. Resolved by the §7.5 contract. Still open:
-   does the host have a gust/field model to expose through `host_wind_sample`, or only a
-   uniform vector?
+   the host has a single uniform wind with a time-varying magnitude and direction ("one
+   system with a variable attached"). The v1 contract is therefore a uniform `w0(t)`, and
+   the field callback is future/optional.
 2. **Air density.** Can the host's weather system expose ρ, or p and T (§7.5)?
 3. **Top-up geometry** for the Miata. The mesh is top down. Is a soft-top/hardtop model
    available, or should one be built from dimensions? It is needed to validate
