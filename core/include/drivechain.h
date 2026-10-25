@@ -80,6 +80,7 @@ typedef struct {
     double tm_slide_floor, tm_slide_speed; /* sliding-friction decay: floor (0.7) and e-folding speed m/s (5) */
     double tm_crr;                         /* rolling resistance coefficient (0.012) */
     double tm_k_rim, tm_c_rim;             /* rim-flange pinch stiffness / damping (1.2e6, 1500) */
+    double tm_shape;                       /* 0: TARMAC linear-plastic brush (faithful); 1: brush (Fiala) saturation of the tread slip */
 } dc_tyre_params;
 
 typedef struct {

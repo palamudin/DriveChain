@@ -34,8 +34,10 @@ static void rig(dc_car* c, double Fz, double alpha, double kappa, double gamma, 
     }
     *out = t;
 }
-static dc_car* mkcar(const dc_car_params* P0, int model) {
-    dc_car_params P = *P0; P.axle[0].tyre.model = model; P.axle[1].tyre.model = model;
+static dc_car* mkcar(const dc_car_params* P0, int m) {
+    dc_car_params P = *P0; int model = m > 0;
+    P.axle[0].tyre.model = model; P.axle[1].tyre.model = model;
+    if (m == 2) { P.axle[0].tyre.tm_shape = 1; P.axle[1].tyre.tm_shape = 1; }
     dc_car* c = dc_create(&P); dc_set_road(c, flat, NULL); return c;
 }
 int main(int argc, char** argv) {
@@ -46,9 +48,9 @@ int main(int argc, char** argv) {
     const dc_tyre_params* T = &P.axle[0].tyre;
     double fref = P.mass * P.gravity / 4;
     double loads[4] = {0.5 * fref, fref, 1.5 * fref, 2 * fref};
-    const char* nm[2] = {"envelope", "tarmac"};
+    const char* nm[3] = {"envelope", "tarmac", "tarmac_brush"};
     snprintf(path, sizeof path, "%s/summary.txt", od); FILE* S = fopen(path, "w");
-    for (int m = 0; m < 2; m++) {
+    for (int m = 0; m < 3; m++) {
         dc_car* c = mkcar(&P, m);
         kz_est = m ? 0 : T->kz_ref;
         if (m) { double A, hl, d; dc_tyre_tm_flat(c, 0, fref, &A, &hl, &d); kz_est = fref / d; }
@@ -66,7 +68,7 @@ int main(int argc, char** argv) {
             if (g && l != 1) continue;
             double gam = g ? -3 * D2R : 0, pk = 0, pka = 0, mzpk = 0, mzpka = 0, Cy = 0, tp0 = 0, Fy0 = 0;
             for (int k = 0; k <= 60; k++) {
-                double al = 0.25 * k * D2R; dc_tc t; rig(c, loads[l], al, 0, gam, 15, &t, 3000);
+                double al = 0.25 * k * D2R; dc_tc t; rig(c, loads[l], al, 0, gam, 15, &t, 1500);
                 double Mz = t.Mz_brush + t.Mt;
                 fprintf(f, "%.0f,%.1f,%.3f,%.2f,%.3f,%.2f,%.4f,%.4f,%.4f\n", loads[l], gam * R2D, al * R2D, t.Fy, Mz, t.tp * 1000, t.Fy / loads[l], t.sig_y, t.a_eff);
                 if (k == 0) Fy0 = t.Fy;
@@ -80,15 +82,15 @@ int main(int argc, char** argv) {
         fclose(f);
         snprintf(path, sizeof path, "%s/long_%s.csv", od, nm[m]); f = fopen(path, "w");
         fprintf(f, "Fz,kappa,Fx\n"); double pk = 0, pkk = 0, Cx = 0;
-        for (int k = -40; k <= 40; k++) { double kap = 0.01 * k; dc_tc t; rig(c, fref, 0, kap, 0, 15, &t, 3000);
+        for (int k = -40; k <= 40; k++) { double kap = 0.01 * k; dc_tc t; rig(c, fref, 0, kap, 0, 15, &t, 1500);
             fprintf(f, "%.0f,%.3f,%.2f\n", fref, kap, t.Fx); if (t.Fx > pk) { pk = t.Fx; pkk = kap; } if (k == 1) Cx = t.Fx / 0.01; }
         fclose(f);
         fprintf(S, "  long @fref: C_kappa %.0f N (%.1f norm), peak mu_x %.3f at kappa %.2f\n", Cx, Cx / fref, pk / fref, pkk);
         /* relaxation: 2 deg step at 15 m/s */
         {
-            double h = 1.0 / P.substep_hz, V = 15, al = 2 * D2R; dc_tc t; rig(c, fref, al, 0, 0, V, &t, 3000); double Fyss = t.Fy;
+            double h = 1.0 / P.substep_hz, V = 15, al = 2 * D2R; dc_tc t; rig(c, fref, al, 0, 0, V, &t, 1500); double Fyss = t.Fy;
             dc_tyre_state* St = &c->ty[0]; v3 a = V3(0, 1, 0), vc = V3(V * cos(al), -V * sin(al), 0);
-            rig(c, fref, 0, 0, 0, V, &t, 3000);   /* settle height at zero slip */
+            rig(c, fref, 0, 0, 0, V, &t, 1500);   /* settle height at zero slip */
             double z = 0; { /* recover z from the settled state: re-run with same loop storing z */ }
             /* find z by bisection on N(z) at zero slip */
             double lo = T->radius - 0.08, hi = T->radius;

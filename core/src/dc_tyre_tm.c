@@ -113,6 +113,7 @@ void dc_tyre_tm_init(dc_car* c) {
         for (int i = 0; i < n; i++) B->bpV[i] = i == 0 ? 0 : B->bpS[i - 1] * B->bpD[i] - B->bpT[i - 1];
         /* parameters (defaults documented in drivechain.h) */
         B->kz_mode = T->tm_kz_mode;
+        B->shape = T->tm_shape;
         B->kappa = T->tm_contact_ratio > 0 ? T->tm_contact_ratio : 0.8;
         B->roll = T->tm_carcass_roll > 0 ? T->tm_carcass_roll : 0.6;
         B->cz = T->tm_cz > 0 ? T->tm_cz : 300;
@@ -321,6 +322,22 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
     /* brush: lateral explicit, longitudinal linearised in the wheel spin (implicit row in the solver) */
     double byn = (by + h * sly) / Dy;
     double ex_star = (bx + h * slx) / Dx;
+    if (B->shape > 0.5 && t->grip > 0) {
+        /* brush-saturation option (tyre_tm_shape = 1, not in TARMAC). TARMAC's deflection b obeys
+           db/dt = s - |vx| b / sigma: the tread absorbs slip at the linear rate b/sigma = F/C. With a brush tread
+           (Fiala 1954; Pacejka 2012 sec. 3.2) the tread slip that carries force F is F/C * phi(f), f = F/(mu N),
+           phi = 3 theta / f, theta = 1 - (1 - f)^(1/3) (exact inverse of F = mu N (3 theta - 3 theta^2 + theta^3)):
+           phi = 1 at small force, 3 at full sliding, so the curve rounds over and peaks at the brush full-slide slip
+           3 mu N / C (the same point TARMAC's sliding-friction decay starts from). Fixed-point on phi (3 passes). */
+        double cap0 = mu * N;
+        for (int it = 0; it < 3; it++) {
+            double f = cap0 > 0 ? hypot(B->kx * ex_star, B->ky * byn) / cap0 : 0;
+            if (f > 0.999) f = 0.999;
+            double phi = f > 1e-6 ? 3 * (1 - cbrt(1 - f)) / f : 1 + f / 3;
+            Dx = 1 + h * avx * phi / sigx; Dy = 1 + h * avx * phi / sigy;
+            byn = (by + h * sly) / Dy; ex_star = (bx + h * slx) / Dx;
+        }
+    }
     t->by_new = byn; t->ey_new = 0;   /* belt shift is in Pc already: no extra n x (ey Fx) moment */
     t->ex_star = ex_star;
     t->Fy = B->ky * byn + cd * sly;
