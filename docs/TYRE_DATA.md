@@ -133,7 +133,53 @@ partially sliding footprint, and grows over several m/s (Grosch 1963; Persson 20
 (`results/tyre_ref/mx5_envelope_propE.txt` was run with the v_s = 10 TARMAC variant; use only its envelope rows.
 `mx5_tarmac_propD.txt` holds the TARMAC proposal.)
 
-Driving validation of the proposals is in the section below.
+Driving validation of the proposals is in the next section.
+
+## Driving validation of the proposals
+
+All runs: mx5_na, MB core, joint friction on (default), build with the road-surface contact point (next section).
+F1 and F2 are propE with a milder falloff (level 0.80 / speed 3.0 and level 0.75 / speed 4.0). F3 is level 0.80 /
+speed 2.5.
+
+**Closed-loop laps.** Path driver, 4.5 m/s² lateral target, 80 km/h cap, two laps on a third-party test circuit.
+There are two starts: on the racing line, and the off-line "grid slot" stress start, where the driver has to lunge
+4.7 m back to the line under power. propE, F1 and propD all lap cleanly from both starts, with no spin, no
+off-track and lap times identical to base within 0.02 s. This includes propD from the off-line start, where the
+TARMAC baseline spins (see TYRE_TARMAC.md). Peak body slip from the off-line start is 6-7° for the envelope variants
+and 10° for propD.
+
+**Hands-off power-slide recovery** (`HO_THR=<throttle> build/mbcompare car.ini out 1 handsoff`). A slide is
+provoked with steer, a handbrake flick and full throttle in 2nd. The rim is then released while the throttle is
+held at the given value. The test is a bifurcation: below a critical throttle the car self-recovers through
+caster/SAT countersteer (peak β ≈ 15-30°), above it the car spins (β → 87°). Peak β (deg):
+
+| throttle | 0.30 | 0.35 | 0.40 | 0.45 | 0.50 | 0.55 | 0.60 | ≈ critical |
+|---|---|---|---|---|---|---|---|---|
+| envelope base | 15.1 | 16.3 | 18.0 | 20.6 | 25.1 | 55.4 | 87.2 | 0.53 |
+| envelope F1 | 19.0 | 20.6 | 23.6 | 31.2 | 73.2 | 87.1 | 87.3 | 0.48 |
+| envelope F2 | 18.2 | 19.7 | 22.4 | 28.7 | 74.3 | 87.2 | 87.3 | 0.48 |
+| envelope propE | 21.9 | 25.2 | 42.1 | 79.6 | 87.1 | 87.2 | 87.3 | 0.41 |
+| TARMAC base | 65.8 | 82.2 | 86.7 | 86.9 | 87.1 | 87.2 | 87.2 | < 0.30 |
+| TARMAC propD | 14.3 | 15.8 | 18.1 | 22.6 | 76.1 | 87.2 | 87.3 | 0.47 |
+
+F3 spins at 0.50 (β 84.7°). Before the contact-point fix every envelope threshold was about 0.05 throttle higher
+(base 21° at 0.50 and 26° at 0.55, F1 30° at 0.50); TARMAC is unaffected.
+
+Findings:
+
+1. **propD is a clear gain for TARMAC.** The baseline cannot recover hands-off even at 0.3 throttle. propD recovers
+   up to ~0.47, which is close to the envelope baseline. The rig fidelity gain (α_peak, Stribeck decay) and
+   the drivability gain point the same way.
+2. **propE trades recovery margin for rig fidelity.** The falloff to a 0.75 floor at 2.5 m/s removes rear grip
+   in exactly the sliding-speed range of a power slide, so the critical throttle drops from ~0.53 to ~0.41.
+   Moving the falloff speed out (F2, 4 m/s) or raising the level (F1, 0.80) recovers about half of that loss. On the
+   rig at 2575 N (Fy15/pk, Fy20/pk, Fx(-0.6)/pk; reference 0.972, 0.950, 0.776-0.83): propE 0.982, 0.944, 0.770;
+   F1 0.990, 0.966, 0.820; F2 0.993, 0.974, 0.789. F2 keeps the longitudinal decay in the reference band. Its
+   lateral decay is about 0.02 flatter than MF at 20°.
+3. Recommendation (proposal, defaults unchanged): **propD for TARMAC users; F2 instead of propE for the envelope
+   tyre.** F2 keeps the load sensitivity, μ and trail corrections and gives up only the steepest part of the large-slip
+   decay. Whether real cars recover hands-off at this throttle is a target for the user's own driving data. The
+   rig cannot settle it.
 
 ## Force application point (envelope tyre)
 

@@ -116,3 +116,18 @@ Findings:
 
 Driving validation: closed-loop laps with the path driver (arm stiffness 25 N m/rad) with jf=1 on both cars show
 no instability, no spin and lap times unchanged vs jf=0 within run-to-run scatter.
+
+Hands-off power-slide recovery (`HO_THR=t PSET="car.joint_friction=J" build/mbcompare cars/mx5_na.ini out 1 handsoff`,
+peak body slip in degrees):
+
+| throttle | 0.40 | 0.50 | 0.55 | 0.60 | 0.70 |
+|---|---|---|---|---|---|
+| jf=0 | 15.5 | 18.5 | 20.6 | 23.3 | 71.5 |
+| jf=1 | 18.0 | 25.1 | 55.4 | 87.2 | 87.4 |
+
+Joint friction lowers the critical throttle for self-recovery from ~0.65 to ~0.53. This is physical. The hands-off
+recovery is the self-aligning moment and caster steering the wheels into the slide, and Coulomb friction in the
+kingpins, rack and column opposes that motion. The effect is greatest when the rack is loaded (high kingpin and
+rack-bush normal forces) and the countersteer rate is high. It is the same mechanism that makes a high-friction rack
+feel "dead". jf=1 stays the default because the on-centre loop widths above match the published range.
+
