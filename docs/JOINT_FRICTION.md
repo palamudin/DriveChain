@@ -90,21 +90,21 @@ Rig: `PSET="car.joint_friction=J;steer.assist=A" build/mbcompare cars/<car>.ini 
 
 | car | assist | case | rim friction jf=0 (N m) | jf=1 (N m) | rack friction jf=0 (N) | jf=1 (N) |
 |---|---|---|---|---|---|---|
-| mx5_na | on | 0 g | 0.33 | 1.13 | 56 | 131 |
-| mx5_na | on | 0.6 g | 0.05 | 0.22 | 59 | 153 |
+| mx5_na | on | 0 g | 0.33 | 1.14 | 56 | 131 |
+| mx5_na | on | 0.6 g | 0.05 | 0.22 | 59 | 152 |
 | mx5_na | off | 0 g | 0.36 | 1.30 | 59 | 140 |
-| mx5_na | off | 0.6 g | 0.41 | 1.98 | 59 | 153 |
-| hatch_fwd | on | 0 g | 0.41 | 0.53 | 51 | 109 |
-| hatch_fwd | on | 0.6 g | 0.03 | 0.15 | 59 | 175 |
-| hatch_fwd | off | 0 g | 0.54 | 1.78 | 58 | 135 |
-| hatch_fwd | off | 0.6 g | 0.45 | 2.31 | 58 | 172 |
+| mx5_na | off | 0.6 g | 0.41 | 1.95 | 59 | 152 |
+| hatch_fwd | on | 0 g | 0.42 | 0.52 | 51 | 109 |
+| hatch_fwd | on | 0.6 g | 0.03 | 0.15 | 59 | 174 |
+| hatch_fwd | off | 0 g | 0.54 | 1.77 | 58 | 135 |
+| hatch_fwd | off | 0.6 g | 0.40 | 2.25 | 58 | 170 |
 
 ![loops](../results/joint_friction/hyst_loops.png)
 
 Findings:
 
 1. **Friction grows with load.** At the source (rack friction), it rises 10–60 % from straight-ahead to 0.6 g with
-   jf=1 and stays flat with jf=0. With a manual rack (assist off), rim friction grows +52 % (mx5) and +30 % (hatch).
+   jf=1 and stays flat with jf=0. With a manual rack (assist off), rim friction grows +50 % (mx5) and +27 % (hatch).
    This is the "moderate" load dependence Knapczyk & Maniowski report, dominated by the preloads.
 2. **Column friction stays at ~0.15 N m.** Column bearing radial loads are small, so the column is effectively preload only.
 3. **HPAS hides friction off-centre.** With the rotary valve open at 0.6 g, the hydraulic boost carries rack and
