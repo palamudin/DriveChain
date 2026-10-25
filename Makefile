@@ -111,6 +111,13 @@ drvtest: build/drvhost
 	python3 tools/dcdrive.py selftest --out results/driver
 .PHONY: drvhost drvtest
 
+# step-cost regression under drive torque (sweep-cap count is machine independent; the wall budget is per box)
+build/perf_tests: tests/perf_tests.c demo/drvproto.c demo/net.c demo/sim.c demo/track.c demo/meshtrack.c demo/audio.c demo/input.c demo/cfg.c demo/*.h build/libdrivechain.a
+	$(CC) -O2 -std=gnu11 -Wall -Wno-misleading-indentation -Wno-unused-parameter -DDEMO_NO_SDL -Icore/include -o $@ tests/perf_tests.c demo/drvproto.c demo/net.c demo/sim.c demo/track.c demo/meshtrack.c demo/audio.c demo/input.c demo/cfg.c build/libdrivechain.a -lm -lpthread
+perftest: build/perf_tests
+	mkdir -p results/perf && (./build/perf_tests cars/mx5_na.ini proving && ./build/perf_tests cars/mx5_na.ini circuit) | tee results/perf/perf_summary.txt
+.PHONY: perftest
+
 # Unity binding: P/Invoke ABI + driver + TCP bridge test (mono), and stub-UnityEngine compile check of the MonoBehaviours
 UNITY_CS = unity/DriveChain.cs unity/DriveChainDriverBridge.cs
 unitytest: build/libdrivechain.so
