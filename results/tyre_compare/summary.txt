@@ -1,0 +1,37 @@
+== envelope  (fref 2575 N, front tyre r 0.289 w 0.185 p 200 kPa)
+  Fz  1288 g +0: C_alpha 26464 N/rad (20.6 /rad norm), peak mu 1.086 at 12.00 deg, |Mz| peak 8.2 N m at 2.00 deg, trail(0.5deg) 16.7 mm, Fy(alpha=0) 0.0 N
+  Fz  2575 g +0: C_alpha 44171 N/rad (17.2 /rad norm), peak mu 0.914 at 10.25 deg, |Mz| peak 19.7 N m at 2.25 deg, trail(0.5deg) 23.6 mm, Fy(alpha=0) 0.0 N
+  Fz  3863 g +0: C_alpha 59127 N/rad (15.3 /rad norm), peak mu 0.826 at 7.50 deg, |Mz| peak 32.8 N m at 2.25 deg, trail(0.5deg) 28.8 mm, Fy(alpha=0) 0.0 N
+  Fz  5150 g +0: C_alpha 72354 N/rad (14.0 /rad norm), peak mu 0.769 at 7.00 deg, |Mz| peak 47.0 N m at 2.25 deg, trail(0.5deg) 33.1 mm, Fy(alpha=0) 0.0 N
+  Fz  2575 g -3: C_alpha 45211 N/rad (17.6 /rad norm), peak mu 0.928 at 10.25 deg, |Mz| peak 20.3 N m at 2.50 deg, trail(0.5deg) 26.1 mm, Fy(alpha=0) -281.9 N
+  long @fref: C_kappa 45400 N (17.6 norm), peak mu_x 0.914 at kappa 0.20
+  relaxation (63% distance, 2 deg step, 15 m/s, fref): 0.263 m
+  cost: 21.61 us per wheel evaluation (phaseA + phaseB)
+== tarmac  (fref 2575 N, front tyre r 0.289 w 0.185 p 200 kPa)
+  TARMAC params: Kz(Rhyne) 192307 N/m, kx 300000 ky 150000, sigma_x 0.165 sigma_y 0.315 m, mu0 0.914 ls 0.250, H 0.116 tread 0.144, patch0 8.330e-04, cp 1.135e+08
+  footprint @1288 N: area 80.5 cm2, half length 28.5 mm (2a 57 mm), deflection 6.7 mm, mean pressure 160 kPa
+  footprint @2575 N: area 160.9 cm2, half length 51.8 mm (2a 104 mm), deflection 13.4 mm, mean pressure 160 kPa
+  footprint @3863 N: area 241.4 cm2, half length 78.6 mm (2a 157 mm), deflection 20.1 mm, mean pressure 160 kPa
+  footprint @5150 N: area 321.9 cm2, half length 105.2 mm (2a 210 mm), deflection 26.8 mm, mean pressure 160 kPa
+  Fz  1288 g +0: C_alpha 26662 N/rad (20.7 /rad norm), peak mu 1.087 at 2.50 deg, |Mz| peak 5.1 N m at 1.50 deg, trail(0.5deg) 7.6 mm, Fy(alpha=0) 0.0 N
+  Fz  2575 g +0: C_alpha 54949 N/rad (21.3 /rad norm), peak mu 0.914 at 2.50 deg, |Mz| peak 13.9 N m at 1.25 deg, trail(0.5deg) 15.3 mm, Fy(alpha=0) 0.0 N
+  Fz  3863 g +0: C_alpha 72623 N/rad (18.8 /rad norm), peak mu 0.826 at 2.50 deg, |Mz| peak 27.5 N m at 1.50 deg, trail(0.5deg) 23.1 mm, Fy(alpha=0) 0.0 N
+  Fz  5150 g +0: C_alpha 82395 N/rad (16.0 /rad norm), peak mu 0.769 at 2.75 deg, |Mz| peak 43.2 N m at 1.75 deg, trail(0.5deg) 30.1 mm, Fy(alpha=0) 0.0 N
+  Fz  2575 g -3: C_alpha 56043 N/rad (21.8 /rad norm), peak mu 0.914 at 2.50 deg, |Mz| peak 16.6 N m at 1.75 deg, trail(0.5deg) 18.6 mm, Fy(alpha=0) -202.7 N
+  long @fref: C_kappa 55928 N (21.7 norm), peak mu_x 0.914 at kappa 0.05
+  relaxation (63% distance, 2 deg step, 15 m/s, fref): 0.323 m
+  cost: 26.32 us per wheel evaluation (phaseA + phaseB)
+== tarmac_brush  (fref 2575 N, front tyre r 0.289 w 0.185 p 200 kPa)
+  TARMAC params: Kz(Rhyne) 192307 N/m, kx 300000 ky 150000, sigma_x 0.165 sigma_y 0.315 m, mu0 0.914 ls 0.250, H 0.116 tread 0.144, patch0 8.330e-04, cp 1.135e+08
+  footprint @1288 N: area 80.5 cm2, half length 28.5 mm (2a 57 mm), deflection 6.7 mm, mean pressure 160 kPa
+  footprint @2575 N: area 160.9 cm2, half length 51.8 mm (2a 104 mm), deflection 13.4 mm, mean pressure 160 kPa
+  footprint @3863 N: area 241.4 cm2, half length 78.6 mm (2a 157 mm), deflection 20.1 mm, mean pressure 160 kPa
+  footprint @5150 N: area 321.9 cm2, half length 105.2 mm (2a 210 mm), deflection 26.8 mm, mean pressure 160 kPa
+  Fz  1288 g +0: C_alpha 25799 N/rad (20.0 /rad norm), peak mu 1.087 at 7.25 deg, |Mz| peak 5.0 N m at 1.75 deg, trail(0.5deg) 7.7 mm, Fy(alpha=0) 0.0 N
+  Fz  2575 g +0: C_alpha 52079 N/rad (20.2 /rad norm), peak mu 0.914 at 3.75 deg, |Mz| peak 13.9 N m at 1.50 deg, trail(0.5deg) 15.5 mm, Fy(alpha=0) 0.0 N
+  Fz  3863 g +0: C_alpha 68656 N/rad (17.8 /rad norm), peak mu 0.826 at 4.00 deg, |Mz| peak 27.9 N m at 1.75 deg, trail(0.5deg) 23.2 mm, Fy(alpha=0) 0.0 N
+  Fz  5150 g +0: C_alpha 78211 N/rad (15.2 /rad norm), peak mu 0.769 at 7.25 deg, |Mz| peak 43.0 N m at 2.25 deg, trail(0.5deg) 30.3 mm, Fy(alpha=0) 0.0 N
+  Fz  2575 g -3: C_alpha 54515 N/rad (21.2 /rad norm), peak mu 0.914 at 5.75 deg, |Mz| peak 16.3 N m at 2.00 deg, trail(0.5deg) 18.7 mm, Fy(alpha=0) -198.4 N
+  long @fref: C_kappa 52523 N (20.4 norm), peak mu_x 0.914 at kappa 0.07
+  relaxation (63% distance, 2 deg step, 15 m/s, fref): 0.210 m
+  cost: 37.12 us per wheel evaluation (phaseA + phaseB)
