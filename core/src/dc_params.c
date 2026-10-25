@@ -100,6 +100,15 @@ void dc_default_params(dc_car_params* p) {
     M->valve_a0 = 4.4e-6; M->valve_amin = 2.0e-8; M->valve_theta_c = 0.05; M->valve_cd = 0.6;
     M->oil_rho = 860; M->oil_beta = 3.0e8; M->chamber_vol = 5e-5; M->supply_vol = 1e-4;
     M->diff_inertia = 0.02; M->gb_out_inertia = 0.01; M->baumgarte = 0.2;
+    /* joint friction: sources and estimates in docs/JOINT_FRICTION.md */
+    M->jf = 1;
+    M->bj_mu = 0.08; M->bj_radius = 0.0125; M->bj_torque = 1.5;
+    M->yoke_preload = 800; M->yoke_mu = 0.10; M->mesh_sep = 0.40;
+    M->rack_bush_mu = 0.12; M->rack_bush_span = 0.30;
+    M->brg_mu = 0.002; M->col_brg_radius = 0.012; M->col_brg_span = 0.25;
+    M->pin_brg_radius = 0.010; M->pin_brg_span = 0.06; M->pin_torque = 0.05;
+    M->strut_mount_mu = 0.004; M->strut_mount_radius = 0.045; M->strut_mount_torque = 0.5;
+    M->strut_mu = 0.07; M->strut_lever = 4.0; M->strut_seal = 40;
 }
 
 /* ------------------------------------------------------------------ INI loader */
@@ -141,6 +150,13 @@ static const fld car_f[] = {
     CF("mb_valve_theta_c", mb.valve_theta_c, 1), CF("mb_valve_cd", mb.valve_cd, 1), CF("mb_oil_rho", mb.oil_rho, 1),
     CF("mb_oil_beta", mb.oil_beta, 1), CF("mb_chamber_vol", mb.chamber_vol, 1), CF("mb_supply_vol", mb.supply_vol, 1),
     CF("mb_diff_inertia", mb.diff_inertia, 1), CF("mb_gb_out_inertia", mb.gb_out_inertia, 1), CF("mb_baumgarte", mb.baumgarte, 1),
+    CF("joint_friction", mb.jf, 1), CF("bj_mu", mb.bj_mu, 1), CF("bj_radius", mb.bj_radius, 1), CF("bj_torque", mb.bj_torque, 1),
+    CF("yoke_preload", mb.yoke_preload, 1), CF("yoke_mu", mb.yoke_mu, 1), CF("mesh_sep", mb.mesh_sep, 1),
+    CF("rack_bush_mu", mb.rack_bush_mu, 1), CF("rack_bush_span", mb.rack_bush_span, 1),
+    CF("brg_mu", mb.brg_mu, 1), CF("col_brg_radius", mb.col_brg_radius, 1), CF("col_brg_span", mb.col_brg_span, 1),
+    CF("pin_brg_radius", mb.pin_brg_radius, 1), CF("pin_brg_span", mb.pin_brg_span, 1), CF("pin_torque", mb.pin_torque, 1),
+    CF("strut_mount_mu", mb.strut_mount_mu, 1), CF("strut_mount_radius", mb.strut_mount_radius, 1), CF("strut_mount_torque", mb.strut_mount_torque, 1),
+    CF("strut_mu", mb.strut_mu, 1), CF("strut_lever", mb.strut_lever, 1), CF("strut_seal", mb.strut_seal, 1),
     {NULL, 0, 0, 0}};
 static const fld axle_f[] = {
     AI("type", type), AI("steered", steered), AI("driven", driven), AF("hub", hub, 3), AI("nlinks", nlinks),

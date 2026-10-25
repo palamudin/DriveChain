@@ -25,6 +25,7 @@ typedef struct dc_mbcar {
     double k_bar[2], G_bar[2];
     int eng, gi;
     int j_eng, j_gi, j_clutch, j_diff, j_lsd, j_brake[4], j_rfric, j_cfric, j_rstop;
+    int j_pfric, j_bjf[4][3], j_stf[4], j_tmf[4];   /* load-dependent joint friction rows (-1 = none) */
     int drv[2];                              /* driven wheels */
     double lam_diff_prev;
     v3 cgc;                                  /* chassis body COM in the K frame */

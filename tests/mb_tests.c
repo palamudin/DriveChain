@@ -194,6 +194,106 @@ static void t_friction(void) {
     mb_destroy(W);
 }
 
+/* ---- 5b. load-dependent Coulomb rows (bound = pre + c |own normal reaction|, normal from the same coupled solve) */
+static void t_jfric(void) {
+    printf("[joint friction] journal: radial load 100 N -> 200 N at t=1 s, mu r = 5 mm: w = 10-2.5t, then stops at 2.5 s\n");
+    {
+        mb_world* W = mb_create();
+        int b = mb_add_body(W, "fly", 3, diag3(0.1, 0.1, 0.2), V3(0, 0, 0), QI);
+        W->B[b].w = V3(0, 0, 10);
+        int jr = mb_revolute(W, "axle", b, -1, V3(0, 0, 0), V3(0, 0, 1));
+        int bb[1] = {b}; int fj = mb_custom(W, "fric", 1, 1, 1, bb);
+        mb_fric_source(W, fj, jr, 0, 3, 0.005, V3(0, 0, 0));
+        mb_finalize(W);
+        double h = 1.0 / 2000, tstop = -1, err = 0, berr = 0;
+        for (int s = 0; s < 8000; s++) {
+            double t0 = s * h, F = t0 < 1.0 - 1e-12 ? 100 : 200;
+            mb_begin(W, h);
+            mb_joint* J = &W->Jt[fj]; memset(J->J, 0, sizeof J->J); J->J[0][0][5] = 1; J->t[0] = 0; J->active = 1; J->pre = 0;
+            W->B[b].F = V3(F, 0, 0);
+            mb_solve(W); mb_integrate(W, 1);
+            double t = (s + 1) * h, wz = W->B[b].w.z;
+            double wa = t <= 1 ? 10 - 2.5 * t : fmax(0, 7.5 - 5 * (t - 1));
+            if (fabs(wz - wa) > err) err = fabs(wz - wa);
+            if (wz > 1e-9) { double be = fabs(J->bound / h - 0.005 * F); if (be > berr) berr = be; }
+            if (tstop < 0 && fabs(wz) < 1e-9) tstop = t;
+        }
+        check("max |w - analytic| (no lag at the load step) [rad/s]", err, 1e-9);
+        check("stop time error [s]", tstop - 2.5, 1e-9);
+        check("bound - mu r |F_radial| while slipping [N m]", berr, 1e-9);
+        mb_destroy(W);
+    }
+    printf("[joint friction] slider on a prismatic rail, side load 100 N, mu 0.2, push 30 N (slides, a = 5) / 15 N (sticks)\n");
+    for (int c = 0; c < 2; c++) {
+        mb_world* W = mb_create();
+        int b = mb_add_body(W, "blk", 2, diag3(0.01, 0.01, 0.01), V3(0, 0, 0), QI);
+        int jp = mb_prismatic(W, "rail", b, -1, V3(1, 0, 0));
+        int bb[1] = {b}; int fj = mb_custom(W, "fric", 1, 1, 1, bb);
+        mb_fric_source(W, fj, jp, 0, 2, 0.2, V3(0, 0, 0));
+        mb_finalize(W);
+        double h = 1.0 / 2000, Fx = c == 0 ? 30 : 15;
+        for (int s = 0; s < 2000; s++) {
+            mb_begin(W, h);
+            mb_joint* J = &W->Jt[fj]; memset(J->J, 0, sizeof J->J); J->J[0][0][0] = 1; J->t[0] = 0; J->active = 1; J->pre = 0;
+            W->B[b].F = V3(Fx, 100, 0);
+            mb_solve(W); mb_integrate(W, 1);
+        }
+        double va = c == 0 ? 5.0 * 1.0 : 0;
+        check(c == 0 ? "sliding: |v - a t| after 1 s [m/s]" : "sticking: |v| after 1 s [m/s]", W->B[b].v.x - va, 1e-9);
+        mb_destroy(W);
+    }
+    printf("[joint friction] ball joint, isotropic (cone) friction torque 0.4 N m + mu r |F|: spin direction preserved\n");
+    {
+        mb_world* W = mb_create();
+        int b = mb_add_body(W, "ball", 2, diag3(0.05, 0.05, 0.05), V3(0, 0, 0), QI);
+        W->B[b].w = V3(8, 6, 0);
+        int js = mb_spherical(W, "bj", b, -1, V3(0, 0, 0));
+        int bb[1] = {b}; int fj = mb_custom(W, "bjf", 3, 1, 1, bb); W->Jt[fj].cone = 1;
+        mb_fric_source(W, fj, js, 0, 3, 0.001, V3(0, 0, 0));
+        mb_finalize(W);
+        double h = 1.0 / 2000, derr = 0, merr = 0;
+        for (int s = 0; s < 2000; s++) {
+            mb_begin(W, h);
+            mb_joint* J = &W->Jt[fj]; memset(J->J, 0, sizeof J->J);
+            for (int q = 0; q < 3; q++) { J->J[q][0][3 + q] = 1; J->t[q] = 0; }
+            J->active = 1; J->pre = 0.4 * h;
+            W->B[b].F = V3(0, 0, -600);   /* bound 0.4 + 0.6 = 1.0 N m -> |dw/dt| = 20 rad/s^2 */
+            mb_solve(W); mb_integrate(W, 1);
+            v3 w = W->B[b].w; double n = vlen(w), t = (s + 1) * h;
+            if (n > 1e-9) { double d = fabs(w.x / n - 0.8) + fabs(w.y / n - 0.6) + fabs(w.z); if (d > derr) derr = d; }
+            double na = fmax(0, 10 - 20 * t); if (fabs(n - na) > merr) merr = fabs(n - na);
+        }
+        check("spin direction error (cone, not box)", derr, 1e-9);
+        check("|w| - analytic (10 - 20 t) [rad/s]", merr, 1e-9);
+        mb_destroy(W);
+    }
+    {   /* anisotropic inertia: the solved impulse must oppose the post-step relative angular velocity */
+        mb_world* W = mb_create();
+        int b = mb_add_body(W, "ball", 2, diag3(0.02, 0.08, 0.05), V3(0, 0, 0), QI);
+        W->B[b].w = V3(8, 6, 3);
+        int js = mb_spherical(W, "bj", b, -1, V3(0, 0, 0));
+        int bb[1] = {b}; int fj = mb_custom(W, "bjf", 3, 1, 1, bb); W->Jt[fj].cone = 1;
+        mb_fric_source(W, fj, js, 0, 3, 0.001, V3(0, 0, 0));
+        mb_finalize(W);
+        double h = 1.0 / 2000, aerr = 0, nerr = 0;
+        for (int s = 0; s < 400; s++) {
+            mb_begin(W, h);
+            mb_joint* J = &W->Jt[fj]; memset(J->J, 0, sizeof J->J);
+            for (int q = 0; q < 3; q++) { J->J[q][0][3 + q] = 1; J->t[q] = 0; }
+            J->active = 1; J->pre = 0.4 * h; W->B[b].F = V3(0, 0, -600);
+            mb_solve(W);
+            v3 w = W->B[b].w, l = V3(J->lam[0], J->lam[1], J->lam[2]);    /* w here is the solved (end-of-step) velocity */
+            double c = -vdot(w, l) / (vlen(w) * vlen(l));
+            if (1 - c > aerr) aerr = 1 - c;
+            if (fabs(vlen(l) - J->bound) > nerr) nerr = fabs(vlen(l) - J->bound);
+            mb_integrate(W, 1);
+        }
+        check("anisotropic: 1 - cos(impulse, -w_rel) while sliding", aerr, 1e-9);
+        check("anisotropic: |impulse| - bound [N m s]", nerr / h, 1e-9);
+        mb_destroy(W);
+    }
+}
+
 /* ---- 6. free-floating pair with an implicit spring element: momentum conservation, oscillation frequency */
 static void t_momentum(void) {
     printf("[momentum] two free bodies, revolute + implicit torsion spring element, gyroscopic spin, no gravity\n");
@@ -274,7 +374,7 @@ static void t_bench(void) {
 int main(void) {
     if (system("mkdir -p results/mb")) {}
     printf("=== dc_mb Phase 0 ===\n");
-    t_pendulum(); t_slider_crank(); t_fourbar(); t_static(); t_friction(); t_momentum(); t_bench();
+    t_pendulum(); t_slider_crank(); t_fourbar(); t_static(); t_friction(); t_jfric(); t_momentum(); t_bench();
     printf("=== %s (%d failures) ===\n", fails ? "FAIL" : "ALL PASS", fails);
     return fails ? 1 : 0;
 }

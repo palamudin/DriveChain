@@ -22,6 +22,8 @@
 #define MB_MAXCPL 160
 #define MB_MAXE 160
 #define MB_MAXN (MB_MAXB + MB_MAXJ)
+#define MB_MAXBOX 112                /* box (Schur) rows per step */
+#define MB_FSRC 4                    /* normal-reaction sources per friction joint */
 
 enum { MBJ_SPHERICAL, MBJ_REVOLUTE, MBJ_UJOINT, MBJ_UJOINT_SLIP, MBJ_DISTANCE, MBJ_PRISMATIC, MBJ_WELD, MBJ_POINTLINE, MBJ_CUSTOM };
 
@@ -46,6 +48,16 @@ typedef struct {
     int active;                      /* box rows only */
     int proj;                        /* include in position projection */
     double compl;                    /* regularisation / compliance (velocity per impulse) */
+    /* load-dependent Coulomb bound (box joints with nsrc > 0): every row r obeys |lam_r| <= B, or the row vector
+       |lam| <= B when cone = 1, with  B = pre + sum_k c_k * max(0, |N_k| - d_k)
+       N_k = impulse vector of rows r0..r0+nr-1 of factorised joint j (minus its component along ax when nr = 3 and
+       ax != 0). N_k is evaluated INSIDE the box LCP from the coupled solution (the factorised multipliers are affine in
+       the box impulses), so friction and the normal reaction it depends on are one solve, not a lagged estimate.
+       pre, d_k are impulses (force * h); c_k is dimensionless or a lever arm (torque rows from force normals). */
+    int nsrc, cone;
+    struct { int j, r0, nr; double c, d; v3 ax; } src[MB_FSRC];
+    double pre;
+    double bound;                    /* B at the solution (impulse), telemetry */
     /* per step */
     double J[6][MB_JB][6];
     double phi[6], t[6], lo[6], hi[6];
@@ -78,16 +90,18 @@ typedef struct {
     double *blk, *L;                  /* block pool (rows = later node, cols = earlier node), L factors */
     double *D, *Dinv;                 /* diag blocks 6x6 per node (36 each) */
     double *x, *r, *z;                /* solve vectors */
-    int nbox; int box_j[64], box_r[64];
+    int nbox; int box_j[MB_MAXBOX], box_r[MB_MAXBOX];
     double *zb;                       /* nbox * N */
-    double W[64 * 64], ub[64], lb_[64], hb[64];
+    double W[MB_MAXBOX * MB_MAXBOX], ub[MB_MAXBOX], lb_[MB_MAXBOX], hb[MB_MAXBOX];
+    int box_of[MB_MAXJ];              /* first box slot of a box joint this step (-1 none) */
+    int box_dropped;                  /* box rows dropped because MB_MAXBOX was exceeded (must stay 0) */
     int ready;
     int shake;                        /* 1: projection also corrects velocity (SHAKE/RATTLE-like, energy-consistent) */
     void (*phi_cb)(void* user);       /* called after the position update, before projection: refresh CUSTOM rows' phi */
     void* cb_user;
     int pgs_iters;                    /* box-LCP Gauss-Seidel iteration cap (default 400) */
     /* stats */
-    double pgs_res; int fact_fail;
+    double pgs_res; int fact_fail; int pgs_it;
 } mb_world;
 
 mb_world* mb_create(void);
@@ -105,6 +119,8 @@ int  mb_pointline(mb_world* W, const char* nm, int a, v3 pa, v3 axis, int b, v3 
 int  mb_weld(mb_world* W, const char* nm, int a, int b);
 int  mb_ujoint(mb_world* W, const char* nm, int a, int b, v3 p, v3 shaft_a, v3 shaft_b, int slip);
 int  mb_custom(mb_world* W, const char* nm, int m, int box, int nb, const int* bodies);
+/* add a normal-reaction source to box joint fj (load-dependent friction bound, see mb_joint.src) */
+int  mb_fric_source(mb_world* W, int fj, int j, int r0, int nr, double c, v3 ax);
 int  mb_finalize(mb_world* W);       /* symbolic analysis; returns 0 on failure */
 /* per step */
 void mb_begin(mb_world* W, double h); /* R, Iw; clears F/T and elements; evaluates standard joints */

@@ -100,6 +100,8 @@ dc_mbcar* dc_mbcar_create(dc_car* c) {
     m->ch = addb(m, "chassis", 1, mdiag(P->sprung_inertia[0], P->sprung_inertia[1], P->sprung_inertia[2]), V3(0, 0, 0), qid());
     W->B[m->ch].root = 1;
     for (int i = 0; i < 4; i++) for (int l = 0; l < DC_MAX_LINKS; l++) m->j_link[i][l] = -1;
+    m->j_pfric = -1; for (int i = 0; i < 4; i++) { m->j_stf[i] = m->j_tmf[i] = -1; for (int n = 0; n < 3; n++) m->j_bjf[i][n] = -1; }
+    const int jf = M->jf > 0;
     /* ---------------- steering chain (built first so tie rods can attach to the rack) */
     const dc_kin* K0 = &c->K[0];
     m->steer = K0->steered && K0->rack_link >= 0;
@@ -129,6 +131,16 @@ dc_mbcar* dc_mbcar_create(dc_car* c) {
         int fb[2] = {m->rack, m->ch}; m->j_rfric = mb_custom(W, "rack_fric", 1, 1, 2, fb);
         m->j_rstop = mb_custom(W, "rack_stop", 1, 1, 2, fb);
         int cb[2] = {m->rim, m->ch}; m->j_cfric = mb_custom(W, "col_fric", 1, 1, 2, cb);
+        if (jf) {   /* load-dependent bounds (docs/JOINT_FRICTION.md); source order is relied on in the step */
+            mb_fric_source(W, m->j_rfric, m->j_gear, 0, 1, M->yoke_mu * M->mesh_sep, V3(0, 0, 0));       /* yoke: separating force past the spring preload */
+            mb_fric_source(W, m->j_rfric, m->j_rack, 0, 2, M->rack_bush_mu, V3(0, 0, 0));                 /* guide bushes: side load */
+            mb_fric_source(W, m->j_rfric, m->j_rack, 2, 3, 2 * M->rack_bush_mu / M->rack_bush_span, EY);  /* misalignment moment -> edge loads */
+            mb_fric_source(W, m->j_cfric, m->j_rim, 0, 3, M->brg_mu * M->col_brg_radius, V3(0, 0, 0));
+            mb_fric_source(W, m->j_cfric, m->j_rim, 3, 2, 2 * M->brg_mu * M->col_brg_radius / M->col_brg_span, V3(0, 0, 0));
+            int pb_[2] = {m->pin, m->ch}; m->j_pfric = mb_custom(W, "pin_fric", 1, 1, 2, pb_);
+            mb_fric_source(W, m->j_pfric, m->j_pin, 0, 3, M->brg_mu * M->pin_brg_radius, V3(0, 0, 0));
+            mb_fric_source(W, m->j_pfric, m->j_pin, 3, 2, 2 * M->brg_mu * M->pin_brg_radius / M->pin_brg_span, V3(0, 0, 0));
+        }
         mb_couple(W, m->inp, m->pin); mb_couple(W, m->rim, m->ch); mb_couple(W, m->rack, m->ch);
     }
     /* ---------------- corners */
@@ -161,6 +173,11 @@ dc_mbcar* dc_mbcar_create(dc_car* c) {
                 m->arm_l[i][n][0] = l; m->arm_l[i][n][1] = q;
                 m->j_arm_rev[i][n] = mb_revolute(W, lower ? "lca_pivot" : "uca_pivot", m->arm[i][n], m->ch, vscl(vadd(pts[0], pts[1]), 0.5), vsub(pts[1], pts[0]));
                 m->j_arm_bj[i][n] = mb_spherical(W, lower ? "lca_bj" : "uca_bj", m->arm[i][n], m->kn[i], bj);
+                if (jf) {   /* ball-in-socket friction torque <= T0 + mu r |F|, isotropic (all three relative rotations) */
+                    int fb2[2] = {m->arm[i][n], m->kn[i]};
+                    m->j_bjf[i][n] = mb_custom(W, "bj_fric", 3, 1, 2, fb2); W->Jt[m->j_bjf[i][n]].cone = 1;
+                    mb_fric_source(W, m->j_bjf[i][n], m->j_arm_bj[i][n], 0, 3, M->bj_mu * M->bj_radius, V3(0, 0, 0));
+                }
                 if (lower && !k->spr_on_upright) m->lo_body[i] = m->arm[i][n];
                 break;
             }
@@ -174,6 +191,12 @@ dc_mbcar* dc_mbcar_create(dc_car* c) {
         if (k->type == DC_SUSP_STRUT) {
             v3 S = vadd(p0.c, mv(&p0.R, k->strut_S));
             m->j_strut[i] = mb_pointline(W, "strut_top", m->kn[i], S, mv(&p0.R, k->strut_d), m->ch, k->strut_top);
+            if (jf) {   /* rod guide + piston sliding under the strut side load; top-mount bearing under the spring load */
+                int sb[2] = {m->kn[i], m->ch};
+                m->j_stf[i] = mb_custom(W, "strut_fric", 1, 1, 2, sb);
+                mb_fric_source(W, m->j_stf[i], m->j_strut[i], 0, 2, M->strut_mu * M->strut_lever, V3(0, 0, 0));
+                m->j_tmf[i] = mb_custom(W, "topmount_fric", 1, 1, 2, sb);
+            }
         } else m->j_strut[i] = -1;
         m->lo_local[i] = loc(m, m->lo_body[i], p0.lo);
         mb_couple(W, m->lo_body[i], m->ch);
@@ -310,7 +333,7 @@ static void phi_refresh(void* user) {
 /* ------------------------------------------------------------------ one substep */
 void dc_mbcar_step(dc_car* c) {
     dc_mbcar* m = c->mb; mb_world* W = m->W;
-    const dc_car_params* P = &c->P;
+    const dc_car_params* P = &c->P; const dc_mb_params* M = &P->mb;
     const double h = c->h, g = P->gravity;
     int nodamp = c->dbg & DC_DBG_NO_DAMPING;
     mb_begin(W, h);
@@ -418,6 +441,22 @@ void dc_mbcar_step(dc_car* c) {
         mb_joint* G = &W->Jt[m->j_cfric]; memset(G->J, 0, sizeof G->J);
         v3 er = mv(&R, m->e_rim); row_an(er, 1, G->J[0][0]); row_an(er, -1, G->J[0][1]);
         G->lo[0] = nodamp ? 0 : -P->column_friction * h; G->hi[0] = -G->lo[0]; G->t[0] = 0;
+        if (F->nsrc > 0) {   /* load-dependent: seals (rack_friction) + yoke preload, then normals from the coupled solve */
+            F->active = !nodamp; F->pre = (P->rack_friction + M->yoke_mu * M->yoke_preload) * h;
+            F->src[0].d = M->yoke_preload / M->mesh_sep * h; F->src[2].ax = yw;
+            G->active = !nodamp; G->pre = P->column_friction * h;
+        }
+        if (m->j_pfric >= 0) {
+            mb_joint* Pf = &W->Jt[m->j_pfric]; memset(Pf->J, 0, sizeof Pf->J);
+            row_an(ein, 1, Pf->J[0][0]); row_an(ein, -1, Pf->J[0][1]); Pf->t[0] = 0;
+            Pf->active = !nodamp; Pf->pre = M->pin_torque * h;
+        }
+    }
+    for (int i = 0; i < 4; i++) for (int n = 0; n < m->narm[i]; n++) {
+        if (m->j_bjf[i][n] < 0) continue;
+        mb_joint* Bf = &W->Jt[m->j_bjf[i][n]]; memset(Bf->J, 0, sizeof Bf->J);
+        for (int q = 0; q < 3; q++) { v3 e = V3(q == 0, q == 1, q == 2); row_an(e, 1, Bf->J[q][0]); row_an(e, -1, Bf->J[q][1]); Bf->t[q] = 0; }
+        Bf->active = !nodamp; Bf->pre = M->bj_torque * h;
     }
     int gear = c->in.gear; double Gr = 0;
     if (gear > 0 && gear <= P->ngears) Gr = P->gear[gear - 1] * P->final_drive;
@@ -483,6 +522,19 @@ void dc_mbcar_step(dc_car* c) {
             if (!nodamp && Ld > 0) { double cw_ = 0.4 * sqrt(rate * mcx); Fb += cw_ * (-Ld / MR) / MR; cc -= cw_ / (MR * MR); }
         }
         m->Fs[i] = Fs; m->Fd[i] = Fd; m->Fb[i] = Fb * (L < m->L_up[i] ? m->MR_up[i] : m->MR_dn[i]);
+        if (m->j_stf[i] >= 0) {
+            const mb_joint* Sj = &W->Jt[m->j_strut[i]];
+            v3 ax = mv(&W->B[m->kn[i]].R, Sj->aa), P_ = mb_point_world(&W->B[m->ch], Sj->pb);
+            mb_joint* Sf = &W->Jt[m->j_stf[i]]; memset(Sf->J, 0, sizeof Sf->J);
+            row_pt(W, m->kn[i], P_, ax, 1, Sf->J[0][0]); row_pt(W, m->ch, P_, ax, -1, Sf->J[0][1]);
+            Sf->t[0] = 0; Sf->active = !nodamp; Sf->pre = M->strut_seal * h;
+            /* top mount: axial load = spring + stop force (element value at the start of the step; elements are
+               linearly implicit, so this normal lags by h k gdot at most) */
+            mb_joint* Tf = &W->Jt[m->j_tmf[i]]; memset(Tf->J, 0, sizeof Tf->J);
+            row_an(ax, 1, Tf->J[0][0]); row_an(ax, -1, Tf->J[0][1]); Tf->t[0] = 0;
+            double cap = nodamp ? 0 : (M->strut_mount_torque + M->strut_mount_mu * M->strut_mount_radius * fabs(Fs + Fb)) * h;
+            Tf->lo[0] = -cap; Tf->hi[0] = cap;
+        }
         {   /* solid stop: rigid inelastic unilateral row, speculative (closing speed <= gap/h, never past it) */
             mb_joint* Hj = &W->Jt[m->j_hard[i]]; memset(Hj->J, 0, sizeof Hj->J);
             double gap = L - m->L_hard[i];

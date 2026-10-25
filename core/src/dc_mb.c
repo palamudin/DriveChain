@@ -276,7 +276,7 @@ int mb_finalize(mb_world* W) {
     }
     W->nbr_start[n] = c;
     W->x = (double*)calloc(N, sizeof(double)); W->r = (double*)calloc(N, sizeof(double)); W->z = (double*)calloc(N, sizeof(double));
-    W->zb = (double*)calloc((size_t)64 * N, sizeof(double));
+    W->zb = (double*)calloc((size_t)MB_MAXBOX * N, sizeof(double));
     (void)orig; free(orig); free(adj); free(elim);
     #undef ADJ
     W->ready = 1;
@@ -454,6 +454,64 @@ static void assemble(mb_world* W) {
     }
 }
 
+/* load-dependent friction bound of box joint J from the normal reactions of its source joints, evaluated at the
+   current box impulses: factorised multipliers are mu = x_free + sum_s zb_s hb_s (lambda = -mu, sign irrelevant). */
+static double fric_bound(const mb_world* W, const mb_joint* J, int nbx) {
+    double B = J->pre; int N = W->N;
+    for (int k = 0; k < J->nsrc; k++) {
+        int nd = W->node_of_joint[J->src[k].j]; if (nd < 0) continue;
+        double v[6]; int nr = J->src[k].nr;
+        for (int a = 0; a < nr; a++) {
+            int o = W->off[nd] + J->src[k].r0 + a; double x = W->x[o];
+            for (int s = 0; s < nbx; s++) x += W->zb[(size_t)s * N + o] * W->hb[s];
+            v[a] = x;
+        }
+        v3 ax = J->src[k].ax;
+        if (nr == 3 && vdot(ax, ax) > 0) { double p = v[0] * ax.x + v[1] * ax.y + v[2] * ax.z; v[0] -= p * ax.x; v[1] -= p * ax.y; v[2] -= p * ax.z; }
+        double n2 = 0; for (int a = 0; a < nr; a++) n2 += v[a] * v[a];
+        double e = sqrt(n2) - J->src[k].d; if (e > 0) B += J->src[k].c * e;
+    }
+    return B;
+}
+
+/* small dense SPD solve (n <= 6), Gaussian elimination without pivoting (A is SPD) */
+static void spd_solve(int n, const double* A, double mu, const double* b, double* x) {
+    double M[6][7];
+    for (int i = 0; i < n; i++) { for (int j = 0; j < n; j++) M[i][j] = A[i * 6 + j] + (i == j ? mu : 0); M[i][n] = b[i]; }
+    for (int k = 0; k < n; k++) for (int i = k + 1; i < n; i++) { double f = M[i][k] / M[k][k]; for (int j = k; j <= n; j++) M[i][j] -= f * M[k][j]; }
+    for (int i = n - 1; i >= 0; i--) { double v = M[i][n]; for (int j = i + 1; j < n; j++) v -= M[i][j] * x[j]; x[i] = v / M[i][i]; }
+}
+/* isotropic Coulomb group: min 1/2 l'A l + b'l s.t. |l| <= B. Sliding: (A + mu I) l = -b, |l| = B, mu = |v|/B >= 0
+   (maximal dissipation: the impulse opposes the post-impulse relative velocity). Newton on 1/|l(mu)| - 1/B
+   (More & Sorensen 1983), monotone from mu = 0. */
+static void cone_block(int n, const double* A, const double* b, double B, double* l) {
+    double nb[6]; for (int i = 0; i < n; i++) nb[i] = -b[i];
+    spd_solve(n, A, 0, nb, l);
+    double n2 = 0; for (int i = 0; i < n; i++) n2 += l[i] * l[i];
+    if (B <= 0) { for (int i = 0; i < n; i++) l[i] = 0; return; }
+    if (n2 <= B * B) return;
+    double mu = 0;
+    for (int it = 0; it < 60; it++) {
+        double q[6]; spd_solve(n, A, mu, l, q);     /* q = (A + mu I)^-1 l */
+        double ln = sqrt(n2), lq = 0; for (int i = 0; i < n; i++) lq += l[i] * q[i];
+        double phi = 1 / ln - 1 / B, dphi = lq / (ln * ln * ln);
+        mu -= phi / dphi; if (mu < 0) mu = 0;
+        spd_solve(n, A, mu, nb, l);
+        n2 = 0; for (int i = 0; i < n; i++) n2 += l[i] * l[i];
+        if (fabs(sqrt(n2) - B) <= 1e-14 * B) break;
+    }
+    double f = B / sqrt(n2); for (int i = 0; i < n; i++) l[i] *= f;   /* exact on the sphere */
+}
+
+int mb_fric_source(mb_world* W, int fj, int j, int r0, int nr, double c, v3 ax) {
+    mb_joint* J = &W->Jt[fj];
+    if (fj < 0 || j < 0 || J->nsrc >= MB_FSRC || nr < 1 || nr > 6 || r0 + nr > W->Jt[j].m || W->Jt[j].box) return -1;
+    int k = J->nsrc++;
+    J->src[k].j = j; J->src[k].r0 = r0; J->src[k].nr = nr; J->src[k].c = c; J->src[k].d = 0;
+    double l = vlen(ax); J->src[k].ax = l > 0 ? vscl(ax, 1 / l) : V3(0, 0, 0);
+    return k;
+}
+
 void mb_solve(mb_world* W) {
     assemble(W);
     factor(W);
@@ -462,16 +520,18 @@ void mb_solve(mb_world* W) {
     memcpy(W->x, W->r, sizeof(double) * N);
     ksolve(W, W->x);
     /* box rows */
-    int nbx = 0;
+    int nbx = 0; W->box_dropped = 0;
     for (int j = 0; j < W->nj; j++) {
-        mb_joint* J = &W->Jt[j]; if (!J->box) continue;
+        mb_joint* J = &W->Jt[j]; W->box_of[j] = -1; if (!J->box) continue;
         for (int r = 0; r < J->m; r++) {
-            if (!J->active || (J->lo[r] == 0 && J->hi[r] == 0)) { J->lam[r] = 0; continue; }
-            if (nbx >= 64) break;
+            int dyn = J->nsrc > 0;
+            if (!J->active || (!dyn && J->lo[r] == 0 && J->hi[r] == 0)) { J->lam[r] = 0; continue; }
+            if (nbx >= MB_MAXBOX) { W->box_dropped++; J->lam[r] = 0; continue; }
+            if (W->box_of[j] < 0) W->box_of[j] = nbx;
             W->box_j[nbx] = j; W->box_r[nbx] = r; nbx++;
         }
     }
-    W->nbox = nbx;
+    W->nbox = nbx; W->pgs_it = 0;
     if (nbx > 0) {
         for (int s = 0; s < nbx; s++) {
             mb_joint* J = &W->Jt[W->box_j[s]]; int r = W->box_r[s];
@@ -487,26 +547,48 @@ void mb_solve(mb_world* W) {
             for (int t2 = 0; t2 < nbx; t2++) {
                 const double* z = W->zb + (size_t)t2 * N; double w = 0;
                 for (int k = 0; k < J->nb; k++) { int b = J->b[k]; if (b < 0) continue; for (int q = 0; q < 6; q++) w += J->J[r][k][q] * z[W->off[b] + q]; }
-                W->W[s * 64 + t2] = w;
+                W->W[s * MB_MAXBOX + t2] = w;
             }
-            W->hb[s] = J->lam[r] < J->lo[r] ? J->lo[r] : (J->lam[r] > J->hi[r] ? J->hi[r] : J->lam[r]);   /* warm start */
+            if (J->nsrc > 0) W->hb[s] = J->lam[r];   /* warm start; the first sweep applies the load-dependent bound */
+            else W->hb[s] = J->lam[r] < J->lo[r] ? J->lo[r] : (J->lam[r] > J->hi[r] ? J->hi[r] : J->lam[r]);
         }
-        /* projected Gauss-Seidel on the small dense Schur complement (exact box LCP at convergence) */
-        double res = 0;
-        for (int it = 0; it < W->pgs_iters; it++) {
+        /* projected Gauss-Seidel on the small dense Schur complement (exact box LCP at convergence). Load-dependent
+           bounds are re-evaluated from the coupled normal reactions at every sweep (fixed point of the same LCP). */
+        double res = 0; int it;
+        for (it = 0; it < W->pgs_iters; it++) {
             res = 0;
             for (int s = 0; s < nbx; s++) {
-                mb_joint* J = &W->Jt[W->box_j[s]]; int r = W->box_r[s];
-                double u = W->ub[s]; for (int t2 = 0; t2 < nbx; t2++) u += W->W[s * 64 + t2] * W->hb[t2];
-                double d = W->W[s * 64 + s]; if (d <= 1e-300) continue;
+                int jj = W->box_j[s]; mb_joint* J = &W->Jt[jj]; int r = W->box_r[s];
+                double lo = J->lo[r], hi = J->hi[r];
+                if (J->nsrc > 0) {
+                    if (W->box_of[jj] == s) J->bound = fric_bound(W, J, nbx);
+                    lo = -J->bound; hi = J->bound;
+                }
+                if (J->cone && J->nsrc > 0) {   /* isotropic group, solved as one block (rows are contiguous) */
+                    int n = 0; while (s + n < nbx && W->box_j[s + n] == jj && n < 6) n++;
+                    double A[36], b[6], l[6];
+                    for (int a = 0; a < n; a++) {
+                        double u = W->ub[s + a]; for (int t2 = 0; t2 < nbx; t2++) u += W->W[(s + a) * MB_MAXBOX + t2] * W->hb[t2];
+                        for (int c2 = 0; c2 < n; c2++) { A[a * 6 + c2] = W->W[(s + a) * MB_MAXBOX + s + c2]; u -= A[a * 6 + c2] * W->hb[s + c2]; }
+                        b[a] = u - J->t[W->box_r[s + a]];
+                    }
+                    cone_block(n, A, b, J->bound, l);
+                    for (int a = 0; a < n; a++) {
+                        double dq = fabs(l[a] - W->hb[s + a]) * sqrt(A[a * 6 + a]); if (dq > res) res = dq;
+                        W->hb[s + a] = l[a];
+                    }
+                    s += n - 1; continue;
+                }
+                double u = W->ub[s]; for (int t2 = 0; t2 < nbx; t2++) u += W->W[s * MB_MAXBOX + t2] * W->hb[t2];
+                double d = W->W[s * MB_MAXBOX + s]; if (d <= 1e-300) continue;
                 double nl = W->hb[s] - (u - J->t[r]) / d;
-                nl = nl < J->lo[r] ? J->lo[r] : (nl > J->hi[r] ? J->hi[r] : nl);
+                nl = nl < lo ? lo : (nl > hi ? hi : nl);
                 double dd = fabs(nl - W->hb[s]) * sqrt(d); if (dd > res) res = dd;
                 W->hb[s] = nl;
             }
             if (res < 1e-13) break;
         }
-        W->pgs_res = res;
+        W->pgs_res = res; W->pgs_it = it;
         memcpy(W->x, W->r, sizeof(double) * N);
         for (int s = 0; s < nbx; s++) {
             mb_joint* J = &W->Jt[W->box_j[s]]; int r = W->box_r[s];

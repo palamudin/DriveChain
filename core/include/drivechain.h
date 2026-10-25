@@ -136,6 +136,16 @@ typedef struct {
     double oil_rho, oil_beta, chamber_vol, supply_vol;     /* oil density, effective bulk modulus incl. hose (Pa), each cylinder chamber + hose m^3, pump/supply volume m^3 */
     double diff_inertia, gb_out_inertia;   /* diff carrier + ring, gearbox output + propshaft, kg m^2 */
     double baumgarte;               /* joint drift correction per substep (0.1..0.3) */
+    /* load-dependent joint friction (box rows bounded by mu * |own normal reaction| + preload; docs/JOINT_FRICTION.md).
+       jf = 0: only the constant rack_friction / column_friction rows (previous behaviour). */
+    double jf;
+    double bj_mu, bj_radius, bj_torque;           /* arm ball joints: coefficient, ball radius m, preload torque N m */
+    double yoke_preload, yoke_mu, mesh_sep;       /* rack yoke: spring preload N, coefficient, separating/tangential tooth force */
+    double rack_bush_mu, rack_bush_span;          /* rack guide bushes: coefficient, bush spacing m */
+    double brg_mu, col_brg_radius, col_brg_span;  /* rolling bearings (coefficient as in M = mu F d/2), column bearing radius, span m */
+    double pin_brg_radius, pin_brg_span, pin_torque;   /* pinion bearings radius, span m, seal drag N m */
+    double strut_mount_mu, strut_mount_radius, strut_mount_torque;   /* MacPherson top-mount bearing (axial load = spring + stops) */
+    double strut_mu, strut_lever, strut_seal;     /* damper rod guide + piston under side load: coefficient, contact load / top side load, seal drag N */
 } dc_mb_params;
 
 typedef struct {
