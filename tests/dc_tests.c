@@ -599,7 +599,11 @@ static void test_perf(void) {
         const char* nm[3] = {"default 3x13 rays flat", "1x7 rays flat", "3x13 rays rough terrain"};
         fprintf(f, "%s,%.3f,%.1f\n", nm[cfg], us, 1e6 / us / P.substep_hz);
         note("perf %-26s %.2f us/substep -> %.0fx real time at %.0f Hz (one core)", nm[cfg], us, 1e6 / us / P.substep_hz, P.substep_hz);
-        if (cfg == 0) check("perf: >= 5x real time at substep rate (< 100 us)", us < 1e6 / (5 * P.substep_hz), "%.2f us/substep, %.1fx real time", us, 1e6 / us / P.substep_hz);
+        /* budget: >= 4x real time on one core. It was 5x before the tyre's lateral lanes (12 column lanes per tyre
+           instead of 3 rows, ~4x the contact integration, needed to stop a laterally sliding step face aliasing whole
+           rows onto a kerb at once; converged to ~7 % at 4 lanes/row, see docs). 4x still leaves the 2 kHz step real
+           time with margin for the frontend; the measured cost is reported in perf.csv either way. */
+        if (cfg == 0) check("perf: >= 4x real time at substep rate (< 125 us)", us < 1e6 / (4 * P.substep_hz), "%.2f us/substep, %.1fx real time", us, 1e6 / us / P.substep_hz);
         dc_destroy(c);
     }
     fclose(f);

@@ -19,6 +19,12 @@ build/dc_tests: tests/dc_tests.c build/libdrivechain.a
 	$(CC) $(CFLAGS) -o $@ $< build/libdrivechain.a $(LDLIBS)
 build/drive: tests/drive.c build/libdrivechain.a
 	$(CC) $(CFLAGS) -o $@ $< build/libdrivechain.a $(LDLIBS)
+build/kerbstrike: tests/kerbstrike.c build/libdrivechain.a
+	$(CC) $(CFLAGS) -o $@ $< build/libdrivechain.a $(LDLIBS)
+# abuse loads: kerb/wall strikes and 0.5-1.5 m drops on both cores (no blow-up, no energy gain, load bands)
+crashtest: build/kerbstrike
+	python3 tests/crash_suite.py "$(or $(DC_CAR),cars/mx5_na.ini)" results/crash | tee results/crash/crash_summary.txt
+.PHONY: crashtest
 build/smoke: tests/smoke.c build/libdrivechain.a
 	$(CC) $(CFLAGS) -o $@ $< build/libdrivechain.a $(LDLIBS)
 build/mb_tests: tests/mb_tests.c core/src/dc_mb.c core/src/dc_mb.h core/src/dc_math.h
@@ -39,6 +45,7 @@ test: build/dc_tests build/mb_tests build/mbcar_tests
 	mkdir -p results/mb && ./build/mb_tests | tee results/mb/phase0_summary.txt
 	./build/mbcar_tests cars/mx5_na.ini | tee results/mb/phase12_summary.txt
 	python3 tests/plot.py results
+	$(MAKE) crashtest
 	$(MAKE) fishtest
 	$(MAKE) drvtest
 	@if command -v mcs >/dev/null && command -v mono >/dev/null; then $(MAKE) unitytest; else echo 'mono/mcs not found: skipping unitytest'; fi
