@@ -162,7 +162,7 @@ You spawn at the **start hub**: a painted box on the flat dynamics pad inside th
       recovers.
     - Add `tyre_tm_slide_floor = 1.0` (or 0.85) under `[front]` and `[rear]` for a gentler slide.
     - The default envelope tyre remains the recommended model; see `docs/TYRE_TARMAC.md`.
-- `assets/miata_mesh/`: the car mesh (LOD B), with wheels, calipers/hubs and the steering wheel split out so each is posed from the physics.
+- `assets/miata_mesh/`: the car mesh, with wheels, calipers/hubs and the steering wheel split out so each is posed from the physics.
 
 ## Countersteer and drift
 - With the stick released the front wheels follow the front-axle slip angle within about 3 degrees (see docs/DRIFT.md for numbers).
