@@ -439,7 +439,7 @@ void dc_tyre_tm_phaseB(dc_car* c, int i, v3 cw, v3 a, double omega_new, double h
 }
 
 /* test hook: flat-road reference footprint of axle ax at load Fz (area m^2, half length m, deflection m) */
-DC_API void dc_tyre_tm_flat(const dc_car* c, int ax, double Fz, double* area, double* half, double* delta) {
+void dc_tyre_tm_flat(const dc_car* c, int ax, double Fz, double* area, double* half, double* delta) {
     const dc_tm_tab* B = &c->tm[ax & 1];
     const dc_tyre_params* T = &c->P.axle[ax & 1].tyre;
     double Kz = tm_kz(B, T, T->pressure), d = Fz / Kz;

@@ -105,3 +105,8 @@ build/mbcompare: tools/mbcompare.c build/libdrivechain.a
 	$(CC) $(CFLAGS) -o $@ $< build/libdrivechain.a $(LDLIBS)
 mbcompare: build/mbcompare
 .PHONY: mbcompare
+build/tyre_compare: tests/tyre_compare.c build/libdrivechain.a
+	$(CC) $(CFLAGS) -o $@ $< build/libdrivechain.a $(LDLIBS)
+# head-to-head tyre rig: envelope (tyre_model 0) vs TARMAC (tyre_model 1)
+tyrecompare: build/tyre_compare
+	mkdir -p results/tyre_compare && ./build/tyre_compare cars/mx5_na.ini results/tyre_compare

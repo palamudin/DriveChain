@@ -23,6 +23,7 @@ void dc_tyre_phaseB(dc_car* c, int i, v3 cw, v3 a, double omega_new, double h, d
 void dc_tyre_tm_init(dc_car* c);
 void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc* t);
 void dc_tyre_tm_phaseB(dc_car* c, int i, v3 cw, v3 a, double omega_new, double h, dc_tc* t, int commit);
+void dc_tyre_tm_flat(const dc_car* c, int ax, double Fz, double* area, double* half, double* delta);   /* test hook */
 /* vertical rate vs gauge pressure: linear (reference rate + pressure gain) around the reference,
    blended to the carcass-only rate kz_flat below half the reference pressure (a linear law extrapolated
    to 0 psi keeps a deflated tyre unphysically stiff), floored at 4% of kz_ref. */
