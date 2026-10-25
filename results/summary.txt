@@ -10,56 +10,56 @@
 [PASS] static: front corner load          2678.7 N vs analytic 2678.6 N (0.01 %)
 [PASS] static: rear corner load           2471.5 N vs analytic 2471.7 N (-0.01 %)
        front tyre deflection: sim 13.39 mm (camber-weighted rows), analytic flat 13.27 mm
-[PASS] static: design ride height reached travel F 0.09 mm R 0.12 mm (springs preloaded for design height)
+[PASS] static: design ride height reached travel F 0.07 mm R 0.07 mm (springs preloaded for design height)
        analytic ride modes (sprung 2-dof, series tyre): 1.352 Hz, 1.473 Hz -> compared by FFT in plot.py
-       with tyre friction (drop from 3 cm, brakes on): travel F -2.22 mm R -4.15 mm held by tyre scrub (physical)
+       with tyre friction (drop from 3 cm, brakes on): travel F -2.24 mm R -4.18 mm held by tyre scrub (physical)
 --- conserve
 [PASS] conserve: horizontal momentum      max |dP| = 0.00e+00 kg m/s (0.0e+00 rel)
-[PASS] conserve: yaw ang. momentum Lz     max |dLz| = 2.376e-08 (L0 = 1053.0, 2.3e-11 rel)
-[PASS] conserve: energy drift (flat)      max |dE|/E0 = 2.09e-04 over 10 s (E0 = 130417 J)
-[PASS] newton3: residuals (flat)          max |sum m a - F_ext| = 1.13e-11 N, |sum dL/dt - T_ext| = 1.85e-09 N m
-[PASS] conserve: energy (rough, 6 s)      max |dE|/E0 = 7.77e-04 over 6 s on +-2 cm rough terrain, undamped & frictionless
-       conserve: rough 20 s (undamped resonance builds to wheel-lift/droop-stop/bump-stop slams): max |dE|/E0 = 1.94e-02, projection work 3.8 J
-[PASS] newton3: residuals (rough)         max |sum m a - F_ext| = 4.22e-11 N, |sum dL/dt - T_ext| = 1.54e-08 N m
+[PASS] conserve: yaw ang. momentum Lz     max |dLz| = 2.473e-08 (L0 = 1053.0, 2.3e-11 rel)
+[PASS] conserve: energy drift (flat)      max |dE|/E0 = 1.87e-04 over 10 s (E0 = 130417 J)
+[PASS] newton3: residuals (flat)          max |sum m a - F_ext| = 1.01e-11 N, |sum dL/dt - T_ext| = 1.31e-09 N m
+[PASS] conserve: energy (rough, 6 s)      max |dE|/E0 = 1.50e-03 over 6 s on +-2 cm rough terrain, undamped & frictionless
+       conserve: rough 20 s (undamped resonance builds to wheel-lift/droop-stop/bump-stop slams): max |dE|/E0 = 5.79e-03, projection work 7.4 J
+[PASS] newton3: residuals (rough)         max |sum m a - F_ext| = 2.96e-11 N, |sum dL/dt - T_ext| = 7.84e-09 N m
 --- tyre
        tyre @Fz0=1800: peak Fy/Fz 1.138 at 9.75 deg (99.5% of peak at 7.50 deg, full sliding (Mz->0) at 7.75 deg; target cfg mu_y 1.150, peak 8.50 deg); |Mz| peaks at 2.00 deg
        tyre load sensitivity: mu 1.338 / 1.138 / 0.967 at 0.5/1/2 Fz0 -> fitted exponent 0.766 (cfg 0.750)
        tyre longitudinal: peak Fx/Fz 1.139 at kappa 0.200 (cfg mu_x 1.120)
-       camber thrust at -3 deg (top in, left wheel => pushes -y): Fy = -247.0 N  (82.3 N/deg)
+       camber thrust at -3 deg (top in, left wheel => pushes -y): Fy = -249.9 N  (83.3 N/deg)
 [PASS] tyre: Mz peaks before Fy           Mz peak 2.00 deg < Fy peak 9.75 deg
 [PASS] tyre: peak mu within 3% of cfg     1.138 vs 1.150
 [PASS] tyre: peak (full-sliding) slip within 1 deg of cfg 7.75 deg (Mz->0; 99.5% of max Fy at 7.50, flat-plateau max at 9.75) vs 8.50 deg
 [PASS] tyre: load sensitivity             fitted 0.766 vs 0.750
        relaxation length (63% distance at 2 deg step): 0.232 m (sigma_y = C/k_carcass)
 --- skidpad
-       skidpad R=40 m: max steady ay 0.930 g; understeer gradient 0.70 deg/g (road-wheel), 10.6 deg/g at the steering wheel
-[PASS] skidpad: max lateral accel plausible 0.930 g (street tyre target ~0.85-0.95 g)
-[PASS] skidpad: understeer (K>0)          0.70 deg/g
+       skidpad R=40 m: max steady ay 0.928 g; understeer gradient 0.71 deg/g (road-wheel), 10.6 deg/g at the steering wheel
+[PASS] skidpad: max lateral accel plausible 0.928 g (street tyre target ~0.85-0.95 g)
+[PASS] skidpad: understeer (K>0)          0.71 deg/g
 --- step
-       step steer 80 km/h, sw 40 deg in 0.15 s: yaw rate ss 17.49 deg/s, ay ss 0.652 g, 90% rise 0.229 s (from 50% sw), overshoot 4.4 %
-[PASS] step steer: stable + well damped   overshoot 4.4 %, t90 0.229 s
+       step steer 80 km/h, sw 40 deg in 0.15 s: yaw rate ss 17.45 deg/s, ay ss 0.651 g, 90% rise 0.229 s (from 50% sw), overshoot 4.5 %
+[PASS] step steer: stable + well damped   overshoot 4.5 %, t90 0.229 s
 --- handsoff
-       hands-off: peak |beta| 31.8 deg; wheel self-steered to -457.5 deg (countersteer, first at t=1.87 s while yaw rate still +); final r 0.00 deg/s, beta -0.00 deg, sw 0.0 deg
-[PASS] hands-off: emergent countersteer   min sw -457.5 deg
+       hands-off: peak |beta| 31.9 deg; wheel self-steered to -458.2 deg (countersteer, first at t=1.87 s while yaw rate still +); final r 0.00 deg/s, beta -0.00 deg, sw 0.0 deg
+[PASS] hands-off: emergent countersteer   min sw -458.2 deg
 [PASS] hands-off: recovers + self-centres r 0.00 deg/s, beta -0.00 deg, sw 0.0 deg at t=9 s
-       comparison, hands clamped at 90 deg: peak |beta| 39.5 deg, final r 16.7 deg/s (keeps rotating)
-       comparison, hands off with MANUAL rack: peak |beta| 22.4 deg, min sw -353.8 deg, final r -0.00 deg/s, beta -0.00 deg (hydraulic valve boosts the wheel-inertia torque -> slower self-steer)
+       comparison, hands clamped at 90 deg: peak |beta| 39.3 deg, final r 16.9 deg/s (keeps rotating)
+       comparison, hands off with MANUAL rack: peak |beta| 22.6 deg, min sw -355.6 deg, final r -0.00 deg/s, beta -0.00 deg (hydraulic valve boosts the wheel-inertia torque -> slower self-steer)
 --- kerb
-       kerb (25 mm sharp rumble, 60 km/h): fan envelope peak Fz 6410 N, max dFz/dt 1875 kN/s, |FFB| peak 2.25 N m
+       kerb (25 mm sharp rumble, 60 km/h): fan envelope peak Fz 6411 N, max dFz/dt 1869 kN/s, |FFB| peak 2.24 N m
                                             single-ray      peak Fz 8322 N, max dFz/dt 11437 kN/s, |FFB| peak 2.34 N m
 [PASS] kerb: envelope removes edge spikes dFz/dt ratio 0.16, peak ratio 0.77
-[PASS] kerb: FFB shows the hit            column torque peak 2.25 N m on the kerb vs 0.000 N m on smooth tarmac before it
+[PASS] kerb: FFB shows the hit            column torque peak 2.24 N m on the kerb vs 0.000 N m on smooth tarmac before it
 --- puncture
-       puncture FR (tau 1 s) at 80 km/h: pressure 0 kPa at 8 s, patch length 108 -> 275 mm, rim contact force peak 237 N, column torque peak 0.94 N m, lateral drift -14.54 m
-[PASS] puncture: patch grows + rim contacts patch x2.56, rim 237 N
+       puncture FR (tau 1 s) at 80 km/h: pressure 0 kPa at 8 s, patch length 108 -> 275 mm, rim contact force peak 238 N, column torque peak 0.92 N m, lateral drift -14.45 m
+[PASS] puncture: patch grows + rim contacts patch x2.55, rim 238 N
 --- assist
-       assist off/on: parking peak driver torque 34.9 / 5.4 N m; 20 m/s 45deg sine peak 7.42 / 2.12 N m
+       assist off/on: parking peak driver torque 34.9 / 5.4 N m; 20 m/s 45deg sine peak 7.41 / 2.12 N m
 [PASS] assist: reduces effort             parking ratio 0.15, road ratio 0.29
 --- perf
-       perf default 3x13 rays flat     51.74 us/substep -> 10x real time at 2000 Hz (one core)
-[PASS] perf: >= 5x real time at substep rate (< 100 us) 51.74 us/substep, 9.7x real time
-       perf 1x7 rays flat              27.71 us/substep -> 18x real time at 2000 Hz (one core)
-       perf 3x13 rays rough terrain    80.18 us/substep -> 6x real time at 2000 Hz (one core)
-[PASS] newton3: worst residual all tests  |sum m a - F_ext|/mg = 9.49e-16, |sum dL/dt - T_ext| = 7.53e-10 N m
+       perf default 3x13 rays flat     100.92 us/substep -> 5x real time at 2000 Hz (one core)
+[PASS] perf: >= 4x real time at substep rate (< 125 us) 100.92 us/substep, 5.0x real time
+       perf 1x7 rays flat              70.29 us/substep -> 7x real time at 2000 Hz (one core)
+       perf 3x13 rays rough terrain    155.33 us/substep -> 3x real time at 2000 Hz (one core)
+[PASS] newton3: worst residual all tests  |sum m a - F_ext|/mg = 8.79e-16, |sum dL/dt - T_ext| = 7.48e-10 N m
 FAILURES: 0
 ILURES: 0

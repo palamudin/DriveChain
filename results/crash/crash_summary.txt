@@ -1,0 +1,27 @@
+[PASS] kerb s0 135mm head-on 25 km/h                peak tyre load 20.7 kN (band 8-30 kN)
+[PASS] kerb s0 135mm head-on 40 km/h                peak tyre load 35.4 kN (band 15-45 kN)
+[PASS] kerb s0 50mm 5deg 60 km/h                    peak tyre load 3.9 kN (< 8 kN: tyre-borne)
+[PASS] wall s0 24 cases                             all finite; worst KE+PE rise above start 0.00% of KE0 
+[PASS] drop s0 0.5 m 20 km/h                        KE gain 1.5 kJ <= mgh 5.4 kJ, max travel 104 mm, peak tyre 9.3 kN
+[PASS] drop s0 0.5 m 50 km/h                        KE gain 1.2 kJ <= mgh 5.4 kJ, max travel 93 mm, peak tyre 11.0 kN
+[PASS] drop s0 0.5 m 80 km/h                        KE gain 0.1 kJ <= mgh 5.4 kJ, max travel 98 mm, peak tyre 12.6 kN
+[PASS] drop s0 1.0 m 20 km/h                        KE gain 3.9 kJ <= mgh 10.8 kJ, max travel 110 mm, peak tyre 18.9 kN
+[PASS] drop s0 1.0 m 50 km/h                        KE gain 5.0 kJ <= mgh 10.8 kJ, max travel 110 mm, peak tyre 16.1 kN
+[PASS] drop s0 1.0 m 80 km/h                        KE gain 3.9 kJ <= mgh 10.8 kJ, max travel 110 mm, peak tyre 17.5 kN
+[PASS] drop s0 1.5 m 20 km/h                        KE gain 6.3 kJ <= mgh 16.2 kJ, max travel 110 mm, peak tyre 20.9 kN
+[PASS] drop s0 1.5 m 50 km/h                        KE gain 8.9 kJ <= mgh 16.2 kJ, max travel 110 mm, peak tyre 20.2 kN
+[PASS] drop s0 1.5 m 80 km/h                        KE gain 8.1 kJ <= mgh 16.2 kJ, max travel 110 mm, peak tyre 21.2 kN
+[PASS] kerb s1 135mm head-on 25 km/h                peak tyre load 19.3 kN (band 8-30 kN)
+[PASS] kerb s1 135mm head-on 40 km/h                peak tyre load 31.6 kN (band 15-45 kN)
+[PASS] kerb s1 50mm 5deg 60 km/h                    peak tyre load 3.9 kN (< 8 kN: tyre-borne)
+[PASS] wall s1 24 cases                             all finite; worst KE+PE rise above start 0.00% of KE0 
+[PASS] drop s1 0.5 m 20 km/h                        KE gain 1.5 kJ <= mgh 5.4 kJ, max travel 105 mm, peak tyre 9.4 kN
+[PASS] drop s1 0.5 m 50 km/h                        KE gain 1.1 kJ <= mgh 5.4 kJ, max travel 91 mm, peak tyre 10.3 kN
+[PASS] drop s1 0.5 m 80 km/h                        KE gain 0.1 kJ <= mgh 5.4 kJ, max travel 97 mm, peak tyre 11.4 kN
+[PASS] drop s1 1.0 m 20 km/h                        KE gain 3.9 kJ <= mgh 10.8 kJ, max travel 110 mm, peak tyre 17.8 kN
+[PASS] drop s1 1.0 m 50 km/h                        KE gain 5.0 kJ <= mgh 10.8 kJ, max travel 110 mm, peak tyre 15.1 kN
+[PASS] drop s1 1.0 m 80 km/h                        KE gain 3.9 kJ <= mgh 10.8 kJ, max travel 110 mm, peak tyre 17.1 kN
+[PASS] drop s1 1.5 m 20 km/h                        KE gain 6.3 kJ <= mgh 16.2 kJ, max travel 110 mm, peak tyre 20.4 kN
+[PASS] drop s1 1.5 m 50 km/h                        KE gain 8.8 kJ <= mgh 16.2 kJ, max travel 110 mm, peak tyre 19.0 kN
+[PASS] drop s1 1.5 m 80 km/h                        KE gain 8.1 kJ <= mgh 16.2 kJ, max travel 110 mm, peak tyre 20.8 kN
+crash suite: 26/26 passed
