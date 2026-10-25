@@ -9,6 +9,8 @@ D=dist/drivechain_win64; rm -rf $D dist/drivechain_win64.zip; mkdir -p $D/cars $
 cp build/win64/drivechain_demo.exe build/win64/drivechain.dll "$SDL2_DIR/bin/SDL2.dll" $D/
 cp cars/*.ini $D/cars/
 mkdir -p $D/tools $D/unity; cp build/win64/drvhost.exe $D/; cp tools/dcdrive.py $D/tools/; cp unity/DriveChain.cs unity/DriveChainDriverBridge.cs $D/unity/; mkdir -p $D/docs; cp docs/*.md $D/docs/
+# private aero notes (mesh-derived, owner's testing only): win64 docs only, never in tracked files or the src zip
+[ -f private/aero/AERO_PLAN_private.md ] && cp private/aero/AERO_PLAN_private.md $D/docs/
 sed -e 's|^ini = cars/mx5_na.ini .*|ini = cars/miata_ac.ini        ; privately calibrated MX-5 (private, this build only). Reference cars: cars/mx5_na.ini, cars/hatch_fwd.ini|' \
     -e 's|^mesh_dir = private/miata_mesh .*|mesh_dir = assets/miata_mesh   ; missing -> placeholder components|' demo/demo.ini | sed 's/$/\r/' > $D/demo.ini
 if [ -f private/miata_ac.ini ]; then cp private/miata_ac.ini $D/cars/; cp -r private/miata_mesh $D/assets/; else
