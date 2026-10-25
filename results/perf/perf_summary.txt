@@ -1,10 +1,10 @@
 perf_tests cars/mx5_na.ini on proving (spot hub), budget 4000 us per 1 ms tick
-launch, full throttle        v_end  124.0 km/h  mean   629 us/tick  worst-100ms   856 us/tick  max tick   3.0 ms  sweeps/tick   0.1  capped 0/24000  PASS
-launch, 40% throttle         v_end   32.4 km/h  mean   611 us/tick  worst-100ms   748 us/tick  max tick   1.2 ms  sweeps/tick   0.0  capped 0/16000  PASS
-rolling 100 km/h, 4th, WOT   v_end  130.1 km/h  mean   610 us/tick  worst-100ms   712 us/tick  max tick   1.5 ms  sweeps/tick   0.1  capped 0/12000  PASS
+launch, full throttle        v_end  124.0 km/h  mean   422 us/tick  worst-100ms   598 us/tick  max tick   1.0 ms  sweeps/tick   0.1  capped 0/24000  PASS
+launch, 40% throttle         v_end   32.4 km/h  mean   418 us/tick  worst-100ms   545 us/tick  max tick   1.9 ms  sweeps/tick   0.0  capped 0/16000  PASS
+rolling 100 km/h, 4th, WOT   v_end  130.1 km/h  mean   427 us/tick  worst-100ms   503 us/tick  max tick   1.2 ms  sweeps/tick   0.1  capped 0/12000  PASS
 PERF PASS
 perf_tests cars/mx5_na.ini on circuit (spot start), budget 4000 us per 1 ms tick
-launch, full throttle        v_end  123.4 km/h  mean   573 us/tick  worst-100ms   848 us/tick  max tick  16.0 ms  sweeps/tick   0.2  capped 0/24000  PASS
-launch, 40% throttle         v_end   32.4 km/h  mean   535 us/tick  worst-100ms   570 us/tick  max tick   1.1 ms  sweeps/tick   0.0  capped 0/16000  PASS
-rolling 100 km/h, 4th, WOT   v_end  127.6 km/h  mean   591 us/tick  worst-100ms   784 us/tick  max tick   1.2 ms  sweeps/tick   0.4  capped 0/12000  PASS
+launch, full throttle        v_end  123.4 km/h  mean   428 us/tick  worst-100ms   616 us/tick  max tick   1.2 ms  sweeps/tick   0.2  capped 0/24000  PASS
+launch, 40% throttle         v_end   32.4 km/h  mean   414 us/tick  worst-100ms   469 us/tick  max tick   1.4 ms  sweeps/tick   0.0  capped 0/16000  PASS
+rolling 100 km/h, 4th, WOT   v_end  127.6 km/h  mean   433 us/tick  worst-100ms   567 us/tick  max tick   6.4 ms  sweeps/tick   0.4  capped 0/12000  PASS
 PERF PASS

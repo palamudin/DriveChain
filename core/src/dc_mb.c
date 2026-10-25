@@ -1,6 +1,7 @@
 /* dc_mb.c - maximal-coordinate multibody library: joints, force elements, block-sparse LDL^T, Schur box LCP.
  * See dc_mb.h for the formulation. Allocation happens only in mb_create / mb_finalize. */
 #include "dc_mb.h"
+#include "dc_pool.h"
 #include <stdlib.h>
 #include <stdio.h>
 
@@ -12,7 +13,7 @@ mb_world* mb_create(void) { mb_world* W = (mb_world*)calloc(1, sizeof(mb_world))
 void mb_destroy(mb_world* W) {
     if (!W) return;
     free(W->nbr); free(W->nbr_blk); free(W->blkpos); free(W->blk); free(W->L); free(W->D); free(W->Dinv);
-    free(W->x); free(W->r); free(W->z); free(W->zb); free(W->gb); free(W->rch); free(W->yv); free(W->gv); free(W->Cv); free(W);
+    free(W->x); free(W->r); free(W->z); free(W->zb); free(W->gb); free(W->rch); free(W->yv); free(W->gv); free(W->vr_sj); free(W->vr_row); free(W->Cv); free(W);
 }
 
 static m3 m3inv(const m3* A) {
@@ -354,6 +355,7 @@ int mb_finalize(mb_world* W) {
     W->rch_start[W->nj] = nr_; free(mk);
     W->nvr_max = 0;
     for (int j = 0; j < W->nj; j++) if (W->Jt[j].box) for (int k = 0; k < W->Jt[j].nsrc; k++) W->nvr_max += W->Jt[j].src[k].nr;
+    W->vr_sj = (int*)calloc((size_t)W->nvr_max + 1, sizeof(int)); W->vr_row = (int*)calloc((size_t)W->nvr_max + 1, sizeof(int));
     W->yv = (double*)calloc((size_t)W->nvr_max * N + 1, sizeof(double)); W->gv = (double*)calloc((size_t)W->nvr_max * N + 1, sizeof(double));
     W->Cv = (double*)calloc((size_t)W->nvr_max * MB_MAXBOX + 1, sizeof(double));
     (void)orig; free(orig); free(adj); free(elim);
@@ -705,21 +707,38 @@ static double reach_dot(const mb_world* W, const int* R, int nR, const double* g
 }
 /* Schur complement of the box rows, W = J_B K^-1 J_B', u_free = J_B x, and the source-row couplings C = E_src K^-1 J_B'
    used by the load-dependent friction bounds, all from sparse forward solves (no back substitution, no full solves) */
+/* each column task writes only its own zb/gb/ub column and its own W entries (row s, t2 >= s, and the mirror), and each
+   virtual-row task only its own yv/gv/Cv row, so the columns run on the worker pool with results bit-identical to the
+   serial order */
+typedef struct { mb_world* W; int nbx; } schur_ctx;
+static void schur_col(void* x, int s) {
+    mb_world* W = ((schur_ctx*)x)->W; int N = W->N;
+    int jj = W->box_j[s], r = W->box_r[s]; const mb_joint* J = &W->Jt[jj];
+    double* y = W->zb + (size_t)s * N; memset(y, 0, sizeof(double) * N);
+    double u0 = 0;
+    for (int k = 0; k < J->nb; k++) { int b = J->b[k]; if (b < 0) continue; for (int q = 0; q < 6; q++) { y[W->off[b] + q] += J->J[r][k][q]; u0 += J->J[r][k][q] * W->x[W->off[b] + q]; } }
+    W->ub[s] = u0;
+    fwd_reach(W, W->rch + W->rch_start[jj], W->rch_start[jj + 1] - W->rch_start[jj], y, W->gb + (size_t)s * N);
+}
+static void schur_dot(void* x, int s) {
+    mb_world* W = ((schur_ctx*)x)->W; int N = W->N, nbx = ((schur_ctx*)x)->nbx;
+    int jj = W->box_j[s]; const int* R = W->rch + W->rch_start[jj]; int nR = W->rch_start[jj + 1] - W->rch_start[jj];
+    const double* g = W->gb + (size_t)s * N;
+    for (int t2 = s; t2 < nbx; t2++) { double w = reach_dot(W, R, nR, g, W->zb + (size_t)t2 * N); W->W[s * MB_MAXBOX + t2] = w; W->W[t2 * MB_MAXBOX + s] = w; }
+}
+static void schur_vr(void* x, int v) {
+    mb_world* W = ((schur_ctx*)x)->W; int N = W->N, nbx = ((schur_ctx*)x)->nbx, sj = W->vr_sj[v];
+    const int* R = W->rch + W->rch_start[sj]; int nR = W->rch_start[sj + 1] - W->rch_start[sj];
+    double* y = W->yv + (size_t)v * N; double* g = W->gv + (size_t)v * N; memset(y, 0, sizeof(double) * N);
+    y[W->vr_row[v]] = 1;
+    fwd_reach(W, R, nR, y, g);
+    double* C = W->Cv + (size_t)v * MB_MAXBOX;
+    for (int t2 = 0; t2 < nbx; t2++) C[t2] = reach_dot(W, R, nR, g, W->zb + (size_t)t2 * N);
+}
+static void schur_dotvr(void* x, int k) { int nbx = ((schur_ctx*)x)->nbx; if (k < nbx) schur_dot(x, k); else schur_vr(x, k - nbx); }
 static void schur_sparse(mb_world* W, int nbx) {
-    int N = W->N;
-    for (int s = 0; s < nbx; s++) {
-        int jj = W->box_j[s], r = W->box_r[s]; const mb_joint* J = &W->Jt[jj];
-        double* y = W->zb + (size_t)s * N; memset(y, 0, sizeof(double) * N);
-        double u0 = 0;
-        for (int k = 0; k < J->nb; k++) { int b = J->b[k]; if (b < 0) continue; for (int q = 0; q < 6; q++) { y[W->off[b] + q] += J->J[r][k][q]; u0 += J->J[r][k][q] * W->x[W->off[b] + q]; } }
-        W->ub[s] = u0;
-        fwd_reach(W, W->rch + W->rch_start[jj], W->rch_start[jj + 1] - W->rch_start[jj], y, W->gb + (size_t)s * N);
-    }
-    for (int s = 0; s < nbx; s++) {
-        int jj = W->box_j[s]; const int* R = W->rch + W->rch_start[jj]; int nR = W->rch_start[jj + 1] - W->rch_start[jj];
-        const double* g = W->gb + (size_t)s * N;
-        for (int t2 = s; t2 < nbx; t2++) { double w = reach_dot(W, R, nR, g, W->zb + (size_t)t2 * N); W->W[s * MB_MAXBOX + t2] = w; W->W[t2 * MB_MAXBOX + s] = w; }
-    }
+    schur_ctx X = {W, nbx};
+    dc_pool_run(W->pool, schur_col, &X, nbx);
     int nv = 0;
     for (int s = 0; s < nbx; s++) {
         int jj = W->box_j[s]; const mb_joint* J = &W->Jt[jj];
@@ -727,17 +746,12 @@ static void schur_sparse(mb_world* W, int nbx) {
         for (int k = 0; k < J->nsrc; k++) {
             int sj = J->src[k].j, nd = W->node_of_joint[sj]; W->vr_off[jj][k] = -1; if (nd < 0) continue;
             W->vr_off[jj][k] = nv;
-            const int* R = W->rch + W->rch_start[sj]; int nR = W->rch_start[sj + 1] - W->rch_start[sj];
-            for (int a = 0; a < J->src[k].nr; a++, nv++) {
-                double* y = W->yv + (size_t)nv * N; double* g = W->gv + (size_t)nv * N; memset(y, 0, sizeof(double) * N);
-                y[W->off[nd] + J->src[k].r0 + a] = 1;
-                fwd_reach(W, R, nR, y, g);
-                double* C = W->Cv + (size_t)nv * MB_MAXBOX;
-                for (int t2 = 0; t2 < nbx; t2++) C[t2] = reach_dot(W, R, nR, g, W->zb + (size_t)t2 * N);
-            }
+            for (int a = 0; a < J->src[k].nr; a++, nv++) { W->vr_sj[nv] = sj; W->vr_row[nv] = W->off[nd] + J->src[k].r0 + a; }
         }
     }
     W->nvr = nv;
+    /* W columns and virtual rows in one dispatch: tasks [0, nbx) are W rows, [nbx, nbx + nv) virtual rows */
+    dc_pool_run(W->pool, schur_dotvr, &X, nbx + nv);
 }
 
 #ifdef DC_MB_TRACE   /* debug: 1 = early/periodic sweeps, 2 = last sweeps of capped steps (link-time global) */

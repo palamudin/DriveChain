@@ -105,6 +105,8 @@ typedef struct {
     int *rch, rch_start[MB_MAXJ + 1]; /* per joint: rank-sorted reach (box joint: its bodies; factorised: its node) */
     double *gb;                       /* nbox * N: D^-1 L^-1 j_s on the reach (zb holds L^-1 j_s) */
     int nvr_max, nvr; double *yv, *gv, *Cv;   /* virtual source rows: L^-1 e_o, D^-1 L^-1 e_o, C = e_o' K^-1 J_B' (nvr x MB_MAXBOX) */
+    int *vr_sj, *vr_row;              /* per virtual row: source joint (reach) and its unit row in x */
+    struct dc_pool* pool;             /* optional step worker pool (box-row Schur columns are built in parallel) */
     int vr_off[MB_MAXJ][MB_FSRC];     /* first virtual row of source k of box joint j this solve (-1 none) */
     double Wf[MB_MAXBOX * MB_MAXBOX], dlb[MB_MAXBOX]; int fsel[MB_MAXBOX];   /* PGS subspace step workspace */
     int pgs_ssm;                      /* box LCP: exact subspace step on the interior (stuck) rows every pgs_ssm sweeps (0 off) */

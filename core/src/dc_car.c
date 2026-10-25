@@ -1,3 +1,6 @@
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200112L   /* clock_gettime, pthreads under -std=c11 */
+#endif
 /* dc_car.c - vehicle assembly, multibody integrator, steering chain, driveline.
  *
  * Generalized velocities u = [v(3) ω(3) ṡ1..4 ṙ θ̇sw]  (world v/ω of the sprung body, hub travels,
@@ -15,6 +18,9 @@
  */
 #include "dc_tyre.h"
 #include "dc_mbcar.h"
+#include "dc_pool.h"
+#include <time.h>
+#include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
 
@@ -166,7 +172,18 @@ DC_API dc_car* dc_create(const dc_car_params* pin) {
     return c;
 }
 
-DC_API void dc_destroy(dc_car* c) { if (!c) return; if (c->mb) dc_mbcar_destroy(c->mb); free(c->rc); free(c); }
+DC_API void dc_destroy(dc_car* c) { if (!c) return; if (c->mb) dc_mbcar_destroy(c->mb); dc_pool_destroy(c->pool); free(c->rc); free(c); }
+DC_API int dc_set_threads(dc_car* c, int n) {
+    if (n > 4) n = 4;   /* the parallel sections split by wheel */
+    if (n < 1) n = 1;
+    if (dc_pool_threads(c->pool) == n) return n;
+    if (c->mb) c->mb->W->pool = NULL;
+    dc_pool_destroy(c->pool); c->pool = n > 1 ? dc_pool_create(n, 0) : NULL;
+    if (c->mb) c->mb->W->pool = c->pool;
+    return dc_pool_threads(c->pool);
+}
+double dc_wall(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec + 1e-9 * t.tv_nsec; }
+DC_API void dc_get_profile(const dc_car* c, dc_profile* p, int reset) { *p = c->prof; if (reset) memset(&((dc_car*)c)->prof, 0, sizeof c->prof); }
 DC_API int dc_active_solver(const dc_car* c) { return c->mb ? DC_SOLVER_MULTIBODY : DC_SOLVER_REDUCED; }
 
 DC_API void dc_reset(dc_car* c, const double pos[3], double yaw, double speed) {
@@ -614,7 +631,7 @@ DC_API void dc_substep(dc_car* c) {
     for (int i = 0; i < 4; i++) dc_kin_full(&c->K[i], c->s[i], c->r, c->sd[i], c->K[i].steered ? c->rd : 0, &c->pose[i]);
     build_bodies(c, &S, &R);
     /* 2. tyre contact, phase A */
-    for (int i = 0; i < 4; i++) dc_tyre_phaseA(c, i, S.cw[i], S.a[i], S.vc[i], S.wc[i], h, &S.tc[i]);
+    dc_tyre_phaseA_all(c, S.cw, S.a, S.vc, S.wc, h, S.tc);
     /* 3. engine torque */
     double rpm = c->we * 30 / M_PI;
     double thr = clampd(c->in.throttle, 0, 1);
@@ -920,7 +937,9 @@ DC_API void dc_substep(dc_car* c) {
 DC_API int dc_step(dc_car* c, double dt) {
     c->acc_dt += dt;
     int n = 0;
+    double t0 = (c->dbg & DC_DBG_PROFILE) ? dc_wall() : 0;
     while (c->acc_dt >= c->h - 1e-12 && n < 200) { dc_substep(c); c->acc_dt -= c->h; n++; }
+    if (c->dbg & DC_DBG_PROFILE) { c->prof.step_s += dc_wall() - t0; c->prof.substeps += n; }
     return n;
 }
 

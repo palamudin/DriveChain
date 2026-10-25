@@ -14,6 +14,7 @@ static int make_car(sim_t* S) {
     S->car = dc_create(&S->P);
     if (!S->car) return 0;
     dc_set_road(S->car, track_road_fn, S->trk); dc_set_road_flags(S->car, DC_ROAD_HEIGHT_ONLY | DC_ROAD_STATIC);   /* tracks are static */
+    { int nt = (int)cfg_num(S->cfg, "physics.threads", 1); if (nt > 1) dc_set_threads(S->car, nt); }   /* opt-in step worker threads (track_road_fn is pure) */
     return 1;
 }
 

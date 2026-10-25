@@ -60,6 +60,7 @@ typedef struct {
 typedef struct { int i, j; double h, g; } dc_rc_ent;
 typedef struct { double dw; dc_rc_ent e[RC_N * RC_N]; } dc_rcache;
 void dc_rcache_clear(dc_car* c);
+double dc_wall(void);
 
 struct dc_car {
     dc_car_params P;
@@ -99,6 +100,8 @@ struct dc_car {
     double link_resid[4];
     dc_tm_tab tm[2];                 /* TARMAC tyre tables per axle */
     dc_rcache* rc;                   /* [4] road-node caches, allocated at create, used only with DC_ROAD_STATIC */
+    struct dc_pool* pool;            /* step worker pool (dc_set_threads), NULL = serial */
+    dc_profile prof;
     struct dc_mbcar* mb;             /* multibody solver state (solver = DC_SOLVER_MULTIBODY), else NULL */
 };
 

@@ -1,0 +1,36 @@
+cars/mx5_na.ini, reduced core, envelope tyre
+  ok   2 threads vs 1: bit-identical over 180 frames (0 differ)
+  ok   2 threads vs 1, DC_ROAD_STATIC: bit-identical over 180 frames (0 differ)
+  ok   3 threads vs 1: bit-identical over 180 frames (0 differ)
+  ok   3 threads vs 1, DC_ROAD_STATIC: bit-identical over 180 frames (0 differ)
+  ok   4 threads vs 1: bit-identical over 180 frames (0 differ)
+  ok   4 threads vs 1, DC_ROAD_STATIC: bit-identical over 180 frames (0 differ)
+  ok   1 -> 4 threads at frame 90: bit-identical (0 differ)
+cars/mx5_na.ini, reduced core, TARMAC tyre
+  ok   2 threads vs 1: bit-identical over 180 frames (0 differ)
+  ok   2 threads vs 1, DC_ROAD_STATIC: bit-identical over 180 frames (0 differ)
+  ok   3 threads vs 1: bit-identical over 180 frames (0 differ)
+  ok   3 threads vs 1, DC_ROAD_STATIC: bit-identical over 180 frames (0 differ)
+  ok   4 threads vs 1: bit-identical over 180 frames (0 differ)
+  ok   4 threads vs 1, DC_ROAD_STATIC: bit-identical over 180 frames (0 differ)
+  ok   1 -> 4 threads at frame 90: bit-identical (0 differ)
+cars/mx5_na.ini, multibody core, envelope tyre
+  ok   2 threads vs 1: bit-identical over 180 frames (0 differ)
+  ok   2 threads vs 1, DC_ROAD_STATIC: bit-identical over 180 frames (0 differ)
+  ok   3 threads vs 1: bit-identical over 180 frames (0 differ)
+  ok   3 threads vs 1, DC_ROAD_STATIC: bit-identical over 180 frames (0 differ)
+  ok   4 threads vs 1: bit-identical over 180 frames (0 differ)
+  ok   4 threads vs 1, DC_ROAD_STATIC: bit-identical over 180 frames (0 differ)
+  ok   1 -> 4 threads at frame 90: bit-identical (0 differ)
+cars/mx5_na.ini, multibody core, TARMAC tyre
+  ok   2 threads vs 1: bit-identical over 180 frames (0 differ)
+  ok   2 threads vs 1, DC_ROAD_STATIC: bit-identical over 180 frames (0 differ)
+  ok   3 threads vs 1: bit-identical over 180 frames (0 differ)
+  ok   3 threads vs 1, DC_ROAD_STATIC: bit-identical over 180 frames (0 differ)
+  ok   4 threads vs 1: bit-identical over 180 frames (0 differ)
+  ok   4 threads vs 1, DC_ROAD_STATIC: bit-identical over 180 frames (0 differ)
+  ok   1 -> 4 threads at frame 90: bit-identical (0 differ)
+  ok   dc_set_threads clamps to 1..4 (9->4, 0->1, 3->3)
+  ok   pool stress: 300 create / set_threads / step / destroy cycles with thread-count switches complete
+
+THREAD TESTS: PASS (0 failures)

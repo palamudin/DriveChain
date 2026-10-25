@@ -480,13 +480,13 @@ void dc_mbcar_step(dc_car* c) {
     v3 xw = mv(&R, EX), yw = mv(&R, EY), zw = mv(&R, EZ);
     double E0 = mb_kinetic(W);
     /* ---- 1. tyres, phase A (wheel body state; knuckle = non-spinning carrier) */
-    v3 a_w[4], cw[4];
+    v3 a_w[4], cw[4], vw[4], wk[4];
     for (int i = 0; i < 4; i++) {
         mb_body* Wb = &W->B[m->wh[i]];
-        a_w[i] = mv(&Wb->R, c->K[i].spin_axis_u); cw[i] = Wb->x;
+        a_w[i] = mv(&Wb->R, c->K[i].spin_axis_u); cw[i] = Wb->x; vw[i] = Wb->v; wk[i] = W->B[m->kn[i]].w;
         c->ty[i].omega = vdot(Wb->w, a_w[i]);
-        dc_tyre_phaseA(c, i, cw[i], a_w[i], Wb->v, W->B[m->kn[i]].w, h, &m->tc[i]);
     }
+    dc_tyre_phaseA_all(c, cw, a_w, vw, wk, h, m->tc);   /* per wheel, on the worker pool when dc_set_threads > 1 */
     /* ---- 2. engine torque (identical logic to the reduced core) */
     double we = vdot(W->B[m->eng].w, xw), wx = vdot(Ch->w, xw);
     double rpm = (we - wx) * 30 / M_PI;

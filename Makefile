@@ -1,8 +1,8 @@
 # Linux build (core lib, tests, demo). Windows: see build_windows.sh
 CC ?= gcc
 CFLAGS ?= -O2 -std=c11 -Wall -Wextra -Wno-unused-parameter -Wno-misleading-indentation -fPIC -Icore/include -Icore/src
-LDLIBS = -lm
-CORE_SRC = core/src/dc_kin.c core/src/dc_params.c core/src/dc_tyre.c core/src/dc_tyre_tm.c core/src/dc_car.c core/src/dc_road.c core/src/dc_out.c core/src/dc_driver.c core/src/dc_mb.c core/src/dc_mbcar.c
+LDLIBS = -lm -lpthread
+CORE_SRC = core/src/dc_kin.c core/src/dc_params.c core/src/dc_tyre.c core/src/dc_tyre_tm.c core/src/dc_car.c core/src/dc_road.c core/src/dc_out.c core/src/dc_driver.c core/src/dc_mb.c core/src/dc_mbcar.c core/src/dc_pool.c
 CORE_OBJ = $(CORE_SRC:core/src/%.c=build/%.o)
 
 all: build/libdrivechain.a build/libdrivechain.so build/dc_tests
@@ -27,27 +27,37 @@ crashtest: build/kerbstrike
 .PHONY: crashtest
 build/smoke: tests/smoke.c build/libdrivechain.a
 	$(CC) $(CFLAGS) -o $@ $< build/libdrivechain.a $(LDLIBS)
-build/mb_tests: tests/mb_tests.c core/src/dc_mb.c core/src/dc_mb.h core/src/dc_math.h
-	$(CC) $(CFLAGS) -std=gnu11 -o $@ tests/mb_tests.c core/src/dc_mb.c $(LDLIBS)
+build/mb_tests: tests/mb_tests.c core/src/dc_mb.c core/src/dc_pool.c core/src/dc_mb.h core/src/dc_math.h
+	$(CC) $(CFLAGS) -std=gnu11 -o $@ tests/mb_tests.c core/src/dc_mb.c core/src/dc_pool.c $(LDLIBS)
 build/mbcar_tests: tests/mbcar_tests.c build/libdrivechain.a
-	$(CC) -O2 -std=gnu11 -Icore/include -o $@ $< build/libdrivechain.a -lm
+	$(CC) -O2 -std=gnu11 -Icore/include -o $@ $< build/libdrivechain.a -lm -lpthread
 build/mbcar_smoke: tests/mbcar_smoke.c build/libdrivechain.a
-	$(CC) -O2 -std=gnu11 -Icore/include -o $@ $< build/libdrivechain.a -lm
+	$(CC) -O2 -std=gnu11 -Icore/include -o $@ $< build/libdrivechain.a -lm -lpthread
 build/contact_point_tests: tests/contact_point_tests.c build/libdrivechain.a
-	$(CC) -O2 -std=gnu11 -Icore/include -o $@ $< build/libdrivechain.a -lm
+	$(CC) -O2 -std=gnu11 -Icore/include -o $@ $< build/libdrivechain.a -lm -lpthread
 contacttest: build/contact_point_tests
 	./build/contact_point_tests cars/mx5_na.ini | tee results/contact_point_summary.txt
 .PHONY: contacttest
 build/reset_tests: tests/reset_tests.c build/libdrivechain.a
-	$(CC) -O2 -std=gnu11 -Icore/include -o $@ $< build/libdrivechain.a -lm
+	$(CC) -O2 -std=gnu11 -Icore/include -o $@ $< build/libdrivechain.a -lm -lpthread
 build/valve_tests: tests/valve_tests.c build/libdrivechain.a
-	$(CC) -O2 -std=gnu11 -Icore/include -o $@ $< build/libdrivechain.a -lm
+	$(CC) -O2 -std=gnu11 -Icore/include -o $@ $< build/libdrivechain.a -lm -lpthread
 valvetest: build/valve_tests
 	mkdir -p results/valve && ./build/valve_tests cars/mx5_na.ini cars/hatch_fwd.ini | tee results/valve/valve_summary.txt
 	-python3 tools/plot_valve.py results/valve
 .PHONY: valvetest
+build/rate_conv: tools/rate_conv.c build/libdrivechain.a
+	$(CC) -O2 -std=gnu11 -Icore/include -o $@ $< build/libdrivechain.a -lm -lpthread
+rateconv: build/rate_conv
+	mkdir -p results/rate && ./build/rate_conv cars/mx5_na.ini | tee results/rate/rate_conv_mx5_na.txt && ./build/rate_conv cars/hatch_fwd.ini | tee results/rate/rate_conv_hatch_fwd.txt
+.PHONY: rateconv
+build/thread_tests: tests/thread_tests.c build/libdrivechain.a
+	$(CC) -O2 -std=gnu11 -Icore/include -o $@ $< build/libdrivechain.a -lm -lpthread
+threadtest: build/thread_tests
+	mkdir -p results && ./build/thread_tests cars/mx5_na.ini | tee results/thread_summary.txt
+.PHONY: threadtest
 build/road_cache_tests: tests/road_cache_tests.c build/libdrivechain.a
-	$(CC) -O2 -std=gnu11 -Icore/include -o $@ $< build/libdrivechain.a -lm
+	$(CC) -O2 -std=gnu11 -Icore/include -o $@ $< build/libdrivechain.a -lm -lpthread
 roadcachetest: build/road_cache_tests
 	./build/road_cache_tests cars/mx5_na.ini | tee results/road_cache_summary.txt
 .PHONY: roadcachetest
@@ -61,13 +71,14 @@ mbtest: build/mb_tests
 	./build/mb_tests | tee results/mb/phase0_summary.txt
 .PHONY: mbtest
 
-test: build/dc_tests build/mb_tests build/mbcar_tests build/reset_tests build/contact_point_tests build/valve_tests build/road_cache_tests
+test: build/dc_tests build/mb_tests build/mbcar_tests build/reset_tests build/contact_point_tests build/valve_tests build/road_cache_tests build/thread_tests
 	./build/dc_tests | tee results/summary.txt
 	mkdir -p results/mb && ./build/mb_tests | tee results/mb/phase0_summary.txt
 	./build/mbcar_tests cars/mx5_na.ini | tee results/mb/phase12_summary.txt
 	./build/mbcar_tests cars/hatch_fwd.ini energy | tee results/mb/energy_audit_hatch_fwd.txt
 	./build/reset_tests cars/mx5_na.ini cars/hatch_fwd.ini | tee results/reset_summary.txt
 	./build/road_cache_tests cars/mx5_na.ini | tee results/road_cache_summary.txt
+	./build/thread_tests cars/mx5_na.ini | tee results/thread_summary.txt
 	./build/contact_point_tests cars/mx5_na.ini | tee results/contact_point_summary.txt
 	$(MAKE) valvetest
 	python3 tests/plot.py results

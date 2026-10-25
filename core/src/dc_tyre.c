@@ -19,6 +19,7 @@
  */
 #include "dc_tyre.h"
 #include "dc_rgrid.h"
+#include "dc_pool.h"
 
 #define HC_REF 0.004    /* m: indentation at which carcass damping reaches its full value */
 #define COL_MAX 1024
@@ -481,4 +482,15 @@ void dc_tyre_telem_slip(dc_car* c, int i, const dc_tc* t, double h, double* slip
     S->a_tr += gy / (1 + gy) * (t->slip_angle_ss - S->a_tr);
     S->k_tr += gx / (1 + gx) * (t->slip_ratio_ss - S->k_tr);
     *slip_angle = S->a_tr; *slip_ratio = S->k_tr;
+}
+
+/* phase A of all four wheels: each wheel writes only its own tyre state and contact, so the wheels run on the step's
+   worker pool with a fixed wheel -> thread partition; bit-identical to the serial loop */
+typedef struct { dc_car* c; const v3 *cw, *a, *vc, *wc; double h; dc_tc* tc; } phA_ctx;
+static void phA_task(void* x, int i) { phA_ctx* q = (phA_ctx*)x; dc_tyre_phaseA(q->c, i, q->cw[i], q->a[i], q->vc[i], q->wc[i], q->h, &q->tc[i]); }
+void dc_tyre_phaseA_all(dc_car* c, const v3* cw, const v3* a, const v3* vc, const v3* wc, double h, dc_tc* tc) {
+    double t0 = (c->dbg & DC_DBG_PROFILE) ? dc_wall() : 0;
+    phA_ctx q = {c, cw, a, vc, wc, h, tc};
+    dc_pool_run(c->pool, phA_task, &q, 4);
+    if (c->dbg & DC_DBG_PROFILE) c->prof.contact_s += dc_wall() - t0;
 }

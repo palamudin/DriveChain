@@ -362,7 +362,13 @@ DC_API void   dc_driver_command(dc_driver* d, const dc_driver_cmd* c);
 DC_API void   dc_driver_update(dc_driver* d, const dc_car* car, double dt, dc_input* io);
 DC_API void   dc_driver_get_state(const dc_driver* d, dc_driver_state* s);
 enum { DC_SOLVER_REDUCED = 0, DC_SOLVER_MULTIBODY = 1 };
-enum { DC_DBG_NO_DAMPING = 1, DC_DBG_NO_FRICTION = 2, DC_DBG_NO_AERO = 4, DC_DBG_FREEZE_STEER = 8, DC_DBG_ENGINE_OFF = 16, DC_DBG_NO_PROJECTION = 32 };
+enum { DC_DBG_NO_DAMPING = 1, DC_DBG_NO_FRICTION = 2, DC_DBG_NO_AERO = 4, DC_DBG_FREEZE_STEER = 8, DC_DBG_ENGINE_OFF = 16, DC_DBG_NO_PROJECTION = 32, DC_DBG_PROFILE = 64 /* time the step sections (dc_get_profile); off = no timer calls */ };
+typedef struct { double contact_s, step_s; long long substeps; } dc_profile;   /* contact_s: tyre/road contact preparation (phase A, all wheels) */
+DC_API void   dc_get_profile(const dc_car* c, dc_profile* p, int reset);
+/* worker threads for the step, total including the calling thread (1 = serial, the default). Opt-in. Results are
+   bit-identical for any count (fixed per-wheel partition, no cross-thread reductions). With n > 1 the road callback
+   is called from helper threads and must be thread-safe (pure function of x, y). Returns the count in use. */
+DC_API int    dc_set_threads(dc_car* c, int n);
 #ifdef __cplusplus
 }
 #endif

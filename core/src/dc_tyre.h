@@ -19,6 +19,7 @@ typedef struct {
     double pe;                       /* elastic energy stored in tyre (radial+shear) */
 } dc_tc;
 void dc_tyre_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc* t);
+void dc_tyre_phaseA_all(dc_car* c, const v3* cw, const v3* a, const v3* vc, const v3* wc, double h, dc_tc* tc);   /* all 4, on the pool */
 void dc_tyre_phaseB(dc_car* c, int i, v3 cw, v3 a, double omega_new, double h, dc_tc* t, int commit);
 /* energy audit: shear (ex, ey) + tread-twist energy stored in the committed carcass state of wheel i, with this
    step's stiffnesses (call after phase A). t->pe holds only the radial store until phase B commits the new shear

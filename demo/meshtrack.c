@@ -129,7 +129,7 @@ double mt_height(const meshtrk_t* M, double x, double y, double* n, int* surf, d
         }
     }
     if (bk < 0) {
-        ((meshtrk_t*)M)->misses++;
+        __atomic_fetch_add(&((meshtrk_t*)M)->misses, 1, __ATOMIC_RELAXED);   /* road calls may come from step helper threads */
         if (n) { n[0] = n[1] = 0; n[2] = 1; } if (surf) *surf = SURF_OTHER; if (grip) *grip = 1.0; if (tri) *tri = -1;
         return M->bmin[2] - 20.0;
     }
