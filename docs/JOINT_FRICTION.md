@@ -114,5 +114,5 @@ Findings:
 4. The rim friction of 1.1–1.3 N m on centre (jf=1) is the size Norman's on-centre test calls Coulomb
    friction (torque at 0 g). jf=0 gave only ~0.35 N m, too little for a 1990s rack.
 
-Driving validation (private test track, laps by the lap bot, arm stiffness 25 N m/rad): lap times with jf=1 are within
-0.3 s of jf=0 for both cars, with no instability and no spin.
+Driving validation: closed-loop laps with the path driver (arm stiffness 25 N m/rad) with jf=1 on both cars show
+no instability, no spin and lap times unchanged vs jf=0 within run-to-run scatter.

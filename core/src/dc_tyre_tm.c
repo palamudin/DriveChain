@@ -148,6 +148,7 @@ void dc_tyre_tm_init(dc_car* c) {
         B->mu0 = T->tm_mu > 0 ? T->tm_mu : T->mu_y * pow(B->fref / T->fz0, T->ls_exp_y - 1);
         B->floor_ = T->tm_slide_floor > 0 ? T->tm_slide_floor : 0.7;
         B->vslide = T->tm_slide_speed > 0 ? T->tm_slide_speed : 5.0;
+        B->sexp = T->tm_slide_exp > 0 ? T->tm_slide_exp : 1.0;
         B->crr = T->tm_crr > 0 ? T->tm_crr : 0.012;
         B->krim = T->tm_k_rim > 0 ? T->tm_k_rim : 1.2e6;
         B->crim = T->tm_c_rim > 0 ? T->tm_c_rim : 1500;
@@ -397,7 +398,8 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
             double N0 = mu * N;
             double fxo = fmax(0.05, avx * 3 * N0 / (B->kx * sigx)), fyo = fmax(0.05, avx * 3 * N0 / (B->ky * sigy));
             double sn = hypot(slx / fxo, sly / fyo), excess = sn > 1 ? Vs * (1 - 1 / sn) : 0;
-            mu *= B->floor_ + (1 - B->floor_) * exp(-excess / B->vslide);
+            double u = excess / B->vslide;
+            mu *= B->floor_ + (1 - B->floor_) * exp(-(B->sexp == 1.0 ? u : pow(u, B->sexp)));
         }
     }
     t->mu_eff = mu;
