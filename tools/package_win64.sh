@@ -42,7 +42,9 @@ done
 #  _propV = rotary-valve pressure states (mb_valve_model = 1, contoured edges), pump at full flow from idle (docs/VALVE.md)
 #  _propB = compliant arm-pivot bushings at documented estimates (docs/BUSHINGS.md)
 #  _propC = propshaft and diff-carrier rotors in the driveline (docs/CARRIER.md)
+# MB-core opt-ins: only for cars that run the multibody core (solver = 1); on legacy-core cars the keys would be inert
 mkprop() { suffix=$1; shift; for f in $D/cars/*.ini; do case "$f" in *_tarmac*|*_prop*) continue;; esac
+grep -Eq '^solver *= *1' "$f" || continue
 python3 - "$f" "$suffix" "$@" <<'PY'
 import sys, re
 f, suffix, KEYS = sys.argv[1], sys.argv[2], sys.argv[3:]

@@ -73,6 +73,17 @@ The demo's proving layout includes:
 
 The demo spawns at the start hub on the dynamics pad (signposted; `[start] spot` in demo.ini). Keys 1–9 and 0 teleport to the spots: hub, start, skidpad, pave, undulations, oval, slalom, bumps, ruts, bumpy_corner. The list shows on the HUD for ~10 s at start, and F1 toggles it. Screenshots are in results/shots/ (gitignored, because they render the private mesh).
 
+## Opt-in proposal cars (Windows build)
+
+The Windows zip ships variants of each car next to the defaults. Defaults are unchanged, and every variant is a proposal
+to drive and compare.
+- `_tarmac` / `_tarmac_brush`: the project owner's TARMAC tyre (docs/TYRE_TARMAC.md).
+- `_propF2` / `_propD`: tyre-study sets (docs/TYRE_DATA.md).
+- Multibody-core cars only (`solver = 1`):
+  - `_propV`: rotary-valve pressure states (docs/VALVE.md)
+  - `_propB`: compliant arm-pivot bushings (docs/BUSHINGS.md)
+  - `_propC`: propshaft and diff-carrier inertia (docs/CARRIER.md)
+
 ## Driving it from code
 See docs/DRIVER_INTERFACE.md. A bot, script or Python drives through finite-strength hands on the rim and pedals, over JSON lines (stdin lockstep host, demo TCP port or Unity bridge). The human can take over at any time.
 
