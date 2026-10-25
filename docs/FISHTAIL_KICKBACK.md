@@ -154,7 +154,7 @@ Summaries are in `*/kickback_summary.csv`.
     Doubling the thumb bandwidth to 12 Hz at a 0.2 s delay barely changes it (ζ 0.04, 3.08 s).
   - Settle time is monotone in the reaction delay. This is the classic phase-margin loss of a delayed closed
     loop around a lightly damped vehicle mode (McRuer crossover model), which real drivers also show at speed.
-  - The legacy core shows the same trend, and the energy/Newton-3 audits are clean. It is a driver-model plus
-    stock-damping outcome, not a solver artefact. The 2.5 s criterion dates from the pre-stock car.
+  - The Newton-3 and energy audits in `make test` are clean. It is a driver-model plus stock-damping outcome,
+    not a solver artefact. The 2.5 s criterion dates from the pre-stock car.
   - Proposal (not applied): treat it as a known residual like the free-wheel case, or keep it as a tracked
     failure until the bushings/compliance phase adds damping.
