@@ -42,17 +42,14 @@ TARMAC uses `Kz [kgf/mm] = 0.00028 · p[kPa] · sqrt(Wcp[mm] · D[mm]) + 3.45` (
 Stiffness Relationship for Belted Radial Tires", *Tire Science and Technology* 33(3), 2005, pp. 136-155,
 doi:10.2346/1.2174340; the form as given in Jazar, *Vehicle Dynamics*, 2017). Checks:
 
-- **Structural term.** The paper's structural (0 kPa) term is quoted by later work as 3.45 kgf/mm = 33.84 N/mm
-  (K_zsw). This matches the constant.
+- **Structural term.** The constant 3.45 kgf/mm = 33.84 N/mm is the zero-pressure (structural) term.
 - **Independent SI form.** A published SI transcription is `Kz [N/mm] = 2.68 p[MPa] sqrt(W D) + 33.1`, with W and D
   in mm. Converting the TARMAC form gives 2.75 p[MPa] sqrt(W D) + 33.8. The two agree to within 3 %, so the units are
   kgf/mm, kPa and mm.
-  - One web summary reads the formula as psi/inch/lb·in⁻¹. That reading gives stiffnesses about 50x too low, so it
-    is wrong.
 - **Width.** W is the footprint width, as in Rhyne. Later work replaces it with a geometric estimate; TARMAC's
   `(1.03 - 0.004 AR) W` is such an estimate.
-- **mx5_na check** (185/60 R14, 200 kPa): Wcp 144 mm, D 578 mm. This gives Kz = 19.6 kgf/mm = 192 kN/m, which is in
-  the range measured for that size at that pressure (≈ 180-200 kN/m).
+- **mx5_na check** (185/60 R14, 200 kPa): Wcp 144 mm, D 578 mm. This gives Kz = 19.6 kgf/mm = 192 kN/m, a plausible
+  value for a passenger tyre of this size. No measured value for this exact tyre was available to compare.
 
 `tyre_tm_kz_mode = 1` replaces Rhyne with the envelope model's pressure-dependent `kz` law, for like-for-like
 comparisons.
@@ -111,6 +108,11 @@ Steady state at 15 m/s, front tyre, `F_ref` 2575 N:
 | relaxation length (63 %, 2° step) | 0.263 m | 0.323 m | 0.210 m |
 | cost per wheel (phase A+B) | 21.6 µs | 26.3 µs | 37.1 µs |
 
+Whole-car cost (`make test`, `results/perf.csv`, one core, 2 kHz substep):
+- envelope: 101.5 µs per substep on a flat road (4.9x real time) and 153 µs on rough terrain (3.3x).
+- TARMAC: 115.9 µs on a flat road (4.3x real time, inside the 4x budget) and 212.8 µs on rough terrain (2.3x). On
+  rough terrain every lane walks the road grid.
+
 Peak μ and load sensitivity are identical by construction (TARMAC μ0/ls are derived from the envelope parameters).
 
 Vehicle tests (`mbcompare`, multibody core, mx5_na):
@@ -123,13 +125,12 @@ Vehicle tests (`mbcompare`, multibody core, mx5_na):
 | slalom ay | 0.65 g | 0.77 g | 0.69 g |
 | hands-off countersteer, max body slip | 28° (recovers) | 87° (spins) | 87° (spins) |
 | drift hold (`drivetest drift`, arms) | 7.7 s | 0.3 s | 0.3 s |
-| CPU per simulated second | 2.14 s | 2.52 s | 2.47 s |
 
 Kerbs, walls, drops (`tests/crash_suite.py`): 26/26 for both TARMAC variants in both cores.
-- Peak tyre load on a 135 mm kerb head-on: 15-16 kN at 25 km/h, 23-27 kN at 40 km/h.
-- Peak tyre load on a 50 mm kerb at 5°/60 km/h: 4.6 kN.
-- Peak tyre load on drops of 0.5/1/1.5 m: 9-21 kN.
-- Wall-strike energy rise: ≤ 0.96 % of KE0.
+- Peak tyre load on a 135 mm kerb head-on: 15.2-16.2 kN at 25 km/h, 22.4-26.5 kN at 40 km/h.
+- Peak tyre load on a 50 mm kerb at 5°/60 km/h: 4.5-4.6 kN.
+- Peak tyre load on drops of 0.5/1/1.5 m: 8.6-16.9 kN, with KE gain below mgh in every case.
+- Wall-strike energy rise (24 cases per core): at most 0.96 % of KE0 (legacy core) and 0.57 % (multibody core).
 
 Notes on the vehicle results:
 - **Hands-off and drift.** The spin is caused by TARMAC's sliding-friction decay, not by the force curve. With

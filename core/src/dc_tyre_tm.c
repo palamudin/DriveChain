@@ -16,8 +16,9 @@
  *   Footprint by membrane equilibrium: the deepest overlap cells, down to a ring displacement chosen so that the
  *   contact area = Kz δ / (κ p); pressure in it ∝ overlap - ring. Load point Pc and normal n = pressure-weighted
  *   means of the hit points / surface normals; half length from the pressure second moment (parabola: Var = a²/5).
- *   N = max(0, Kz δ + cz δ') at Pc along n; rim pinch k_rim (δn,max - bottom) + c_rim δ' as a second row at the
- *   deepest flange point along its own surface normal (TARMAC: summed into N along n; see phaseA).
+ *   N = max(0, Kz δ + cz δ') at Pc along n; rim-flange pinch as a second row: a conservative column potential of
+ *   the flange circle (R0 - bottom) per lane, k_rim on the pinched area (equals TARMAC's k_rim (δmax - bottom) on a
+ *   flat road) + ramped c_rim damping, acting along its gradient (TARMAC: deepest ray, summed into N along n).
  * Tangential (physics.js):
  *   brush (carcass) deflection b, F = K b_new + c_d s_new, b_new = (b + h s)/(1 + h |vx| / σ),
  *   σ = σ_ref g, g = max(0.05, 2ρ/(1+ρ)), ρ = A a / (A a)_ref: tread brush in series with the carcass.

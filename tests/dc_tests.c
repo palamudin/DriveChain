@@ -583,10 +583,11 @@ static void test_assist(void) {
 static double now_s(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return ts.tv_sec + 1e-9 * ts.tv_nsec; }
 static void test_perf(void) {
     FILE* f = csv("perf.csv", "config,us_per_substep,realtime_factor_at_hz");
-    for (int cfg = 0; cfg < 3; cfg++) {
+    for (int cfg = 0; cfg < 5; cfg++) {
         dc_car_params P; car_params(&P); road_t rd = {2};
         if (cfg == 1) for (int a = 0; a < 2; a++) { P.axle[a].tyre.n_rays = 7; P.axle[a].tyre.n_rows = 1; }
-        dc_car* c = mk(&P, cfg == 2 ? &rd : NULL);
+        if (cfg >= 3) for (int a = 0; a < 2; a++) P.axle[a].tyre.model = DC_TYRE_TARMAC;
+        dc_car* c = mk(&P, (cfg == 2 || cfg == 4) ? &rd : NULL);
         double pos[3] = {0, 0, 0}; dc_reset(c, pos, 0, 20);
         dc_input in = {0}; dc_telemetry T; memset(&T, 0, sizeof T); pi_t sp = {0};
         double h = 1.0 / P.substep_hz; int N = 40000;
@@ -596,7 +597,7 @@ static void test_perf(void) {
             dc_set_input(c, &in); dc_substep(c);
         }
         double us = (now_s() - t0) / N * 1e6;
-        const char* nm[3] = {"default 3x13 rays flat", "1x7 rays flat", "3x13 rays rough terrain"};
+        const char* nm[5] = {"default 3x13 rays flat", "1x7 rays flat", "3x13 rays rough terrain", "TARMAC tyre flat", "TARMAC tyre rough terrain"};
         fprintf(f, "%s,%.3f,%.1f\n", nm[cfg], us, 1e6 / us / P.substep_hz);
         note("perf %-26s %.2f us/substep -> %.0fx real time at %.0f Hz (one core)", nm[cfg], us, 1e6 / us / P.substep_hz, P.substep_hz);
         /* budget: >= 4x real time on one core. It was 5x before the tyre's lateral lanes (12 column lanes per tyre
