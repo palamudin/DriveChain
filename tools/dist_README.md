@@ -49,7 +49,7 @@ The console window prints the joysticks it found, which one it picked, and wheth
 ## Maps
 - F6 cycles the proving ground, the circuit and every mesh map in `tracks/` (a folder with a `track.cfg`). The HUD shows the current map; F1 lists its teleport spots.
 - Start on a map directly with `drivechain_demo.exe --set track.layout=<name>` (or `track.layout = <name>` in `demo.ini`).
-- Mesh maps drive on the map's own collision triangles. Walls are drawn but not solid yet (no body/wall contact in the core). See `docs/MESH_TRACKS.md`.
+- Mesh maps drive on the map's own collision triangles. Walls are drawn but not solid on mesh maps yet (the map query returns ground triangles only; the core's body contact acts on the ground and kerbs). See `docs/MESH_TRACKS.md`.
 
 ## Gamepad steering (`[gamepad]`)
 - By default the stick does not set the rim angle. It sets where your **hands** want the rim, and finite-strength arms push the rim there.

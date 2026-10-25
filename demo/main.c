@@ -22,6 +22,36 @@ __declspec(dllimport) unsigned int __stdcall timeEndPeriod(unsigned int uPeriod)
 #endif
 
 static char MAP_TITLE[128] = "PROVING GROUND";
+/* map titles may be UTF-8 (local names: S/s caron, c acute, ...). raylib's built-in font is ASCII only, so titles are
+   drawn with a TTF that has Latin-1 + Latin Extended-A (fonts/DejaVuSans.ttf next to the exe, or demo/fonts/ from the
+   repo); without it they are folded to ASCII. */
+static Font TFONT; static int TFONT_OK = 0;
+static void title_font_load(void) {
+    static int cp[95 + 96 + 128]; int n = 0;
+    for (int c = 32; c < 127; c++) cp[n++] = c;
+    for (int c = 0xA0; c < 0x100; c++) cp[n++] = c;
+    for (int c = 0x100; c < 0x180; c++) cp[n++] = c;
+    const char* paths[] = {"fonts/DejaVuSans.ttf", "demo/fonts/DejaVuSans.ttf", "../demo/fonts/DejaVuSans.ttf"};
+    for (int i = 0; i < 3 && !TFONT_OK; i++) if (FileExists(paths[i])) {
+        TFONT = LoadFontEx(paths[i], 48, cp, n); TFONT_OK = TFONT.texture.id != 0;
+        if (TFONT_OK) SetTextureFilter(TFONT.texture, TEXTURE_FILTER_BILINEAR); }
+}
+static void utf8_ascii(const char* in, char* out, size_t n) {   /* fold accents for the ASCII-only font */
+    static const char* L1 = "AAAAAAACEEEEIIIIDNOOOOOxOUUUUYTsaaaaaaaceeeeiiiidnooooo/ouuuuyty";
+    static const char* XA = "AaAaAaCcCcCcCcDdDdEeEeEeEeEeGgGgGgGgHhHhIiIiIiIiIiJjJjKkkLlLlLlLlLlNnNnNnnNnOoOoOoOoRrRrRrSsSsSsSsTtTtTtUuUuUuUuUuUuWwYyYZzZzZzs";
+    size_t o = 0; const char* p = in;
+    while (*p && o + 2 < n) {
+        if ((unsigned char)*p < 0x80) { out[o++] = *p++; continue; }
+        int len = 0; int c = GetCodepoint(p, &len); if (len < 1) len = 1;
+        char r = '?'; if (c >= 0xC0 && c < 0x100) r = L1[c - 0xC0]; else if (c >= 0x100 && c < 0x180) r = XA[c - 0x100];
+        out[o++] = r; p += len;
+    }
+    out[o] = 0;
+}
+static void draw_title(const char* t, int x, int y, int size, Color col) {
+    if (TFONT_OK) { DrawTextEx(TFONT, t, (Vector2){(float)x, (float)y - size * 0.1f}, (float)size * 1.05f, 1.0f, col); return; }
+    char a[256]; utf8_ascii(t, a, sizeof a); DrawText(a, x, y, size, col);
+}
 static cfg_t CFG; static track_t TRK; static audio_t AUD; static sim_t SIM;
 static pthread_mutex_t MTX = PTHREAD_MUTEX_INITIALIZER;
 static sim_snap VIEW;              /* render copy */
@@ -456,7 +486,7 @@ static void draw_hud(const sim_snap* V, const dc_car_params* P, int sw_, int sh_
         DrawLine(x0, gy + gh / 2 - (int)(H_sw[i0] * gh / 2 / 6.0), x1, gy + gh / 2 - (int)(H_sw[i1] * gh / 2 / 6.0), SKYBLUE);
     }
     DrawText("FFB N m (y) / steer (b)", gx, gy + gh + 2, 10, RAYWHITE);
-    DrawText(TextFormat("map: %s  (F6 next)", MAP_TITLE), 10, sh_ - 34, 12, (Color){255, 220, 120, 220});
+    draw_title(TextFormat("map: %s  (F6 next)", MAP_TITLE), 10, sh_ - 34, 12, (Color){255, 220, 120, 220});
     DrawText("keys: 1-9,0 spots  F1 spot list  F6 map  arrows/WASD drive  A/Z or Q/E shift  C cam  F2 x-ray  F3 hud  F4 forces  H assist  P puncture  R reset  O autopilot  G plug-in driver  Space handbrake  LShift clutch",
              10, sh_ - 18, 12, (Color){230, 230, 230, 200});
     (void)sw_;
@@ -487,7 +517,7 @@ static void scan_maps(const char* cur) {
     if (CUR_MAP < 0 && NMAPS < 32) { snprintf(MAPS[NMAPS], 128, "%s", cur); CUR_MAP = NMAPS++; }   /* a map given by directory */
 }
 static void set_map_title(void) {
-    if (TRK.layout == TRACK_MESH) { snprintf(MAP_TITLE, sizeof MAP_TITLE, "%s", TRK.name); for (char* c = MAP_TITLE; *c; c++) if (*c >= 'a' && *c <= 'z') *c -= 32; }
+    if (TRK.layout == TRACK_MESH) { snprintf(MAP_TITLE, sizeof MAP_TITLE, "%s", TRK.name); }   /* the map's own display name, as written */
     else snprintf(MAP_TITLE, sizeof MAP_TITLE, "%s", TRK.layout == TRACK_PROVING ? "PROVING GROUND" : "CIRCUIT");
 }
 /* spot list overlay: shown at start for ~10 s (fades), F1 toggles */
@@ -495,7 +525,7 @@ static int HELP_ON = 1, HELP_STICKY = 0; static double HELP_T0 = 0;
 static void draw_spot_help(int sw_, int sh_, float a) {
     int w = 360, h = 30 + 22 * TRK_NSPOT + 26, x = sw_ - w - 16, y = 70; (void)sh_;
     DrawRectangle(x, y, w, h, (Color){10, 20, 30, (unsigned char)(200 * a)});
-    DrawText(TextFormat("%s  -  teleport keys", MAP_TITLE), x + 12, y + 8, 18, (Color){255, 220, 120, (unsigned char)(255 * a)});
+    draw_title(TextFormat("%s  -  teleport keys", MAP_TITLE), x + 12, y + 8, 18, (Color){255, 220, 120, (unsigned char)(255 * a)});
     for (int i = 0; i < TRK_NSPOT; i++) {
         double px, py, pyaw; if (!track_spot(&TRK, i, &px, &py, &pyaw)) continue;
         char b[96]; snprintf(b, sizeof b, "%d   %s", i < 9 ? i + 1 : 0, spot_label(i));
@@ -592,7 +622,7 @@ static void build_signs(void) {
         char b[64]; snprintf(b, sizeof b, "%d", i < 9 ? i + 1 : 0);
         DrawText(b, 24, 22, 84, YELLOW);
         DrawText(spot_label(i), 100, i == 0 ? 18 : 40, 44, RAYWHITE);
-        if (i == 0) DrawText(TextFormat("%s   keys 1-9,0   F1 list", MAP_TITLE), 100, 76, 26, (Color){220, 255, 220, 255});
+        if (i == 0) draw_title(TextFormat("%s   keys 1-9,0   F1 list", MAP_TITLE), 100, 76, 26, (Color){220, 255, 220, 255});
         EndTextureMode();
         NSIGN = i + 1;
     }
@@ -697,6 +727,7 @@ int main(int argc, char** argv) {
     SetConfigFlags(flags); SetTraceLogLevel(LOG_WARNING);
     printf("[demo] init window\n"); fflush(stdout);
     InitWindow(W, Hh, "DriveChain test drive");
+    title_font_load();
     printf("[demo] window ok\n"); fflush(stdout);
     SetTargetFPS(cfg_int(&CFG, "display.fps_cap", 0));
     SetExitKey(KEY_ESCAPE);

@@ -17,5 +17,8 @@ if [ -f private/miata_ac.ini ]; then cp private/miata_ac.ini $D/cars/; cp -r pri
 for t in private/tracks/*/; do [ -f "$t/track.cfg" ] || continue; n=$(basename "$t"); mkdir -p $D/tracks/$n
   for f in track.cfg collider.bin scenery.bin line.csv pitline.csv CREDITS.md; do [ -f "$t/$f" ] && cp "$t/$f" $D/tracks/$n/; done; done
 sed 's/$/\r/' tools/dist_README.md > $D/README.md
+# private map notes (display name, credits) live with the map, never in tracked files: appended to the dist README only
+for t in private/tracks/*/; do [ -f "$t/DIST_README.md" ] && { printf '\n'; cat "$t/DIST_README.md"; } | sed 's/$/\r/' >> $D/README.md; done
+mkdir -p $D/fonts; cp demo/fonts/DejaVuSans.ttf demo/fonts/LICENSE_DejaVu.txt $D/fonts/
 (cd dist && zip -qr9 drivechain_win64.zip drivechain_win64)
 ls -la dist/drivechain_win64.zip
