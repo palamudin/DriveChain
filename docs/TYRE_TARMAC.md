@@ -159,6 +159,8 @@ Notes on the vehicle results:
   tested) laps cleanly with no spin. From the off-line start the envelope tyre recovers and TARMAC spins, which
   matches the hands-off result above: TARMAC has a higher Cα/Fz (≈ 22 vs 14 /rad) and so a larger yaw response,
   plus slide decay. The off-line start is kept as a stress case (`--start spot`).
+  Re-checked on the current build: unchanged. The opt-in propD set ([TYRE_DATA.md](TYRE_DATA.md)) laps cleanly from
+  both starts and raises the hands-off recovery limit from below 0.3 to about 0.47 throttle.
 - **Very large single-wheel loads in a spin.** Spikes of 40-90 kN were traced to a wheel sliding sideways into a
   raised concrete kerb with a near-vertical lip of about 22 cm at the track edge. The tyre bottoms and the rim
   contact carries the load, so this is a real rim strike. Wheel and rim damage is not modelled.
