@@ -68,6 +68,13 @@ python3 tools/dcdrive.py run lane_change --tcp 127.0.0.1:7878   # live demo or U
 ```
 `selftest` runs these manoeuvres with pass bounds: skidpad, lane_change, slalom, track_lap, step_steer (angle mode), lift_off and bump_hold (locked hands over a bump). Results go to results/driver/driver_summary.csv, driver_paths.png and driver_events.png.
 
+`lift_off` enters the 40 m skidpad circle at ≤ 30 km/h and ramps the speed target to the test speed (default 55 km/h,
+0.60 g) over 8 s, holds 4 s, then lifts. It reports `pre_lift_beta_deg`, `pre_lift_sw_range_deg` and `pre_lift_ok`
+(|β| < 5° and SW range < 20° over the last second before the lift). An earlier version reset the car directly at
+speed on the circle: the path driver was still oscillating at the lift, and at 58–60 km/h that turn-in transient alone
+spun the car, in both cores and with both tyres. With the ramp-in entry, 50–60 km/h runs show post-lift β 1.0–2.0° and
+no spin for MB and legacy cores and for the brush and TARMAC tyres.
+
 ## Unity
 - Add `DriveChainDriverBridge` next to `DriveChain` (unity/DriveChainDriverBridge.cs). It listens on 7878, G toggles it, and it speaks the same protocol (`hello/info, drive, engage, path, get, stream, quit`).
 - The engine-independent `DriverBridge` class is tested by `unity/AbiTest.cs` (TCP loopback: drives a 2 m line change, checks takeover and rejects bad modes) under `make unitytest`.
