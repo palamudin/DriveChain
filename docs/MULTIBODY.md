@@ -39,6 +39,27 @@ symplectic position update. About 130 µs per substep at 2 kHz on one core: real
   `mbcar_tests <car> energy`, which covers drive and lift-off, steer and release, and heave on both tyre models.
   `mbcompare` reports `health_min_step_dissipation` and `health_min_step_at`; set `DTRACE=<J>` to trace the
   steps that fall below it.
+- **Proposal propS, brush carcass store as ∫F·de (opt-in, `tyre_carcass_store = 1` in `[front]`/`[rear]`; default 0).**
+  The default store ½k·e² is the elastic energy of a linear carcass. Once the brush strips slide, the force is below
+  k·e, so ½k·e² overstates the store. When a partially sliding carcass unloads, the audit then reports created energy.
+  The worst case is a driveline shock: hatch_fwd at 8 m/s, reset straight into 2nd at full throttle, with the engine
+  at idle against road-speed wheels. That shows −2.17 J in one 10 ms step (−21 J with damping off).
+  propS stores the work the brush force does along the straight ray 0 → (e_x, e_y), in closed form per strip (see
+  `brush_store` in dc_tyre.c). It equals ½k·e² at small slip, is less in partial sliding and is passive for pure
+  slip. The twist term ½k_t·φ² is unchanged and the camber thrust offset is not counted.
+  - **Effect on handling: none.** The store is energy book-keeping only; forces never read it. All 8 `mbcompare`
+    manoeuvres on mx5_na and hatch_fwd give byte-identical CSVs and metrics. `mbcar_tests <car> energy` checks that
+    the steer/release trajectory is bit-identical.
+  - **Driveline shock:** the worst step goes from −2.17 J to +8.3 J (no step creates energy). With damping off, the
+    transient spike goes from −21 J to +1.5 J. A steady ~−5 J/step remains with damping off in both modes;
+    it is a book-keeping artifact of that debug flag, not of the store.
+  - **Cost:** the store now depends on N, μ and C at fixed e, so normal-load changes move it without any carcass
+    work. The mx5_na bounce worst step goes from −0.00003 J to −0.0003 J (−0.0004 J in the 30 mm heave of the
+    energy section), still inside the 1 mJ bound. hatch_fwd is unchanged at −0.0001 J. The field is an exact
+    gradient only when carcass_kx = carcass_ky, so combined slip is passive only to that approximation.
+  - **Regression:** `mbcar_tests <car> energy` runs every scenario with propS as well, plus the reset shock (propS
+    only, since the default fails it by design). Bound: 1 mJ.
+  - Proposed, not adopted: it makes the audit tighter in partial sliding and slightly looser under load changes.
 
 ## Validation (`make mbcartest`, part of `make test`)
 
