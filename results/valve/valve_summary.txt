@@ -15,7 +15,7 @@
   ok   model 1: repeat after dc_reset is bit-identical
   ok   model 2 step: valve Newton failures 0
   ok   model 2 step: per-step dissipation >= 0 (min 1.38e+00 J)
-  ok   model 2 step: rack/pressure ringing bounded and dying out (worst 100 ms HF rack-force rms 22.8 N, last 250 ms 0.02 N)
+  ok   model 2 step: rack/pressure ringing bounded and dying out (worst 100 ms HF rack-force rms 22.7 N, last 250 ms 0.02 N)
   info model 0 step: worst 100 ms HF rack-force rms 30.7 N, last 250 ms 4.97 N
 --- cars/hatch_fwd.ini (assist_rpm_full 800)
   ok   parking at idle: rim torque for 30/60 deg  model0 1.04/2.64  model1 1.05/2.72  (model2 1.12/3.92) N m

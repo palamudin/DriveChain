@@ -29,7 +29,7 @@
 [joint friction] ball joint, isotropic (cone) friction torque 0.4 N m + mu r |F|: spin direction preserved
   spin direction error (cone, not box)                2.085e-14  (limit 1.0e-09)  PASS
   |w| - analytic (10 - 20 t) [rad/s]                  1.202e-10  (limit 1.0e-09)  PASS
-  anisotropic: 1 - cos(impulse, -w_rel) while sliding    4.441e-16  (limit 1.0e-09)  PASS
+  anisotropic: 1 - cos(impulse, -w_rel) while sliding    2.220e-16  (limit 1.0e-09)  PASS
   anisotropic: |impulse| - bound [N m s]              2.168e-16  (limit 1.0e-09)  PASS
 [momentum] two free bodies, revolute + implicit torsion spring element, gyroscopic spin, no gravity
   linear momentum change [N s]                        2.505e-12  (limit 1.0e-10)  PASS
@@ -69,6 +69,6 @@
 [bench] car-sized mechanism: chassis + 4 x (2 arms, knuckle, wheel, link) + 5 steering + 4 ARB + 3 driveline
   bodies 30, joints 41, nodes 67, unknowns 333, factor blocks 2916 doubles
   heap allocations during 4000 steps                  0.000e+00  (limit 0.0e+00)  PASS
-  65.8 us per step (target <= 250 us)
+  89.0 us per step (target <= 250 us)
   step time over 250 us budget [us]                   0.000e+00  (limit 0.0e+00)  PASS
 === ALL PASS (0 failures) ===
