@@ -127,6 +127,7 @@ dc_mbcar* dc_mbcar_create(dc_car* c) {
         int gb[3] = {m->rack, m->pin, m->ch};
         m->j_gear = mb_custom(W, "rack_pinion", 1, 0, 3, gb); W->Jt[m->j_gear].proj = 1;
         int fb[2] = {m->rack, m->ch}; m->j_rfric = mb_custom(W, "rack_fric", 1, 1, 2, fb);
+        m->j_rstop = mb_custom(W, "rack_stop", 1, 1, 2, fb);
         int cb[2] = {m->rim, m->ch}; m->j_cfric = mb_custom(W, "col_fric", 1, 1, 2, cb);
         mb_couple(W, m->inp, m->pin); mb_couple(W, m->rim, m->ch); mb_couple(W, m->rack, m->ch);
     }
@@ -183,6 +184,9 @@ dc_mbcar* dc_mbcar_create(dc_car* c) {
         m->L_dn[i] = pd.Ls; m->MR_dn[i] = fmax(-pd.dL[0], 0.05);
         int bb[2] = {m->wh[i], m->kn[i]};
         m->j_brake[i] = mb_custom(W, "brake", 1, 1, 2, bb);
+        /* bump-stop solid height: unilateral rigid row along the spring line (lower spring seat body vs chassis) */
+        dc_pose ph = p0; dc_kin_solve(k, fmin(c->s_hard[i], 1.0), 0, &ph, 1); m->L_hard[i] = c->s_hard[i] < 1.0 ? ph.Ls : -1;
+        { int hb[2] = {m->lo_body[i], m->ch}; m->j_hard[i] = mb_custom(W, "solid_stop", 1, 1, 2, hb); }
     }
     /* ---------------- anti-roll bars */
     for (int a = 0; a < 2; a++) {
@@ -360,18 +364,20 @@ void dc_mbcar_step(dc_car* c) {
             F = vadd(Fd, vadd(Ff, Fr));
             T = vadd(vcross(vsub(pd, Ch->x), Fd), vadd(vcross(vsub(pf, Ch->x), Ff), vcross(vsub(pr, Ch->x), Fr)));
         }
+        F_chx = F; T_chx = T;   /* aero only in the external-work term: the ground is stationary, so body-contact work
+                                   is internal and its crush/scrape loss appears in the audited residual (dissipation) */
+        m->pe_body = 0;
         for (int k = 0; k < P->nbodypts; k++) {
             v3 X = vadd(Kp, mv(&R, vsub(V3(P->bodypt[k][0], P->bodypt[k][1], P->bodypt[k][2]), V3(P->sprung_cg[0], P->sprung_cg[1], P->sprung_cg[2]))));
-            v3 n; double gr; double hgt = dc_road_eval(c, X.x, X.y, &n, &gr);
-            double pen = (hgt - X.z) * n.z; if (pen <= 0) continue;
+            v3 n; double gr; double pen = dc_body_depth(c, X, &n, &gr); if (pen <= 0) continue;
             v3 vp = mb_point_vel(Ch, X); double vn = vdot(vp, n);
-            double N = P->body_k * pen - (nodamp ? 0 : P->body_c * vn); if (N < 0) N = 0;
+            double pe_k, wd_, Nd_; double N = dc_body_normal(c, k, pen, vn, nodamp, &pe_k, &wd_, &Nd_); (void)wd_; (void)Nd_; m->pe_body += pe_k; if (N <= 0) continue;   /* MB: dissipation is the audited energy residual */
             v3 vt = vsub(vp, vscl(n, vn)); double vtl = vlen(vt);
             v3 Fc = vscl(n, N);
             if (vtl > 1e-9 && !(c->dbg & DC_DBG_NO_FRICTION)) Fc = vsub(Fc, vscl(vt, P->body_mu * gr * N * tanh(vtl / 0.05) / vtl));
             F = vadd(F, Fc); T = vadd(T, vcross(vsub(X, Ch->x), Fc));
         }
-        Ch->F = vadd(Ch->F, F); Ch->T = vadd(Ch->T, T); F_chx = F; T_chx = T;
+        Ch->F = vadd(Ch->F, F); Ch->T = vadd(Ch->T, T);
         Fext = vadd(Fext, F); Text = vadd(Text, vadd(vcross(Ch->x, F), T));
     }
     /* engine: combustion torque on the crank, reaction on the block (chassis) */
@@ -402,6 +408,13 @@ void dc_mbcar_step(dc_car* c) {
         mb_joint* F = &W->Jt[m->j_rfric]; memset(F->J, 0, sizeof F->J);
         F->J[0][0][0] = yw.x; F->J[0][0][1] = yw.y; F->J[0][0][2] = yw.z; row_pt(W, m->ch, xr, yw, -1, F->J[0][1]);
         F->lo[0] = nodamp ? 0 : -P->rack_friction * h; F->hi[0] = -F->lo[0]; F->t[0] = 0;
+        /* rack end stop solid (steel on steel): rigid inelastic unilateral row, speculative */
+        mb_joint* Rs = &W->Jt[m->j_rstop]; memcpy(Rs->J, F->J, sizeof Rs->J);
+        double rgap = c->rack_hard - fabs(r);
+        if (P->rack_stop_solid > 0 && rgap < 0.01) {
+            double tt = rgap > 0 ? rgap / h : 0;
+            if (r >= 0) { Rs->t[0] = tt; Rs->lo[0] = -1e12; Rs->hi[0] = 0; } else { Rs->t[0] = -tt; Rs->lo[0] = 0; Rs->hi[0] = 1e12; }
+        } else { Rs->lo[0] = Rs->hi[0] = 0; Rs->t[0] = 0; }
         mb_joint* G = &W->Jt[m->j_cfric]; memset(G->J, 0, sizeof G->J);
         v3 er = mv(&R, m->e_rim); row_an(er, 1, G->J[0][0]); row_an(er, -1, G->J[0][1]);
         G->lo[0] = nodamp ? 0 : -P->column_friction * h; G->hi[0] = -G->lo[0]; G->t[0] = 0;
@@ -441,7 +454,7 @@ void dc_mbcar_step(dc_car* c) {
         B->lo[0] = -cap; B->hi[0] = cap;
     }
     /* ---- 5. force elements */
-    double pe = 0;
+    double pe = m->pe_body;   /* body-contact elastic store (its crush loss then appears in the audited residual) */
     for (int i = 0; i < 4; i++) {
         const dc_kin* k = &c->K[i]; const dc_axle_params* A = &P->axle[i / 2];
         mb_body* Lb = &W->B[m->lo_body[i]];
@@ -470,6 +483,14 @@ void dc_mbcar_step(dc_car* c) {
             if (!nodamp && Ld > 0) { double cw_ = 0.4 * sqrt(rate * mcx); Fb += cw_ * (-Ld / MR) / MR; cc -= cw_ / (MR * MR); }
         }
         m->Fs[i] = Fs; m->Fd[i] = Fd; m->Fb[i] = Fb * (L < m->L_up[i] ? m->MR_up[i] : m->MR_dn[i]);
+        {   /* solid stop: rigid inelastic unilateral row, speculative (closing speed <= gap/h, never past it) */
+            mb_joint* Hj = &W->Jt[m->j_hard[i]]; memset(Hj->J, 0, sizeof Hj->J);
+            double gap = L - m->L_hard[i];
+            if (m->L_hard[i] > 0 && gap < 0.03) {
+                for (int q = 0; q < 6; q++) { Hj->J[0][0][q] = jj[0][q]; Hj->J[0][1][q] = jj[1][q]; }
+                Hj->t[0] = gap > 0 ? -gap / h : 0; Hj->lo[0] = 0; Hj->hi[0] = 1e12;
+            } else { Hj->lo[0] = Hj->hi[0] = 0; Hj->t[0] = 0; }
+        }
         mb_elem_add(W, 2, bb, jj, Fs + Fd + Fb, kk, cc);
         c->pose[i].lo = mtv(&R, vsub(plo, Kp)); c->pose[i].Ls = L;
     }
@@ -602,7 +623,7 @@ void dc_mbcar_step(dc_car* c) {
         c->Fc[i] = t->F; c->Pc[i] = t->p;
     }
     /* external power sources (solved velocities): combustion torque, driver's hands, pump-powered assist,
-       aero + body contacts. Everything else (dampers, Coulomb rows, orifices, LSD, integrator) is dissipation. */
+       aero. Everything else (body contacts, dampers, Coulomb rows, orifices, LSD, integrator) is dissipation. */
     {
         v3 ax = mv(&R, EX);
         Win += h * Te * (vdot(W->B[m->eng].w, ax) - vdot(Ch->w, ax));
@@ -677,7 +698,7 @@ void dc_mbcar_step(dc_car* c) {
     double Eprev = T->kinetic + T->potential;
     double Enew = ke + pg + pe + tpe;
     /* internal dissipation = external work in - stored energy change (dampers, friction, valve, tyre carcass
-       damping; aero and body-contact work are not in Win, so they show up here too) */
+       damping; body-contact crush/scrape work is not in Win, so it shows up here too) */
     /* audit over the previous step: E(start k-1) + W_in(k-1) - E(start k) */
     if (m->audit_init) c->dissipated += m->E_audit - E_start + m->W_audit;
     m->E_audit = E_start; m->W_audit = Win; m->audit_init = 1; (void)Eprev; (void)Enew;
@@ -719,7 +740,7 @@ void dc_mbcar_step(dc_car* c) {
         Wt->patch_half_len = t->a_eff; Wt->deflection = t->delta_eff; Wt->pressure = c->ty[i].pressure; Wt->rim_force = t->Fr;
         Wt->mu = t->mu_eff; Wt->sliding = fmin(t->lam, 1.0);
         Wt->travel = c->s[i]; Wt->travel_vel = c->sd[i];
-        Wt->spring_force = m->Fs[i]; Wt->damper_force = m->Fd[i]; Wt->bumpstop_force = m->Fb[i];
+        Wt->spring_force = m->Fs[i]; Wt->damper_force = m->Fd[i]; Wt->bumpstop_force = m->Fb[i] + W->Jt[m->j_hard[i]].lam[0] / h * m->MR_up[i];
         v3 ac = mv(&p->R, k->spin_axis_u);
         Wt->steer = atan2(-ac.x, ac.y); Wt->toe = Wt->steer;
         Wt->camber = t->contact ? ((i & 1) ? -t->camber_l : t->camber_l) : ((i & 1) ? asin(ac.z) : asin(-ac.z));

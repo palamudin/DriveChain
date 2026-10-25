@@ -49,9 +49,11 @@ struct dc_car {
     int dbg;
     /* derived constants */
     double m_s, m_c[4]; v3 I_s_body, I_c_body[4];
-    double s_dn[4], s_up[4];       /* effective droop / bump-stop travel (stops pulled inside the linkage's valid range) */
+    double s_dn[4], s_up[4], s_hard[4]; /* s_hard: bump stop solid (rigid unilateral limit), inside the linkage's valid range */
+    double hard_f[4];              /* solid-stop reaction this step, wheel units (telemetry); s_dn/s_up: effective droop / bump-stop travel (pulled inside the linkage's valid range) */
     int kin_warn;                  /* bit i: corner i stops were pulled in (linkage toggles inside configured travel) */
-    double r_p, rack_max, r_k_b[2];  /* pinion radius, rack travel, brush stiffness per axle */
+    double r_p, rack_max, rack_hard, r_k_b[2];  /* pinion radius, rack travel, rigid end-stop (steel on steel), brush stiffness per axle */
+    double rack_hard_f;                         /* rigid rack end-stop reaction this step, N (telemetry) */
     double static_fz[4];
     v3 col_axis;                     /* steering column axis (chassis frame) */
     double I_sw, I_pin, m_rack;
@@ -65,6 +67,7 @@ struct dc_car {
     dc_pose pose[4];
     double t; long long tick; double h; double acc_dt;
     double dissipated;
+    double body_set[DC_MAX_BODYPTS], body_w, body_pe; int body_audit; /* permanent crush of each body contact point, m (elastic-plastic body contact) */
     /* per-step outputs */
     dc_telemetry tel;
     v3 Fc[4], Pc[4];                 /* contact force and application point (world) */
@@ -84,6 +87,10 @@ void dc_kin_full(const dc_kin* k, double s, double r, double sd, double rd, dc_p
 /* road */
 double dc_road_eval(const dc_car* c, double x, double y, v3* n, double* grip);
 double dc_road_height(const dc_car* c, double x, double y, double* grip);   /* height + grip only (no normal) */
+/* body point vs road: minimum-translation depth (vertical-to-surface or horizontal-to-face, whichever is smaller);
+   returns depth > 0 when inside, with *n the push-out direction */
+double dc_body_depth(const dc_car* c, v3 X, v3* n, double* grip);
+double dc_body_normal(dc_car* c, int k, double pen, double vn, int nodamp, double* pe, double* wdis, double* Nd);   /* wdis: crush work this step (J), Nd: damping part of N */
 /* params */
 void dc_params_finalize(dc_car_params* p);
 #endif

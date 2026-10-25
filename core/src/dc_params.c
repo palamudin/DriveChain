@@ -31,7 +31,7 @@ void dc_default_params(dc_car_params* p) {
         default_tyre(&A->tyre);
         A->unsprung_mass = 30; set3(A->upright_inertia, 0.6, 0.5, 0.6);
         A->damp_fast_bump = 0; A->droop_rate = 1.0e6;   /* damper top-out (rebound) bumper: stiff */
-        A->bumpstop_rate = 40e3;
+        A->bumpstop_rate = 40e3; A->bumpstop_solid = 0.04;
     }
     dc_axle_params* F = &p->axle[0];
     F->steered = 1; F->driven = 0;
@@ -66,7 +66,7 @@ void dc_default_params(dc_car_params* p) {
     p->steer_ratio = 15.0; p->steer_lock_deg = 504;
     p->rack_mass = 3.0; p->sw_inertia = 0.035; p->column_inertia = 0.002;
     p->torsion_k = 1500; p->torsion_c = 0.15; p->rack_friction = 60; p->column_friction = 0.15;
-    p->rack_stop_k = 2e6; p->rack_stop_c = 3e3;
+    p->rack_stop_k = 2e6; p->rack_stop_c = 3e3; p->rack_stop_solid = 0.003;
     p->assist = 1; p->assist_area = 8.8e-4; p->assist_pmax = 7e6; p->assist_tref = 3.5;
     p->assist_flow = 1.0e-4; p->assist_rpm_full = 1500; p->assist_damping = 1500; p->assist_backdrive = 0.5; p->assist_torsion_k = 115;
 
@@ -85,7 +85,7 @@ void dc_default_params(dc_car_params* p) {
     double bp[8][3] = {{1.9, 0.6, -0.30}, {1.9, -0.6, -0.30}, {-1.9, 0.6, -0.28}, {-1.9, -0.6, -0.28},
                        {0.5, 0.75, -0.32}, {0.5, -0.75, -0.32}, {-0.6, 0.75, -0.32}, {-0.6, -0.75, -0.32}};
     for (int i = 0; i < 8; i++) set3(p->bodypt[i], bp[i][0], bp[i][1], bp[i][2]);
-    p->body_k = 2e5; p->body_c = 4e3; p->body_mu = 0.5;
+    p->body_k = 5e6; p->body_c = 4e3; p->body_mu = 0.5; p->body_fy = 4e4; p->body_kh = 6e5;
     p->solver = DC_SOLVER_REDUCED;
     /* multibody part data: documented best estimates for a 1990 NA where no public measurement exists (docs/MULTIBODY.md) */
     dc_mb_params* M = &p->mb;
@@ -117,7 +117,7 @@ static const fld car_f[] = {
     CF("steer_ratio", steer_ratio, 1), CF("steer_lock_deg", steer_lock_deg, 1), CF("rack_mass", rack_mass, 1),
     CF("sw_inertia", sw_inertia, 1), CF("column_inertia", column_inertia, 1), CF("torsion_k", torsion_k, 1),
     CF("torsion_c", torsion_c, 1), CF("rack_friction", rack_friction, 1), CF("column_friction", column_friction, 1),
-    CF("rack_stop_k", rack_stop_k, 1), CF("rack_stop_c", rack_stop_c, 1),
+    CF("rack_stop_k", rack_stop_k, 1), CF("rack_stop_c", rack_stop_c, 1), CF("rack_stop_solid", rack_stop_solid, 1),
     CI("assist", assist), CF("assist_area", assist_area, 1), CF("assist_pmax", assist_pmax, 1), CF("assist_tref", assist_tref, 1),
     CF("assist_flow", assist_flow, 1), CF("assist_rpm_full", assist_rpm_full, 1), CF("assist_damping", assist_damping, 1), CF("assist_backdrive", assist_backdrive, 1),
     CF("assist_torsion_k", assist_torsion_k, 1),
@@ -128,7 +128,7 @@ static const fld car_f[] = {
     CF("diff_preload", diff_preload, 1), CF("awd_front_split", awd_front_split, 1), CF("center_lock", center_lock, 1),
     CF("cda", cda, 1), CF("cla_front", cla_front, 1), CF("cla_rear", cla_rear, 1), CF("aero_front_x", aero_front_x, 1),
     CF("aero_rear_x", aero_rear_x, 1), CF("aero_z", aero_z, 1),
-    CF("body_k", body_k, 1), CF("body_c", body_c, 1), CF("body_mu", body_mu, 1),
+    CF("body_k", body_k, 1), CF("body_c", body_c, 1), CF("body_mu", body_mu, 1), CF("body_fy", body_fy, 1), CF("body_kh", body_kh, 1),
     CF("diff_viscous", diff_viscous, 1), CI("solver", solver),
     CF("mb_uca_mass", mb.uca_mass, 2), CF("mb_lca_mass", mb.lca_mass, 2), CF("mb_knuckle_mass", mb.knuckle_mass, 2),
     CF("mb_wheel_mass", mb.wheel_mass, 2), CF("mb_knuckle_inertia", mb.knuckle_inertia, 6), CF("mb_wheel_inertia_t", mb.wheel_inertia_t, 2),
@@ -151,7 +151,7 @@ static const fld axle_f[] = {
     AF("wheel_rate", wheel_rate, 1), AF("spring_rate", spring_rate, 1), AF("preload_travel", preload_travel, 1),
     AF("damp_bump", damp_bump, 1), AF("damp_fast_bump", damp_fast_bump, 1), AF("damp_bump_thr", damp_bump_thr, 1),
     AF("damp_reb", damp_reb, 1), AF("damp_fast_reb", damp_fast_reb, 1), AF("damp_reb_thr", damp_reb_thr, 1),
-    AF("bumpstop_up", bumpstop_up, 1), AF("bumpstop_dn", bumpstop_dn, 1), AF("bumpstop_rate", bumpstop_rate, 1),
+    AF("bumpstop_up", bumpstop_up, 1), AF("bumpstop_dn", bumpstop_dn, 1), AF("bumpstop_rate", bumpstop_rate, 1), AF("bumpstop_solid", bumpstop_solid, 1),
     AF("droop_rate", droop_rate, 1), AF("arb", arb, 1), AF("unsprung_mass", unsprung_mass, 1),
     AF("upright_inertia", upright_inertia, 3), AF("brake_torque", brake_torque, 1), AF("handbrake_torque", handbrake_torque, 1),
     TF("tyre_radius", radius), TF("tyre_rim_radius", rim_radius), TF("tyre_width", width), TF("tyre_spin_inertia", spin_inertia),

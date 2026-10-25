@@ -97,6 +97,7 @@ DC_API dc_car* dc_create(const dc_car_params* pin) {
         if (fabs(d) > 1e-9) c->r_p = 1.0 / (P->steer_ratio * d);
     }
     c->rack_max = fabs(c->r_p) * P->steer_lock_deg * M_PI / 180.0;
+    c->rack_hard = c->rack_max + (P->rack_stop_solid > 0 ? P->rack_stop_solid : 1.0);
     /* valid travel range of each linkage. A multi-link/DWB can pass through a toggle (rank loss of the link
        constraint Jacobian) inside the configured droop/bump travel; the dynamics would then see unbounded
        Jacobians. Scan by continuation (also at full lock for steered corners) and, if needed, pull the stop
@@ -109,7 +110,7 @@ DC_API dc_car* dc_create(const dc_car_params* pin) {
         for (int dir = -1; dir <= 1; dir += 2) {
             double lim = (dir < 0 ? A->bumpstop_dn : A->bumpstop_up) + 0.06, bad = 1e9;
             for (int ir = 0; ir < nr; ir++) {
-                double r = ir == 0 ? 0 : (ir == 1 ? c->rack_max : -c->rack_max);
+                double rl = P->rack_stop_solid > 0 ? c->rack_hard : c->rack_max, r = ir == 0 ? 0 : (ir == 1 ? rl : -rl);
                 dc_pose p = c->pose[i];
                 for (double s = 0; s <= lim + 1e-9; s += 0.002) {
                     int ok = dc_kin_solve(&c->K[i], dir * s, r, &p, 1);
@@ -122,6 +123,9 @@ DC_API dc_car* dc_create(const dc_car_params* pin) {
                 double v = bad - 0.02 - (dir < 0 ? 0 : 0.04); if (v < 0.01) v = 0.01;
                 *st = v; c->kin_warn |= 1 << i;
             }
+            /* solid stop: the bump rubber goes solid bumpstop_solid past contact (then metal-to-metal); always
+               >= 20 mm inside the scanned valid range, so the linkage can never be driven into its toggle */
+            if (dir > 0) c->s_hard[i] = A->bumpstop_solid > 0 ? fmin(*st + A->bumpstop_solid, fmin(bad, lim) - 0.02) : 1e9;
         }
     }
     c->I_sw = P->sw_inertia + P->column_inertia;
@@ -183,9 +187,10 @@ DC_API void dc_reset(dc_car* c, const double pos[3], double yaw, double speed) {
     c->q = qexp(V3(0, 0, yaw));
     m3 R = qtom(c->q);
     c->v = mv(&R, V3(speed, 0, 0)); c->w = V3(0, 0, 0);
-    c->we = c->P.idle_rpm * M_PI / 30; c->wg = 0; c->engine_on = 1; c->have_mt = 0; c->proj_work = 0;
+    c->we = c->P.idle_rpm * M_PI / 30; c->wg = 0; c->engine_on = 1; c->have_mt = 0; c->proj_work = 0; c->body_audit = 0; c->body_w = 0; c->body_pe = 0;
     memset(c->lam, 0, sizeof c->lam);
     c->t = 0; c->tick = 0; c->dissipated = 0; c->acc_dt = 0;
+    memset(c->body_set, 0, sizeof c->body_set);
     memset(&c->tel, 0, sizeof c->tel);
     if (c->mb) dc_mbcar_reset(c);
 }
@@ -656,22 +661,27 @@ DC_API void dc_substep(dc_car* c) {
         ch->T = vadd(ch->T, vadd(vcross(pd, Fd), vadd(vcross(pf, Ff), vcross(pr, Fr))));
     }
     /* body/ground sliding contacts */
-    double pe_body = 0;
+    double pe_body = 0; v3 bF = V3(0, 0, 0), bT = V3(0, 0, 0);
     for (int k = 0; k < P->nbodypts; k++) {
         v3 rp = mv(&R, V3(P->bodypt[k][0] - P->sprung_cg[0], P->bodypt[k][1] - P->sprung_cg[1], P->bodypt[k][2] - P->sprung_cg[2]));
         v3 X = vadd(c->x, rp); v3 n; double gr;
-        double hgt = dc_road_eval(c, X.x, X.y, &n, &gr);
-        double pen = (hgt - X.z) * n.z;
+        double pen = dc_body_depth(c, X, &n, &gr);
         if (pen <= 0) continue;
         v3 vp = vadd(c->v, vcross(c->w, rp));
         double vn = vdot(vp, n);
-        double N = P->body_k * pen - ((c->dbg & DC_DBG_NO_DAMPING) ? 0 : P->body_c * vn); if (N < 0) N = 0;
-        pe_body += 0.5 * P->body_k * pen * pen / fmax(n.z, 0.1);
+        double pe_k, wd, Nd; double N = dc_body_normal(c, k, pen, vn, (c->dbg & DC_DBG_NO_DAMPING) != 0, &pe_k, &wd, &Nd); (void)wd; (void)Nd;
+        pe_body += pe_k; if (N <= 0) continue;
         v3 vt = vsub(vp, vscl(n, vn)); double vtl = vlen(vt);
         v3 F = vscl(n, N);
         if (vtl > 1e-9 && !(c->dbg & DC_DBG_NO_FRICTION)) F = vsub(F, vscl(vt, P->body_mu * gr * N * tanh(vtl / 0.05) / vtl));
-        ch->F = vadd(ch->F, F); ch->T = vadd(ch->T, vcross(rp, F));
+        ch->F = vadd(ch->F, F); ch->T = vadd(ch->T, vcross(rp, F)); bF = vadd(bF, F); bT = vadd(bT, vcross(rp, F));
     }
+    /* body-contact loss (crush, damping, scrape) for the energy audit: the work the contact forces did on the chassis
+       over the last step (with the velocities the integrator actually moved it by) minus the change of the elastic
+       energy they store. Exact for the discrete step, so a contact that returned more than it took shows up as a
+       negative loss instead of hiding in an idealised formula. */
+    if (c->body_audit) c->dissipated += -c->body_w - (pe_body - c->body_pe);
+    c->body_pe = pe_body; c->body_audit = 1;
     Fext = ch->F; Text = vadd(vcross(c->x, ch->F), ch->T);
     /* driveline reactions on the housing + engine block reaction + rotor gyroscopic torques */
     v3 xw = mv(&R, EX);
@@ -777,11 +787,51 @@ DC_API void dc_substep(dc_car* c) {
     /* 7. integrate (symplectic Euler) */
     for (int i = 0; i < NQ; i++) u[i] += h * ud[i];
     if (c->dbg & DC_DBG_FREEZE_STEER) { u[IR] = 0; u[ISW] = 0; }
+    /* rigid end stops: bump-stop solid height on each travel coordinate and the rack's steel-on-steel end stop.
+       Rigid, inelastic unilateral limits, speculative (a coordinate may close at most its remaining gap this step,
+       never pass it): generalized impulses through the full mass matrix (wheel/rack AND body react, Newton 3),
+       small PGS over the active set; the kinetic energy they remove is dissipated (plastic metal-to-metal). */
+    {
+        int qa[5], na = 0; double sg[5], tg[5];
+        for (int i = 0; i < 4; i++) {
+            c->hard_f[i] = 0;
+            double gap = c->s_hard[i] - c->s[i];
+            if (gap < 0.03) { qa[na] = IS + i; sg[na] = 1; tg[na] = gap > 0 ? gap / h : 0; na++; }
+        }
+        c->rack_hard_f = 0;
+        if (P->rack_stop_solid > 0) {
+            double gap = c->rack_hard - fabs(c->r);
+            if (gap < 0.01) { qa[na] = IR; sg[na] = c->r >= 0 ? 1 : -1; tg[na] = gap > 0 ? gap / h : 0; na++; }
+        }
+        if (na) {
+            double Z[5][NQ], p[5] = {0};
+            for (int a = 0; a < na; a++) {
+                double Mc2[NQ * NQ]; memcpy(Mc2, M, sizeof M);
+                memset(Z[a], 0, sizeof Z[a]); Z[a][qa[a]] = sg[a];
+                if (!dc_chol_solve(NQ, Mc2, Z[a])) { memcpy(Mc2, M, sizeof M); memset(Z[a], 0, sizeof Z[a]); Z[a][qa[a]] = sg[a]; dc_solve(NQ, Mc2, Z[a]); }
+            }
+            /* row velocity v_a = sg_a u[q_a] <= t_a; impulse sg_a p_a e_{q_a}, p_a <= 0 */
+            for (int it = 0; it < 30; it++) {
+                for (int a = 0; a < na; a++) {
+                    double v = sg[a] * u[qa[a]]; for (int b2 = 0; b2 < na; b2++) v += sg[a] * Z[b2][qa[a]] * p[b2];
+                    double d = sg[a] * Z[a][qa[a]]; if (d <= 0) continue;
+                    double np = p[a] - (v - tg[a]) / d; if (np > 0) np = 0; p[a] = np;
+                }
+            }
+            double uo[5]; for (int a = 0; a < na; a++) uo[a] = sg[a] * u[qa[a]];
+            for (int a = 0; a < na; a++) for (int q = 0; q < NQ; q++) u[q] += Z[a][q] * p[a];
+            double dke = 0;   /* KE change of an impulse set = sum p_a (v_old + v_new)/2 */
+            for (int a = 0; a < na; a++) dke += p[a] * 0.5 * (uo[a] + sg[a] * u[qa[a]]);
+            c->dissipated -= dke;
+            for (int a = 0; a < na; a++) { if (qa[a] == IR) c->rack_hard_f = sg[a] * p[a] / h; else c->hard_f[qa[a] - IS] = -p[a] / h; }
+        }
+    }
     v3 vold = c->v, vold_w = c->w;
     c->v = V3(u[0], u[1], u[2]); c->w = V3(u[3], u[4], u[5]);
     for (int i = 0; i < 4; i++) c->sd[i] = u[IS + i];
     c->rd = u[IR]; c->thd = u[ISW];
     c->x = vmad(c->x, c->v, h);
+    c->body_w = h * (vdot(bF, c->v) + vdot(bT, c->w));   /* body-contact work this step (audited next step) */
     c->q = qnorm(qmul(qexp(vscl(c->w, h)), c->q));
     for (int i = 0; i < 4; i++) c->s[i] += h * c->sd[i];
     c->r += h * c->rd; c->th += h * c->thd;
@@ -852,7 +902,7 @@ DC_API void dc_substep(dc_car* c) {
         W->patch_half_len = t->a_eff; W->deflection = t->delta_eff; W->pressure = c->ty[i].pressure; W->rim_force = t->Fr;
         W->mu = t->mu_eff; W->sliding = fmin(t->lam, 1.0);
         W->travel = c->s[i]; W->travel_vel = c->sd[i];
-        W->spring_force = S.Fspring_ax[i]; W->damper_force = S.Fdamp_ax[i]; W->bumpstop_force = S.Fbump_w[i];
+        W->spring_force = S.Fspring_ax[i]; W->damper_force = S.Fdamp_ax[i]; W->bumpstop_force = S.Fbump_w[i] + c->hard_f[i];
         v3 ac = mv(&p->R, k->spin_axis_u);
         W->steer = atan2(-ac.x, ac.y); W->toe = W->steer;
         W->camber = t->contact ? ((i & 1) ? -t->camber_l : t->camber_l) : ((i & 1) ? asin(ac.z) : asin(-ac.z));

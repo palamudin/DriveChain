@@ -88,6 +88,7 @@ typedef struct {
     double damp_bump, damp_fast_bump, damp_bump_thr;    /* wheel-rate N s/m, threshold m/s (wheel) */
     double damp_reb, damp_fast_reb, damp_reb_thr;
     double bumpstop_up, bumpstop_dn, bumpstop_rate;     /* wheel travel from design to stops, wheel rate */
+    double bumpstop_solid;   /* wheel travel from bump-stop contact to its solid height (metal-to-metal: rigid, inelastic), m */
     double droop_rate;              /* stiffness of the rebound (droop) stop, wheel rate */
     double arb;                     /* anti-roll bar, N/m at wheel for unit L-R travel difference */
     double unsprung_mass;           /* per corner: upright+hub+brake+wheel (arms half-lumped) */
@@ -128,6 +129,7 @@ typedef struct {
     double torsion_k, torsion_c;   /* torsion bar / column stiffness N m/rad, damping */
     double rack_friction, column_friction; /* Coulomb N, N m */
     double rack_stop_k, rack_stop_c;
+    double rack_stop_solid;   /* rack travel past stop contact to steel-on-steel (end-stop ring compressed): rigid, inelastic, m */
     int assist;                    /* 0 manual, 1 hydraulic */
     double assist_area, assist_pmax, assist_tref; /* piston area m^2, max pressure Pa, valve torque for half pressure N m */
     double assist_flow, assist_rpm_full, assist_damping; /* pump flow m^3/s at/above rpm_full, hydraulic damping N s/m */
@@ -148,6 +150,7 @@ typedef struct {
     double aero_front_x, aero_rear_x, aero_z;
     /* body ground contact (sliding) points */
     int nbodypts; double bodypt[DC_MAX_BODYPTS][3]; double body_k, body_c, body_mu;
+    double body_fy, body_kh;   /* body crush: yield force N and plastic hardening N/m per point (elastic-plastic, permanent set; body_fy <= 0 = purely elastic) */
     /* integrator */
     double substep_hz;
     double road_resolve;   /* m: tyre/road resolution: the road under the envelope is linearly interpolated between nodes of this pitch, world-anchored along the heading and
