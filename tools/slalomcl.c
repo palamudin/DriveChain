@@ -96,6 +96,9 @@ int main(int argc, char** argv) {
         static double wall_all[NMAX * 8]; int nw = 0;
         for (int r = 0; r < rep; r++) { n = run(car, f[1], f[2], f[3], thz, q); for (int i = 0; i < n; i++) { if (r == 0) wsum[i] = q[i].wall; else wsum[i] = fmin(wsum[i], q[i].wall); } }
         for (int i = 0; i < n; i++) wall_all[nw++] = wsum[i];
+        double fsr = fs; int aligned = 0;
+        if (getenv("SL_ALIGN") && v > 2 && fs > fs0) {   /* sample at the first version's tick instants: separates physics from FFB sampling rate */
+            int k = (int)lround(fs / fs0), m = 0; for (int i = k - 1; i < n; i += k) q[m++] = q[i]; n = m; fs = fs0; aligned = 1; }
         NREC[v - 2] = n;
         int i0 = -1, i1 = n; for (int i = 0; i < n; i++) { if (i0 < 0 && q[i].x >= X0) i0 = i; if (q[i].x <= XE) i1 = i + 1; }
         double se = 0, me = 0, ay = 0; for (int i = i0; i < i1; i++) { double e = q[i].y - ypath(q[i].x); se += e * e; me = fmax(me, fabs(e)); ay = fmax(ay, fabs(q[i].ay)); }
@@ -103,12 +106,12 @@ int main(int argc, char** argv) {
         int per = (int)lround(fs / f0); int i1p = i0 + ((i1 - i0) / per) * per;
         double lag = wrap(phase_at(q, i0, i1p, f0, fs, 0) - phase_at(q, i0, i1p, f0, fs, 1)) * 180 / M_PI;
         double bp[4]; band_pow(q, i0, i1, fs, bp); if (v == 2) memcpy(bp0, bp, sizeof bp);
-        int bw = -1; double dmax = 0; if (fs != fs0) { bw = 0; } const rec_t* b = REC[0]; int nc = n < NREC[0] ? n : NREC[0];
-        for (int i = 0; fs == fs0 && i < nc; i++) { if (bw < 0 && (q[i].x != b[i].x || q[i].y != b[i].y || q[i].r != b[i].r || q[i].rack != b[i].rack)) bw = i; dmax = fmax(dmax, hypot(q[i].x - b[i].x, q[i].y - b[i].y)); }
-        char bws[64]; if (fs != fs0) snprintf(bws, sizeof bws, "n/a (other tick rate)"); else if (bw < 0 && n == NREC[0]) snprintf(bws, sizeof bws, "IDENTICAL"); else snprintf(bws, sizeof bws, "from tick %d, dpos %.3f m", bw < 0 ? nc : bw, dmax);
+        int bw = -1; double dmax = 0; if (fsr != fs0) { bw = 0; } const rec_t* b = REC[0]; int nc = n < NREC[0] ? n : NREC[0];
+        for (int i = 0; fsr == fs0 && i < nc; i++) { if (bw < 0 && (q[i].x != b[i].x || q[i].y != b[i].y || q[i].r != b[i].r || q[i].rack != b[i].rack)) bw = i; dmax = fmax(dmax, hypot(q[i].x - b[i].x, q[i].y - b[i].y)); }
+        char bws[64]; if (fsr != fs0) snprintf(bws, sizeof bws, aligned ? "n/a (sampled at base tick)" : "n/a (other tick rate)"); else if (bw < 0 && n == NREC[0]) snprintf(bws, sizeof bws, "IDENTICAL"); else snprintf(bws, sizeof bws, "from tick %d, dpos %.3f m", bw < 0 ? nc : bw, dmax);
         qsort(wall_all, nw, sizeof(double), cmpd); double wm = 0; for (int i = 0; i < nw; i++) wm += wall_all[i]; wm /= nw;
         printf("%-22s %8.3f %8.3f %8.2f %8.1f %7.3f   %+6.2f %+6.2f %+6.2f %+6.2f   %-24s %5.0f/%5.0f/%5.0f  (%3.0f%% of a core)\n", f[0], sqrt(se / (i1 - i0)), me, lag, lag / 360 / f0 * 1000, ay / 9.81,
-               10 * log10(bp[0] / bp0[0]), 10 * log10(bp[1] / bp0[1]), 10 * log10(bp[2] / bp0[2]), 10 * log10(bp[3] / bp0[3]), bws, wm, wall_all[(int)(0.99 * (nw - 1))], wall_all[nw - 1], wm * fs / 1e4);
+               10 * log10(bp[0] / bp0[0]), 10 * log10(bp[1] / bp0[1]), 10 * log10(bp[2] / bp0[2]), 10 * log10(bp[3] / bp0[3]), bws, wm, wall_all[(int)(0.99 * (nw - 1))], wall_all[nw - 1], wm * fsr / 1e4);
         fflush(stdout);
     }
     return 0;
