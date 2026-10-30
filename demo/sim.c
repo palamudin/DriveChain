@@ -1,4 +1,5 @@
 #include "sim.h"
+#include "roadbake.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -36,11 +37,33 @@ int sim_apply_setup(dc_car_params* P, const char* setup, char* err, int errlen) 
     return 1;
 }
 
+/* [track] bake = 0 (live road) | 32 | 16: bake the road lattice under the drivable band once (prewarm); rebuilt when
+   the track or the lattice pitch changes (F6 map switch rebuilds the track in place) */
+static void bake_sync(sim_t* S) {
+    const int bits = cfg_int(S->cfg, "track.bake", 0);
+    const track_t* T = S->trk;
+    double sig[5] = {T->layout, T->n, T->length, T->n ? T->px[0] + 7 * T->py[0] : 0, bits ? S->P.road_resolve * bits : 0};
+    /* one bake per process, shared by every sim on the same track (test rigs build many cars; the tiles only read) */
+    static roadbake* G_BAKE; static double G_SIG[5];
+    memcpy(S->bake_sig, sig, sizeof sig);
+    if (!bits) { S->bake = NULL; return; }
+    if (G_BAKE && !memcmp(sig, G_SIG, sizeof sig)) { S->bake = G_BAKE; return; }
+    roadbake_free(G_BAKE); G_BAKE = NULL; S->bake = NULL; memcpy(G_SIG, sig, sizeof sig);
+    char err[160] = "";
+    double band = cfg_num(S->cfg, "track.bake_band", T->half_w + T->kerb_w + 1.0);
+    S->bake = roadbake_build(T, S->P.road_resolve, bits, band, err, sizeof err);
+    if (!S->bake) { fprintf(stderr, "[track] bake off: %s\n", err); return; }
+    G_BAKE = S->bake;
+    roadbake_stats st; roadbake_get_stats(S->bake, &st);
+    fprintf(stderr, "[track] baked road: %d-bit, band +-%.1f m, %lld tiles (%lld nodes, %lld exact zeros kept), %.1f MB, %.2f s, max err %.2e m rms %.2e m, %d grip values\n",
+            st.bits, band, st.tiles, st.nodes, st.zeros, st.bytes / 1048576.0, st.bake_s, st.max_err, st.rms_err, st.grip_vals);
+}
 static int make_car(sim_t* S) {
     if (S->car) dc_destroy(S->car);
     S->car = dc_create(&S->P);
     if (!S->car) return 0;
-    dc_set_road(S->car, track_road_fn, S->trk); dc_set_road_flags(S->car, DC_ROAD_HEIGHT_ONLY | DC_ROAD_STATIC);   /* tracks are static */
+    bake_sync(S);
+    if (S->bake) dc_set_road(S->car, roadbake_road_fn, S->bake); else dc_set_road(S->car, track_road_fn, S->trk); dc_set_road_flags(S->car, DC_ROAD_HEIGHT_ONLY | DC_ROAD_STATIC);   /* tracks are static */
     { int nt = (int)cfg_num(S->cfg, "physics.threads", 1); S->threads = nt > 1 ? dc_set_threads(S->car, nt) : 1; }
     if (S->threads > 1) dc_set_pool_opts(S->car, cfg_num(S->cfg, "physics.pool_spin_us", 500), (int)cfg_num(S->cfg, "physics.affinity", -1));   /* opt-in step worker threads (track_road_fn is pure) */
     S->offload_patch = dc_set_offload(S->car, DC_STAGE_PATCH, dc_offload_parse(cfg_str(S->cfg, "offload.patch", "ref")));   /* compute-offload lane (fast model) */
@@ -111,6 +134,7 @@ void sim_reset_at(sim_t* S, double x, double y, double yaw, double speed) {
     double nx, ny, nz, g;
     double h = track_road_fn(S->trk, x, y, &nx, &ny, &nz, &g);
     double pos[3] = {x, y, h + 0.01};
+    { struct roadbake* b0 = S->bake; bake_sync(S); if (S->bake != b0) dc_set_road(S->car, S->bake ? roadbake_road_fn : track_road_fn, S->bake ? (void*)S->bake : (void*)S->trk); }
     dc_reset(S->car, pos, yaw, speed);
     S->kb_sw = 0;
 }
@@ -456,4 +480,4 @@ static void sim_tick_body(sim_t* S, double dt) {
     if (S->ext_hook) S->ext_hook(S, 1);
     if (S->steps_acc >= 2000) { N->us_per_substep = S->us_acc / S->steps_acc; N->rt_factor = 1e6 / (N->us_per_substep * S->P.substep_hz); S->us_acc = 0; S->steps_acc = 0; }
 }
-void sim_shutdown(sim_t* S) { input_close(); if (S->car) dc_destroy(S->car); S->car = NULL; if (S->drv) dc_driver_destroy(S->drv); S->drv = NULL; }
+void sim_shutdown(sim_t* S) { input_close(); S->bake = NULL; if (S->car) dc_destroy(S->car); S->car = NULL; if (S->drv) dc_driver_destroy(S->drv); S->drv = NULL; }

@@ -98,7 +98,7 @@ clean:
 
 # ---- raylib test drive (Linux). raylib is compiled from source by tools/build_raylib.sh into build-deps/linux
 RAYLIB_SRC ?= /workspace/deps/raylib-5.5/src
-DEMO_SRC = demo/main.c demo/sim.c demo/track.c demo/meshtrack.c demo/audio.c demo/input.c demo/cfg.c demo/objload.c demo/drvproto.c demo/net.c
+DEMO_SRC = demo/main.c demo/sim.c demo/roadbake.c demo/track.c demo/meshtrack.c demo/audio.c demo/input.c demo/cfg.c demo/objload.c demo/drvproto.c demo/net.c
 build-deps/linux/libraylib.a:
 	tools/build_raylib.sh $(RAYLIB_SRC) build-deps/linux gcc ar linux
 # Built with DC_PROF (core compiled in): the F7 perf overlay reads the per-stage counters.
@@ -109,7 +109,7 @@ demo: build/drivechain_demo
 .PHONY: demo
 
 # ---- headless closed-loop driver harness (exact demo tick, no SDL / raylib)
-DT_SRC = tools/drivetest.c demo/sim.c demo/track.c demo/meshtrack.c demo/audio.c demo/input.c demo/cfg.c
+DT_SRC = tools/drivetest.c demo/sim.c demo/roadbake.c demo/track.c demo/meshtrack.c demo/audio.c demo/input.c demo/cfg.c
 build/drivetest: $(DT_SRC) demo/*.h build/libdrivechain.a
 	$(CC) -O2 -std=gnu11 -Wall -Wno-misleading-indentation -Wno-unused-parameter -DDEMO_NO_SDL -Icore/include -o $@ $(DT_SRC) build/libdrivechain.a -lm -lpthread
 drivetest: build/drivetest
@@ -119,7 +119,7 @@ fishtest: build/drivetest
 .PHONY: drivetest fishtest
 
 # headless lockstep host for the JSON-lines driver protocol (agent / Python / CI driving)
-DH_SRC = tools/drvhost.c demo/drvproto.c demo/net.c demo/sim.c demo/track.c demo/meshtrack.c demo/audio.c demo/input.c demo/cfg.c
+DH_SRC = tools/drvhost.c demo/drvproto.c demo/net.c demo/sim.c demo/roadbake.c demo/track.c demo/meshtrack.c demo/audio.c demo/input.c demo/cfg.c
 build/meshdiag: tools/meshdiag.c demo/track.c demo/meshtrack.c demo/cfg.c demo/*.h
 	$(CC) -O2 -std=gnu11 -Wall -Wno-misleading-indentation -Wno-unused-parameter -Icore/include -o $@ tools/meshdiag.c demo/track.c demo/meshtrack.c demo/cfg.c -lm
 
@@ -132,7 +132,7 @@ drvtest: build/drvhost
 .PHONY: drvhost drvtest
 
 # fast-model fidelity + timing harness (docs/PERF.md). Built with DC_PROF: the solver-floor ensemble and stage costs need it.
-FC_SRC = tools/fastcheck.c demo/sim.c demo/track.c demo/meshtrack.c demo/audio.c demo/input.c demo/cfg.c
+FC_SRC = tools/fastcheck.c demo/sim.c demo/roadbake.c demo/track.c demo/meshtrack.c demo/audio.c demo/input.c demo/cfg.c
 build/fastcheck: $(FC_SRC) demo/*.h core/src/*.c core/src/*.h core/include/*.h
 	@mkdir -p build
 	$(CC) -O2 -std=gnu11 -Wall -Wno-misleading-indentation -Wno-unused-parameter -DDEMO_NO_SDL -DDC_PROF -DDC_BUILD -Icore/include -Icore/src -o $@ $(FC_SRC) core/src/*.c -lm -lpthread
@@ -141,14 +141,14 @@ fastcheck: build/fastcheck
 .PHONY: fastcheck
 
 # closed-loop response harnesses (docs/BRICKS.md): max steady skidpad speed, closed-loop slalom across model versions
-CL_SRC = demo/sim.c demo/track.c demo/meshtrack.c demo/audio.c demo/input.c demo/cfg.c
+CL_SRC = demo/sim.c demo/roadbake.c demo/track.c demo/meshtrack.c demo/audio.c demo/input.c demo/cfg.c
 build/skidmax build/slalomcl: build/%: tools/%.c $(CL_SRC) demo/*.h core/src/*.c core/src/*.h core/include/*.h
 	@mkdir -p build
 	$(CC) -O2 -std=gnu11 -Wall -Wno-misleading-indentation -Wno-unused-parameter -DDEMO_NO_SDL -DDC_BUILD -Icore/include -Icore/src -o $@ $< $(CL_SRC) core/src/*.c -lm -lpthread
 
 # step-cost regression under drive torque (sweep-cap count is machine independent; the wall budget is per box)
-build/perf_tests: tests/perf_tests.c demo/drvproto.c demo/net.c demo/sim.c demo/track.c demo/meshtrack.c demo/audio.c demo/input.c demo/cfg.c demo/*.h build/libdrivechain.a
-	$(CC) -O2 -std=gnu11 -Wall -Wno-misleading-indentation -Wno-unused-parameter -DDEMO_NO_SDL -Icore/include -o $@ tests/perf_tests.c demo/drvproto.c demo/net.c demo/sim.c demo/track.c demo/meshtrack.c demo/audio.c demo/input.c demo/cfg.c build/libdrivechain.a -lm -lpthread
+build/perf_tests: tests/perf_tests.c demo/drvproto.c demo/net.c demo/sim.c demo/roadbake.c demo/track.c demo/meshtrack.c demo/audio.c demo/input.c demo/cfg.c demo/*.h build/libdrivechain.a
+	$(CC) -O2 -std=gnu11 -Wall -Wno-misleading-indentation -Wno-unused-parameter -DDEMO_NO_SDL -Icore/include -o $@ tests/perf_tests.c demo/drvproto.c demo/net.c demo/sim.c demo/roadbake.c demo/track.c demo/meshtrack.c demo/audio.c demo/input.c demo/cfg.c build/libdrivechain.a -lm -lpthread
 perftest: build/perf_tests
 	mkdir -p results/perf && (./build/perf_tests cars/mx5_na.ini proving && ./build/perf_tests cars/mx5_na.ini circuit) | tee results/perf/perf_summary.txt
 .PHONY: perftest

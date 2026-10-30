@@ -47,6 +47,7 @@ typedef struct sim_s {
     double tick_dt;                       /* host tick (physics.tick_hz; 1 kHz when unset, 240 Hz in demo.ini) */
     double tick_step_us; int tick_n, threads;
     int offload_patch;               /* backend in use for the patch stage (DC_OFFLOAD_*) */
+    struct roadbake* bake; double bake_sig[5];   /* [track] bake: prewarm-baked road lattice (demo/roadbake.h, one per process), NULL = live road */
     double shift_left_s;                  /* shift timer remainder below 1 ms (non-ms ticks) */
     double perf_t, perf_wall, perf_step, perf_worst; long long perf_sub, perf_ticks; int perf_log;
     sim_snap snap;
