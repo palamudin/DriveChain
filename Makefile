@@ -1,8 +1,8 @@
 # Linux build (core lib, tests, demo). Windows: see build_windows.sh
 CC ?= gcc
 CFLAGS ?= -O2 -std=c11 -Wall -Wextra -Wno-unused-parameter -Wno-misleading-indentation -fPIC -Icore/include -Icore/src
-LDLIBS = -lm -lpthread
-CORE_SRC = core/src/dc_kin.c core/src/dc_params.c core/src/dc_tyre.c core/src/dc_tyre_tm.c core/src/dc_car.c core/src/dc_road.c core/src/dc_out.c core/src/dc_driver.c core/src/dc_mb.c core/src/dc_mbcar.c core/src/dc_pool.c
+LDLIBS = -lm -lpthread -ldl
+CORE_SRC = core/src/dc_kin.c core/src/dc_params.c core/src/dc_tyre.c core/src/dc_tyre_tm.c core/src/dc_car.c core/src/dc_road.c core/src/dc_out.c core/src/dc_driver.c core/src/dc_mb.c core/src/dc_mbcar.c core/src/dc_pool.c core/src/dc_lane.c
 CORE_OBJ = $(CORE_SRC:core/src/%.c=build/%.o)
 
 all: build/libdrivechain.a build/libdrivechain.so build/dc_tests
@@ -51,6 +51,8 @@ build/rate_conv: tools/rate_conv.c build/libdrivechain.a
 rateconv: build/rate_conv
 	mkdir -p results/rate && ./build/rate_conv cars/mx5_na.ini | tee results/rate/rate_conv_mx5_na.txt && ./build/rate_conv cars/hatch_fwd.ini | tee results/rate/rate_conv_hatch_fwd.txt
 .PHONY: rateconv
+build/lane_tests: tests/lane_tests.c build/libdrivechain.a
+	$(CC) -O2 -std=gnu11 -Icore/include -Icore/src -o $@ $< build/libdrivechain.a -lm -lpthread -ldl
 build/thread_tests: tests/thread_tests.c build/libdrivechain.a
 	$(CC) -O2 -std=gnu11 -Icore/include -o $@ $< build/libdrivechain.a -lm -lpthread
 threadtest: build/thread_tests
@@ -99,9 +101,10 @@ RAYLIB_SRC ?= /workspace/deps/raylib-5.5/src
 DEMO_SRC = demo/main.c demo/sim.c demo/track.c demo/meshtrack.c demo/audio.c demo/input.c demo/cfg.c demo/objload.c demo/drvproto.c demo/net.c
 build-deps/linux/libraylib.a:
 	tools/build_raylib.sh $(RAYLIB_SRC) build-deps/linux gcc ar linux
-build/drivechain_demo: $(DEMO_SRC) demo/*.h build/libdrivechain.a build-deps/linux/libraylib.a
-	$(CC) -O2 -std=gnu11 -Wall -Wno-misleading-indentation -Wno-unused-parameter -Icore/include -Ibuild-deps/linux $$(sdl2-config --cflags) -o $@ $(DEMO_SRC) \
-	  build/libdrivechain.a build-deps/linux/libraylib.a $$(sdl2-config --libs) -lGL -lm -lpthread -ldl -lrt -lX11
+# Built with DC_PROF (core compiled in): the F7 perf overlay reads the per-stage counters.
+build/drivechain_demo: $(DEMO_SRC) demo/*.h $(CORE_SRC) core/src/*.h core/include/*.h build-deps/linux/libraylib.a
+	$(CC) -O2 -std=gnu11 -Wall -Wno-misleading-indentation -Wno-unused-parameter -DDC_PROF -DDC_BUILD -Icore/include -Icore/src -Ibuild-deps/linux $$(sdl2-config --cflags) -o $@ $(DEMO_SRC) \
+	  $(CORE_SRC) build-deps/linux/libraylib.a $$(sdl2-config --libs) -lGL -lm -lpthread -ldl -lrt -lX11
 demo: build/drivechain_demo
 .PHONY: demo
 
