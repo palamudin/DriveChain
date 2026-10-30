@@ -278,22 +278,39 @@ static int run_lap(rig_t* R, rec_t* out, double* lap_t, double tmax) {
     return n;
 }
 static rec_t LAP[2][NMAX * 8];
+/* FC_LAP_SELF=<rad>: the second run is the reference again with the start yaw nudged -> the lap's chaos floor */
+static void lap_nudge(rig_t* P, double eps) {
+    const char* sp = cfg_str(&P->cfg, "start.spot", "start"); int i = track_spot_by_name(&TRK, sp); double x, y, yaw;
+    if (i < 0 || !track_spot(&TRK, i, &x, &y, &yaw)) { fprintf(stderr, "FC_LAP_SELF: no spot %s\n", sp); exit(1); }
+    sim_reset_at(&P->S, x, y, yaw + eps, 0);
+}
 static void lap_check(const char* layout, const char* car) {
+    double lself = getenv("FC_LAP_SELF") ? atof(getenv("FC_LAP_SELF")) : 0;
+    int lcap = getenv("FC_LAP_SELF_CAP") ? atoi(getenv("FC_LAP_SELF_CAP")) : 0;   /* DC_PROF: second run = reference with this PGS sweep cap (solver floor) */
+    if (lcap && !lself) lself = 1e-300;   /* reference again; the nudge is far below one ulp of the start yaw */
     char err[256]; track_free(&TRK); memset(&TRK, 0, sizeof TRK);
     if (!track_select(&TRK, layout, 1.0, err, sizeof err)) { fprintf(stderr, "track: %s\n", err); exit(1); }
     static rig_t P; double lt[2]; int n[2]; double tmax = getenv("FC_LAP_T") ? atof(getenv("FC_LAP_T")) : 300;
     for (int q = 0; q < 2; q++) {
-        rig_init(&P, car, q ? "fast" : "reference"); cfg_set(&P.cfg, "autopilot.enabled", "1");
+        rig_init(&P, car, q && !lself ? "fast" : "reference"); cfg_set(&P.cfg, "autopilot.enabled", "1");
         dc_destroy(P.S.car); char e2[256]; cfg_set(&P.cfg, "start.spot", getenv("FC_SPOT") ? getenv("FC_SPOT") : "start");
         if (!sim_init(&P.S, &P.cfg, &TRK, NULL, e2, sizeof e2)) { fprintf(stderr, "sim_init: %s\n", e2); exit(1); }
+        if (q && lself) lap_nudge(&P, lself);
+#ifdef DC_PROF
+        { extern int dc_prof_pgs_cap; if (q && lcap) dc_prof_pgs_cap = lcap; }
+#endif
         n[q] = run_lap(&P, LAP[q], &lt[q], tmax); dc_destroy(P.S.car);
-        printf("  %s: %d ticks, PGS solves ending at the sweep cap: %d\n", q ? "fast" : "reference", n[q], LAPCAP);
+        printf("  %s: %d ticks, PGS solves ending at the sweep cap: %d\n", q ? (lself ? "reference+nudge" : "fast") : "reference", n[q], LAPCAP);
         int rep = getenv("FC_REP") ? atoi(getenv("FC_REP")) : 1; double rawmax = 0; int over = 0, wi = 0;
         for (int i = 0; i < n[q]; i++) { if (LAP[q][i].cpu > rawmax) rawmax = LAP[q][i].cpu; over += LAP[q][i].cpu > 2000; }
         for (int r = 1; r < rep; r++) {   /* deterministic: same ticks again; keep the per-tick minimum (machine noise out) */
             static rec_t T2[NMAX * 8]; double l2;
-            rig_init(&P, car, q ? "fast" : "reference"); cfg_set(&P.cfg, "autopilot.enabled", "1"); cfg_set(&P.cfg, "start.spot", getenv("FC_SPOT") ? getenv("FC_SPOT") : "start"); dc_destroy(P.S.car);
+            rig_init(&P, car, q && !lself ? "fast" : "reference"); cfg_set(&P.cfg, "autopilot.enabled", "1"); cfg_set(&P.cfg, "start.spot", getenv("FC_SPOT") ? getenv("FC_SPOT") : "start"); dc_destroy(P.S.car);
             if (!sim_init(&P.S, &P.cfg, &TRK, NULL, e2, sizeof e2)) exit(1);
+            if (q && lself) lap_nudge(&P, lself);
+#ifdef DC_PROF
+            { extern int dc_prof_pgs_cap; if (q && lcap) dc_prof_pgs_cap = lcap; }
+#endif
             int n2 = run_lap(&P, T2, &l2, tmax); dc_destroy(P.S.car);
             for (int i = 0; i < n2 && i < n[q]; i++) { if (T2[i].cpu > rawmax) rawmax = T2[i].cpu; over += T2[i].cpu > 2000; if (T2[i].cpu < LAP[q][i].cpu) LAP[q][i].cpu = T2[i].cpu; }
         }
