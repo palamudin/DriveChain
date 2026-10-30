@@ -418,6 +418,20 @@ DC_API int  dc_pin_thread(int cpu, int prio);
    after their next run (dc_pool_prio_status). Call after dc_set_threads. */
 DC_API int  dc_set_pool_cpus(dc_car* c, const int* cpu, int n, int prio);
 DC_API int  dc_pool_prio_status(const dc_car* c);   /* bitwise AND over helpers of dc_pin_thread's priority bits (-1 none yet) */
+
+/* Tolerance factor reuse (fast model only; the reference model always refactors). A solve whose assembled system
+   matrix differs from the one of the last factorisation by at most tol (largest change of any matrix block, relative
+   to that block's largest entry) keeps the old factor; every solve with it is then corrected by iterative refinement
+   (iters steps, default 2) against the true matrix, and the solve refactors when the last correction is still above
+   rtol (relative). Off by default. tol <= 0 keeps the current value. */
+DC_API void dc_set_factor_reuse(dc_car* c, int on, double tol);
+typedef struct {
+    int on; double tol, rtol; int iters;
+    long long solves, hits, refactor_tol, refactor_refine, refine_steps;
+    double dev_max;                 /* largest accepted matrix change (block-relative) */
+    double err_max, err_mean;       /* last refinement correction (relative), max / mean over refined solves */
+} dc_factor_reuse_stats;
+DC_API void dc_get_factor_reuse(const dc_car* c, dc_factor_reuse_stats* s, int reset);   /* reset: clear the counters */
 /* wake sleeping helpers ahead of the next dc_step (hosts that sleep between ticks call it ~0.2-0.5 ms before the tick) */
 DC_API void   dc_prewake(dc_car* c);
 /* compute-offload lane: per stage backend. Stages: DC_STAGE_PATCH = the fast model's TARMAC patch rays (float32

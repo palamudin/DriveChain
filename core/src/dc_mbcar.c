@@ -254,7 +254,10 @@ dc_mbcar* dc_mbcar_create(dc_car* c) {
         if (getenv("DC_FAST_DOT4")) W->dot4 = atoi(getenv("DC_FAST_DOT4"));
 #endif
     }
+    W->fr_tol = 1e-3; W->fr_rtol = 1e-6; W->fr_iters = 2;   /* tolerance factor reuse defaults (off until dc_set_factor_reuse) */
 #ifdef DC_PROF
+    if (getenv("DC_FR_ITERS")) W->fr_iters = atoi(getenv("DC_FR_ITERS"));
+    if (getenv("DC_FR_RTOL")) W->fr_rtol = atof(getenv("DC_FR_RTOL"));
     if (getenv("DC_STORE")) W->store = atoi(getenv("DC_STORE"));   /* measurement builds: stored source build (exact match) */
 #endif
     v3 off = V3(P->sprung_cg[0], P->sprung_cg[1], P->sprung_cg[2]);

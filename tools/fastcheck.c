@@ -395,6 +395,11 @@ int main(int argc, char** argv) {
                 printf("  %-17s lane auto: %s; self-test us/batch cpu %.1f simd %.1f gpu %.1f; live us/batch (wheel 0) cpu %.2f simd %.2f gpu %.2f\n", MN[m],
                        os.auto_sel == 2 ? (os.calls ? "still probing" : "idle (no lane calls: flat ground)") : "picked on live batches", os.cal_us[0], os.cal_us[1], os.cal_us[2], os.live_us[0], os.live_us[1], os.live_us[2]);
         }
+        {   /* tolerance factor reuse of the fast run (physics.factor_reuse = on) */
+            dc_factor_reuse_stats fr; dc_get_factor_reuse(B.S.car, &fr, 0);
+            if (fr.on) printf("  %-17s factor reuse: tol %.1e, %lld solves, %lld hits (%.1f%%), refactors %lld tol / %lld refine, refine steps %lld | dK max %.2e | refine correction max %.2e mean %.2e\n",
+                              MN[m], fr.tol, fr.solves, fr.hits, 100.0 * (double)fr.hits / (double)(fr.solves ? fr.solves : 1), fr.refactor_tol, fr.refactor_refine, fr.refine_steps, fr.dev_max, fr.err_max, fr.err_mean);
+        }
         dc_destroy(B.S.car);
 #ifdef DC_PROF
         { extern int dc_prof_pgs_cap; dc_prof_pgs_cap = 0; }

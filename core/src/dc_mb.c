@@ -75,7 +75,7 @@ void mb_destroy(mb_world* W) {
                                W->st_dev_max, W->st_miss ? W->st_dev_sum / (double)W->st_miss : 0.0);
 #endif
     if (!W) return;
-    free(W->nbr); free(W->nbr_blk); free(W->blkpos); free(W->blk); free(W->L); free(W->D); free(W->Dinv); free(W->st_D); free(W->st_blk); free(W->st_J);
+    free(W->nbr); free(W->nbr_blk); free(W->blkpos); free(W->blk); free(W->L); free(W->D); free(W->Dinv); free(W->st_D); free(W->st_blk); free(W->st_J); free(W->fr_D); free(W->fr_blk); free(W->fr_b); free(W->fr_r);
     free(W->x); free(W->r); free(W->z); free(W->zb); free(W->gb); free(W->rch); free(W->yv); free(W->gv); free(W->vr_sj); free(W->vr_row); free(W->Cv); free(W->lr_y); free(W);
 }
 
@@ -424,6 +424,8 @@ int mb_finalize(mb_world* W) {
     W->lr_y = (double*)calloc((size_t)MB_LR * N + 1, sizeof(double));
     W->st_D = (double*)calloc((size_t)n * 36, sizeof(double)); W->st_blk = (double*)calloc((size_t)W->nblk_d + 1, sizeof(double));
     W->st_J = (double*)calloc((size_t)MB_MAXBOX * MB_JB * 6, sizeof(double)); W->st_ok = 0;
+    W->fr_D = (double*)calloc((size_t)n * 36, sizeof(double)); W->fr_blk = (double*)calloc((size_t)W->nblk_d + 1, sizeof(double));
+    W->fr_b = (double*)calloc((size_t)N + 1, sizeof(double)); W->fr_r = (double*)calloc((size_t)N + 1, sizeof(double)); W->fr_have = 0;
     (void)orig; free(orig); free(adj); free(elim);
     #undef ADJ
     W->ready = 1;
@@ -642,6 +644,68 @@ static void lr_correct(const mb_world* W, double* x) {
     for (int a = 0; a < k; a++) { double t = 0; for (int b = 0; b < k; b++) t += W->lr_ci[a * k + b] * z[b]; w[a] = t; }
     for (int a = 0; a < k; a++) { const double* y = W->lr_y + (size_t)a * N; for (int i = 0; i < N; i++) x[i] -= y[i] * w[a]; }
 }
+
+/* ---- tolerance factor reuse */
+/* y = K x with the assembled (unfactorised) D / blk, plus U diag(ds) U' x while a low-rank re-solve is active */
+static void kmul2(const mb_world* W, const double* KD, const double* KB, const double* x, double* y);
+static void kmul(const mb_world* W, const double* x, double* y) { kmul2(W, W->D, W->blk, x, y); }
+static void kmul2(const mb_world* W, const double* KD, const double* KB, const double* x, double* y) {
+    int n = W->n;
+    for (int k = 0; k < n; k++) mv_rows(W->dim[k], W->dim[k], KD + 36 * k, x + W->off[k], y + W->off[k], 0);
+    for (int k = 0; k < n; k++) {
+        int dk = W->dim[k]; const double* xk = x + W->off[k]; double* yk = y + W->off[k];
+        for (int e = W->nbr_start[k]; e < W->nbr_start[k + 1]; e++) {
+            int i = W->nbr[e], di = W->dim[i]; const double* B = KB + W->nbr_blk[e];   /* di x dk, rows i */
+            const double* xi = x + W->off[i]; double* yi = y + W->off[i];
+            for (int a = 0; a < di; a++) { double s = 0; for (int b = 0; b < dk; b++) { s += B[a * dk + b] * xk[b]; yk[b] += B[a * dk + b] * xi[a]; } yi[a] += s; }
+        }
+    }
+    for (int a = 0; a < W->lr_k; a++) {
+        const mb_elem* E = &W->E[W->lr_el[a]]; double t = W->fr_ds[a] * elem_dot(W, E, x);
+        for (int q = 0; q < E->nb; q++) { int b = E->b[q]; if (b < 0) continue; for (int c = 0; c < 6; c++) y[W->off[b] + c] += E->j[q][c] * t; }
+    }
+}
+/* largest block-relative change of the assembled K against the K of the kept factor (stops early above lim) */
+static double kdev(const mb_world* W, double lim) {
+    double dev = 0; int n = W->n;
+    for (int k = 0; k < n && dev <= lim; k++) {
+        int m = W->dim[k] * W->dim[k]; const double* A = W->D + 36 * k; const double* B = W->fr_D + 36 * k; double d = 0, s = 0;
+        for (int q = 0; q < m; q++) { d = fmax(d, fabs(A[q] - B[q])); s = fmax(s, fabs(B[q])); }
+        if (d > 0) dev = fmax(dev, s > 0 ? d / s : HUGE_VAL);
+    }
+    for (int k = 0; k < n && dev <= lim; k++) for (int e = W->nbr_start[k]; e < W->nbr_start[k + 1] && dev <= lim; e++) {
+        int m = W->dim[W->nbr[e]] * W->dim[k]; const double* A = W->blk + W->nbr_blk[e]; const double* B = W->fr_blk + W->nbr_blk[e]; double d = 0, s = 0;
+        for (int q = 0; q < m; q++) { d = fmax(d, fabs(A[q] - B[q])); s = fmax(s, fabs(B[q])); }
+        if (d > 0) dev = fmax(dev, s > 0 ? d / s : HUGE_VAL);
+    }
+    return dev;
+}
+/* size of correction d relative to x, per kind (body velocities, joint impulses) */
+static double relcorr(const mb_world* W, const double* d, const double* x) {
+    double xb = 0, db = 0, xj = 0, dj = 0; int Nb = W->off[W->nb < W->n ? W->nb : W->n - 1];
+    if (W->nb >= W->n) Nb = W->N;
+    for (int i = 0; i < Nb; i++) { xb = fmax(xb, fabs(x[i])); db = fmax(db, fabs(d[i])); }
+    for (int i = Nb; i < W->N; i++) { xj = fmax(xj, fabs(x[i])); dj = fmax(dj, fabs(d[i])); }
+    return fmax(db / (xb + 1e-9), dj / (xj + 1e-9));
+}
+/* x <- K^-1 x. Exact factor: the plain solve (bit-identical to before). Kept (stale) factor: iterative refinement
+   against the true K; returns the relative size of the last correction (0 for the exact factor) */
+static double ksolve_k(mb_world* W, double* x) {
+    if (!W->fr_stale) { if (W->fr_on) memcpy(W->fr_b, x, sizeof(double) * W->N); ksolve(W, x); if (W->lr_k) lr_correct(W, x);
+        return 0; }
+    int N = W->N; double e = 0; memcpy(W->fr_b, x, sizeof(double) * N);
+    ksolve(W, x); if (W->lr_k) lr_correct(W, x);
+    for (int it = 0; it < W->fr_iters; it++) {
+        double* r = W->fr_r; kmul(W, x, r);
+        for (int i = 0; i < N; i++) r[i] = W->fr_b[i] - r[i];
+        ksolve(W, r); if (W->lr_k) lr_correct(W, r);
+        e = relcorr(W, r, x);
+        for (int i = 0; i < N; i++) x[i] += r[i];
+        W->fr_iter_sum++;
+    }
+    return e;
+}
+static void fr_note(mb_world* W, double e) { W->fr_err_n++; W->fr_err_sum += e; if (e > W->fr_err_max) W->fr_err_max = e; }
 
 /* load-dependent friction bound of box joint J from the normal reactions of its source joints, evaluated at the
    current box impulses: factorised multipliers are mu = x_free + sum_s zb_s hb_s (lambda = -mu, sign irrelevant). */
@@ -1013,7 +1077,8 @@ static void box_solve(mb_world* W, int nbx) {
             J->lam[r] = W->hb[s];
             for (int k = 0; k < J->nb; k++) { int b = J->b[k]; if (b < 0) continue; for (int q = 0; q < 6; q++) W->x[W->off[b] + q] += J->J[r][k][q] * W->hb[s]; }
         }
-        ksolve(W, W->x); if (W->lr_k) lr_correct(W, W->x);
+        if (W->fr_stale) fr_note(W, ksolve_k(W, W->x));
+        else { ksolve(W, W->x); if (W->lr_k) lr_correct(W, W->x); }
     }
     DCP_ADD(DCP_S_BACKSUB, tp);
     for (int i = 0; i < W->nb; i++) {
@@ -1047,12 +1112,35 @@ void mb_solve(mb_world* W) {
             memcpy(W->st_D, W->D, sizeof(double) * nD); memcpy(W->st_blk, W->blk, sizeof(double) * nB); W->st_ok = 0;
         }
     }
-    if (hit) { W->fact_fail += W->st_ff; }
-    else { int ff = W->fact_fail; factor(W); W->st_ff = W->fact_fail - ff; }
+    int fr = W->fr_on && W->fast && !W->schur_dense && !W->store, reuse = 0;
+    if (fr) {
+        W->fr_solves++;
+        double dev = W->fr_have ? kdev(W, W->fr_tol) : HUGE_VAL;
+        reuse = dev <= W->fr_tol;
+        if (reuse && dev > W->fr_dev_max) W->fr_dev_max = dev;
+    }
+    W->fr_stale = reuse;
+    if (reuse) { W->fr_hits++; }
+    else if (hit) { W->fact_fail += W->st_ff; }
+    else {
+        if (fr) { memcpy(W->fr_D, W->D, sizeof(double) * 36 * W->n); memcpy(W->fr_blk, W->blk, sizeof(double) * ((size_t)W->nblk_d + 1)); if (W->fr_have) W->fr_ref_dev++; }
+        int ff = W->fact_fail; factor(W); W->st_ff = W->fact_fail - ff;
+        if (fr) W->fr_have = W->st_ff == 0;
+    }
     DCP_LAP(DCP_S_FACTOR, tp);
     /* free solution */
     memcpy(W->x, W->r, sizeof(double) * N);
-    ksolve(W, W->x);
+    if (!reuse) ksolve(W, W->x);
+    else {
+        double e = ksolve_k(W, W->x);
+        if (e > W->fr_rtol) {   /* refinement did not converge: refactor (D / blk are still the unfactorised K) */
+            W->fr_hits--; W->fr_ref_fail++; W->fr_stale = 0;
+            memcpy(W->fr_D, W->D, sizeof(double) * 36 * W->n); memcpy(W->fr_blk, W->blk, sizeof(double) * ((size_t)W->nblk_d + 1));
+            int ff = W->fact_fail; factor(W); W->fr_have = W->fact_fail == ff;
+            DCP_LAP(DCP_S_FACTOR, tp);
+            memcpy(W->x, W->r, sizeof(double) * N); ksolve(W, W->x);
+        } else fr_note(W, e);
+    }
 #ifdef DC_PROF
     { static double xp = -1; if (xp < 0) xp = getenv("DC_XPERT") ? atof(getenv("DC_XPERT")) : 0;   /* debug: roundoff-sized perturbation */
       if (xp > 0 && W->fast) for (int i = 0; i < N; i++) W->x[i] *= 1 + xp * ((i * 7919 % 13) - 6) / 6.0; }
@@ -1138,11 +1226,15 @@ void mb_resolve_lowrank(mb_world* W) {
     for (int a = 0; a < k; a++) for (int b = 0; b < k; b++)
         C[a * k + b] = elem_dot(W, &W->E[W->lr_el[a]], W->lr_y + (size_t)b * N) + (a == b ? 1 / ds[a] : 0);
     if (k > 0 && !inv_small(k, C, W->lr_ci)) { mb_solve(W); return; }
-    W->lr_k = k;
+    W->lr_k = k; for (int a = 0; a < k; a++) W->fr_ds[a] = ds[a];
     assemble_rhs(W);
     DCP_LAP(DCP_S_ASSEMBLE, tp);
     memcpy(W->x, W->r, sizeof(double) * N);
-    ksolve(W, W->x); if (k) lr_correct(W, W->x);
+    if (W->fr_stale) {   /* kept factor: the Woodbury update is relative to K0; refine against K + U ds U' */
+        double e = ksolve_k(W, W->x);
+        if (e > W->fr_rtol) { W->fr_ref_fail++; W->fr_stale = 0; W->fr_have = 0; mb_solve(W); return; }   /* full solve (refactors) */
+        fr_note(W, e);
+    } else { ksolve(W, W->x); if (k) lr_correct(W, W->x); }
     DCP_LAP(DCP_S_KSOLVE, tp);
     int nbx = W->nbox; W->pgs_it = 0; W->pgs_used = 0;   /* box rows: same set as the last mb_solve (no joint changed) */
     for (int s = 0; s < nbx; s++) {
@@ -1170,7 +1262,7 @@ void mb_resolve_lowrank(mb_world* W) {
       if (chk) {   /* debug: compare with the full refactor (the run continues on the exact values) */
         static double xs[4096], Ws[MB_MAXBOX * MB_MAXBOX], ubs[MB_MAXBOX], Cs[64 * MB_MAXBOX]; static double emax[4]; static long nchk;
         memcpy(xs, W->x, sizeof(double) * N); memcpy(Ws, W->W, sizeof W->W); memcpy(ubs, W->ub, sizeof W->ub); memcpy(Cs, W->Cv, sizeof(double) * W->nvr * MB_MAXBOX);
-        assemble(W); factor(W); memcpy(W->x, W->r, sizeof(double) * N); ksolve(W, W->x); W->lr_k = 0; schur_sparse(W, nbx); W->st_ok = 0;
+        assemble(W); factor(W); W->fr_have = W->fr_stale = 0; memcpy(W->x, W->r, sizeof(double) * N); ksolve(W, W->x); W->lr_k = 0; schur_sparse(W, nbx); W->st_ok = 0;
         double ex = 0, xm = 0, ew = 0, wm = 0, eu = 0, um = 0;
         for (int i = 0; i < N; i++) { ex = fmax(ex, fabs(xs[i] - W->x[i])); xm = fmax(xm, fabs(W->x[i])); }
         for (int a = 0; a < nbx; a++) { eu = fmax(eu, fabs(ubs[a] - W->ub[a])); um = fmax(um, fabs(W->ub[a]));
@@ -1246,7 +1338,7 @@ void mb_integrate(mb_world* W, int project) {
         eval_std(W, J, Jt, phi);
         for (int a = 0; a < J->m; a++) x[W->off[nd] + a] = -phi[a];
     }
-    ksolve(W, x); if (W->lr_k) lr_correct(W, x);
+    ksolve_k(W, x);   /* exact factor: ksolve (+ low-rank correction); kept factor: refined against the true K */
     /* SHAKE-style: the position correction is also a velocity correction dx/h (it is the centripetal/curvature part of
        the constraint impulse that the velocity-level rows at q_n cannot see); its multiplier is added to the reaction. */
     double ih = 1.0 / h;

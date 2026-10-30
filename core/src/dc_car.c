@@ -207,6 +207,17 @@ DC_API const char* dc_offload_name(int b) { return dc_lane_backend_name(b); }
 DC_API void dc_set_pool_opts(dc_car* c, double spin_us, int affinity) { dc_pool_set_spin(c->pool, spin_us); if (c->pool && affinity >= -1) dc_pool_set_affinity(c->pool, affinity); }
 DC_API int dc_set_pool_cpus(dc_car* c, const int* cpu, int n, int prio) { return c && c->pool ? dc_pool_set_cpus(c->pool, cpu, n, prio) : 0; }
 DC_API int dc_pool_prio_status(const dc_car* c) { return c && c->pool ? dc_pool_prio_get(c->pool) : -1; }
+DC_API void dc_set_factor_reuse(dc_car* c, int on, double tol) {
+    if (!c || !c->mb) return; mb_world* W = c->mb->W;
+    W->fr_on = on ? 1 : 0; if (tol > 0) W->fr_tol = tol; W->fr_have = W->fr_stale = 0;
+}
+DC_API void dc_get_factor_reuse(const dc_car* c, dc_factor_reuse_stats* s, int reset) {
+    memset(s, 0, sizeof *s); if (!c || !c->mb) return; mb_world* W = c->mb->W;
+    s->on = W->fr_on && W->fast; s->tol = W->fr_tol; s->rtol = W->fr_rtol; s->iters = W->fr_iters;
+    s->solves = W->fr_solves; s->hits = W->fr_hits; s->refactor_tol = W->fr_ref_dev; s->refactor_refine = W->fr_ref_fail; s->refine_steps = W->fr_iter_sum;
+    s->dev_max = W->fr_dev_max; s->err_max = W->fr_err_max; s->err_mean = W->fr_err_n ? W->fr_err_sum / (double)W->fr_err_n : 0;
+    if (reset) { W->fr_solves = W->fr_hits = W->fr_ref_dev = W->fr_ref_fail = W->fr_iter_sum = W->fr_err_n = 0; W->fr_dev_max = W->fr_err_max = W->fr_err_sum = 0; }
+}
 DC_API void dc_prewake(dc_car* c) { dc_pool_prewake(c->pool); }
 double dc_wall(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec + 1e-9 * t.tv_nsec; }
 #ifdef DC_PROF

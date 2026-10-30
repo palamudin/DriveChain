@@ -78,6 +78,10 @@ static int make_car(sim_t* S) {
       if (!had || c0 != S->aff.cpu[0] || p0 != prio) S->aff_self_res = -1; }
     S->offload_patch = dc_set_offload(S->car, DC_STAGE_PATCH, dc_offload_parse(cfg_str(S->cfg, "offload.patch", "ref")));   /* compute-offload lane (fast model) */
     dc_set_offload_xcheck(S->car, cfg_int(S->cfg, "offload.xcheck", 0));   /* 0 off; n = re-run every n-th non-cpu lane batch on cpu, same tick */
+    { const char* fr = cfg_str(S->cfg, "physics.factor_reuse", "off");   /* tolerance factor reuse (fast model; off | on) */
+      int on = !strcmp(fr, "on") || !strcmp(fr, "1") || !strcmp(fr, "true");
+      dc_set_factor_reuse(S->car, on, cfg_num(S->cfg, "physics.factor_reuse_tol", 1e-3));
+      dc_get_factor_reuse(S->car, &S->fr_st, 0); }
     return 1;
 }
 
@@ -98,6 +102,13 @@ void sim_affinity_desc(const sim_t* S, char* b, int n) {
         const char* pr = S->prio == 0 ? "" : (sr < 0 || hp < 0 ? " pending" : (((sr & 2) && (hp & 2)) ? ((sr & 4) ? " ok (MMCSS Games)" : " ok") : " denied"));
         snprintf(b + k, n - k, " |%s priority %s%s", pin, dc_affinity_prio_name(S->prio), pr);
     }
+}
+/* one line: "factor reuse on (tol 1e-03): 87.1 % hits, refactors 120 tol / 0 refine, dK max 9.8e-04, refine err max 2.1e-09" */
+void sim_reuse_desc(const sim_t* S, char* b, int n) {
+    const dc_factor_reuse_stats* F = &S->fr_st;
+    if (!F->on) { snprintf(b, n, "factor reuse off"); return; }
+    snprintf(b, n, "factor reuse on (tol %.0e): %.1f %% hits of %lld, refactors %lld tol / %lld refine, dK max %.1e, refine err max %.1e mean %.1e",
+             F->tol, F->solves ? 100.0 * (double)F->hits / (double)F->solves : 0.0, F->solves, F->refactor_tol, F->refactor_refine, F->dev_max, F->err_max, F->err_mean);
 }
 int sim_init(sim_t* S, cfg_t* cfg, track_t* trk, audio_t* audio, char* err, int errlen) {
     memset(S, 0, sizeof *S);
@@ -443,6 +454,7 @@ static void sim_tick_body(sim_t* S, double dt) {
         S->aff_self_res = (S->aff.cpu[0] >= 0 || S->prio || S->aff_self_cpu > 0) ? dc_pin_thread(S->aff.cpu[0], S->prio) : 0;
     }
     if (S->aff_hprio < 0) S->aff_hprio = dc_pool_prio_status(S->car);   /* helpers apply the priority at their first run */
+    dc_get_factor_reuse(S->car, &S->fr_st, 0);   /* snapshot for the overlay / dump (read in the physics thread only) */
     S->tick_n = 0; S->tick_step_us = 0;
     sim_ctl* C = &S->ctl;
     if (C->rec_toggle != S->ctl_seen.rec_toggle) {   /* F9: replay stop / again, else record start / stop */

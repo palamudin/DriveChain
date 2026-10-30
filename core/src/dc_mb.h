@@ -137,6 +137,17 @@ typedef struct {
     double *st_D, *st_blk, *st_J;
     short st_bj[MB_MAXBOX], st_br[MB_MAXBOX];
     long long st_hit, st_miss; double st_dev_max, st_dev_sum;   /* diagnostics: matches, misses, rel. deviation on a miss */
+    /* tolerance factor reuse (fast model, opt-in): a solve whose assembled K differs from the K of the last factor by
+       less than fr_tol (largest block-relative entry change) keeps that factor and corrects every K^-1 solve by
+       iterative refinement against the true K (x += F0^-1 (b - K x), fr_iters steps); if the last correction is still
+       above fr_rtol the solve refactors. The box-row Schur system is built with the kept factor (its error is of the
+       order of the K change, below fr_tol) and the final velocities are refined against the true K. */
+    int fr_on, fr_iters, fr_stale, fr_have;
+    double fr_tol, fr_rtol;
+    double *fr_D, *fr_blk, *fr_b, *fr_r;   /* K0 (as assembled before its factor), rhs copy, residual */
+    double fr_ds[MB_LR];                   /* low-rank re-solve: refinement matrix is K + U diag(ds) U' */
+    long long fr_solves, fr_hits, fr_ref_dev, fr_ref_fail, fr_iter_sum, fr_err_n;
+    double fr_dev_max, fr_err_max, fr_err_sum;
     /* stats */
     double pgs_res; int fact_fail; int pgs_it;
     int pgs_ncapped;                  /* solves that ended at the pgs_iters cap (cumulative, diagnostic) */

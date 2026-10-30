@@ -64,6 +64,7 @@ typedef struct sim_s {
     double tick_step_us; int tick_n, threads;
     dc_affinity_info aff;            /* [physics] affinity plan (host-side thread placement) */
     int prio, aff_pool_ok, aff_self_res, aff_self_cpu, aff_hprio;   /* priority 0/1/2; helper pin result; physics-thread dc_pin_thread result (-1 not yet) and its CPU; helpers' priority result (-1 pending) */
+    dc_factor_reuse_stats fr_st;      /* factor reuse counters, snapshot per tick */
     int offload_patch;               /* backend in use for the patch stage (DC_OFFLOAD_*) */
     struct roadbake* bake; double bake_sig[5];   /* [track] bake: prewarm-baked road lattice (demo/roadbake.h, one per process), NULL = live road */
     double shift_left_s;                  /* shift timer remainder below 1 ms (non-ms ticks) */
@@ -91,6 +92,7 @@ typedef struct sim_s {
 } sim_t;
 int  sim_apply_setup(dc_car_params* P, const char* setup, char* err, int errlen);   /* car.setup: default (propBR + propD where applicable) | legacy */
 void sim_affinity_desc(const sim_t* S, char* b, int n);   /* affinity/priority line for F7 and the perf dump */
+void sim_reuse_desc(const sim_t* S, char* b, int n);      /* factor reuse settings + hit rate (F7 / dump) */
 int  sim_init(sim_t* S, cfg_t* cfg, track_t* trk, audio_t* audio, char* err, int errlen);
 void sim_tick(sim_t* S, double dt);         /* one physics tick (dt = S->tick_dt) incl. input + FFB + audio */
 void sim_reset_on_track(sim_t* S, double s, double d, double speed);
