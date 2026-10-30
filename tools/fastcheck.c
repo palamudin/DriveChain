@@ -365,8 +365,8 @@ int main(int argc, char** argv) {
         if (getenv("MAN") && !strstr(getenv("MAN"), MN[m])) continue;
         if (getenv("FC_REP")) { timing(m, car); continue; }
         int na, nb;
-        rig_init(&A, car, "reference"); run(&A, m, RR[0], &na); dc_destroy(A.S.car);
-        if (getenv("FC_REFDUMP")) {   /* reference-path regression: dump the reference run bit-exactly (%a) and skip the comparison */
+        rig_init(&A, car, getenv("FC_REFDUMP") && getenv("FC_DUMP_FAST") ? "fast" : "reference"); run(&A, m, RR[0], &na); dc_destroy(A.S.car);
+        if (getenv("FC_REFDUMP")) {   /* FC_DUMP_FAST=1: dump the fast run instead (exact fast-path refactors) */   /* reference-path regression: dump the reference run bit-exactly (%a) and skip the comparison */
             FILE* f = fopen(getenv("FC_REFDUMP"), "a"); if (!f) return 1;
             for (int i = 0; i < na; i++) { const rec_t* q = &RR[0][i]; fprintf(f, "%s %d %a %a %a %a", MN[m], i, q->x, q->y, q->r, q->rack);
                 for (int k = 0; k < 4; k++) fprintf(f, " %a %a", q->sa[k], q->fz[k]); fputc('\n', f); }
