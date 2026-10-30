@@ -61,6 +61,12 @@ static void draw_title(const char* t, int x, int y, int size, Color col) {
 static cfg_t CFG; static track_t TRK; static audio_t AUD; static sim_t SIM;
 static pthread_mutex_t MTX = PTHREAD_MUTEX_INITIALIZER;
 static sim_snap VIEW;              /* render copy */
+/* Render handoff without waiting on a physics tick: after every tick the physics thread publishes a copy of
+   SIM.snap into PUB, and the renderer posts its controls into PEND; the physics thread takes PEND before each tick.
+   SMTX only guards those two small copies (a few microseconds), so a long tick never stalls a frame. MTX is still
+   taken by the renderer for whole-world changes (F6 map switch) and in the synchronous headless mode. */
+static pthread_mutex_t SMTX = PTHREAD_MUTEX_INITIALIZER;
+static sim_snap PUB; static sim_ctl PEND; static int PUB_OK;
 static volatile int RUN = 1;
 static int RENDER_WAIT;            /* render thread is waiting for MTX: the physics thread yields between ticks */
 static int g_threaded = 1;
@@ -571,7 +577,9 @@ static void* phys_thread(void* arg) {
 #ifdef DC_PROF
             { float lw = (float)(prof_now_us() - lw0); if (lw > pb.lockwait_max_us) pb.lockwait_max_us = lw; } pb.ticks++;
 #endif
+            pthread_mutex_lock(&SMTX); SIM.ctl = PEND; pthread_mutex_unlock(&SMTX);
             sim_tick(&SIM, dt);
+            pthread_mutex_lock(&SMTX); PUB = SIM.snap; PUB_OK = 1; pthread_mutex_unlock(&SMTX);
             pthread_mutex_unlock(&MTX);
             sim += dt;
             if (wall() > wend) {
@@ -801,6 +809,7 @@ int main(int argc, char** argv) {
     int triple = cfg_int(&CFG, "display.triple", 0);
     pthread_t th;
     g_threaded = !headless;
+    PEND = SIM.ctl; PUB = SIM.snap;
     if (g_threaded) pthread_create(&th, NULL, phys_thread, NULL);
 
     /* headless shot list */
@@ -832,13 +841,18 @@ int main(int argc, char** argv) {
         if (pf_end > 0 && (pfr.tw - pf_t0) * 1e-6 > pf_end) break;
 #endif
         /* ---- keyboard -> physics control ---- */
-        __atomic_store_n(&RENDER_WAIT, 1, __ATOMIC_RELEASE);
-        pthread_mutex_lock(&MTX);
-        __atomic_store_n(&RENDER_WAIT, 0, __ATOMIC_RELEASE);
+        /* threaded: controls and view go through SMTX (never waits on a tick); MTX only for F6 and headless */
+        int big = headless || !g_threaded || IsKeyPressed(KEY_F6);
+        if (big) {
+            __atomic_store_n(&RENDER_WAIT, 1, __ATOMIC_RELEASE);
+            pthread_mutex_lock(&MTX);
+            __atomic_store_n(&RENDER_WAIT, 0, __ATOMIC_RELEASE);
+        }
+        pthread_mutex_lock(&SMTX);
 #ifdef DC_PROF
         pfr.lock_us = (float)(prof_now_us() - pfr.tw);
 #endif
-        sim_ctl* C = &SIM.ctl;
+        sim_ctl* C = big && !g_threaded ? &SIM.ctl : &PEND;
         C->kb_left = IsKeyDown(KEY_LEFT) || IsKeyDown(KEY_A); C->kb_right = IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D);
         C->kb_up = IsKeyDown(KEY_UP) || IsKeyDown(KEY_W); C->kb_down = IsKeyDown(KEY_DOWN) || IsKeyDown(KEY_S);
         C->kb_clutch = IsKeyDown(KEY_LEFT_SHIFT); C->kb_hand = IsKeyDown(KEY_SPACE);
@@ -851,20 +865,21 @@ int main(int argc, char** argv) {
         if (IsKeyPressed(KEY_O)) C->autopilot++;
         if (IsKeyPressed(KEY_G)) C->drv_toggle++;
         if (IsKeyPressed(KEY_PAUSE) || IsKeyPressed(KEY_F5)) C->pause = !C->pause;
-        if (IsKeyPressed(KEY_F6) && !headless) switch_map(C);
+        if (IsKeyPressed(KEY_F6) && !headless && big) switch_map(C);
         if (headless) {   /* synchronous fixed-step physics for reproducible shots */
             static double hacc = 0; hacc += shot_dt;   /* whole host ticks per frame; the remainder carries over */
             while (hacc >= SIM.tick_dt - 1e-12) { sim_tick(&SIM, SIM.tick_dt); hacc -= SIM.tick_dt; }
             if (wavbuf) { int fr = (int)(shot_dt * 44100 + 0.5); if (wavn + fr <= wavcap) { audio_render(&AUD, wavbuf + 2 * wavn, fr); wavn += fr; } }
             dt = shot_dt;
         }
-        VIEW = SIM.snap;
+        VIEW = g_threaded && PUB_OK ? PUB : SIM.snap;
 #ifdef DC_PROF
         pfr.sim_time = VIEW.sim_time; pfr.new_ticks = (int)((VIEW.sim_time - pf_simt) / SIM.tick_dt + 0.5); pf_simt = VIEW.sim_time;
 #endif
         if (getenv("DEMO_TRACE") && headless && ((int)(VIEW.sim_time * 60 + 0.5)) % 60 == 0) { double d_, s_; track_height(&TRK, VIEW.parts[0].pos[0], VIEW.parts[0].pos[1], NULL, NULL, &d_, &s_);
             printf("[trace] t %.1f s %.0f d %+.1f v %.1f gear %d rpm %.0f ay %+.2f sw %+.0f\n", VIEW.sim_time, s_, d_, VIEW.t.speed * 3.6, VIEW.t.gear, VIEW.t.engine_rpm, VIEW.t.ay / 9.81, VIEW.t.sw_angle * 57.3); }
-        pthread_mutex_unlock(&MTX);
+        pthread_mutex_unlock(&SMTX);
+        if (big) pthread_mutex_unlock(&MTX);
         if (IsKeyPressed(KEY_C)) { camode = (camode + 1) % CAM_N; CHASE_INIT = 0; }
         if (IsKeyPressed(KEY_F1)) { int vis = HELP_ON && (HELP_STICKY || GetTime() < HELP_T0 + 12.0); if (vis) HELP_ON = 0; else { HELP_ON = 1; HELP_STICKY = 1; } }
         if (IsKeyPressed(KEY_F2)) xray = !xray;
