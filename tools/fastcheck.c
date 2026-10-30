@@ -89,7 +89,8 @@ static double man_input(int m, double t, double* thr, double* brk, double* hb, i
 }
 
 /* ---------------- per-tick record ---------------- */
-#define NMAX 6000
+#define NMAX 24000   /* ticks per manoeuvre: 25 s at 960 Hz */
+static double FS = 240;   /* host tick rate (Hz), set from the rig's tick_dt */
 #ifndef DC_PROF
 enum { DCP_S_N = 1, DCP_W_TOTAL = 1 };   /* stage arrays only filled in DC_PROF builds */
 #endif
@@ -101,7 +102,7 @@ static void run(rig_t* R, int m, rec_t* out, int* n_out) {
     sim_t* S = &R->S; start_t st = man_start(m); st.yaw += PERTURB;
     sim_reset_at(S, st.x, st.y, st.yaw, st.v); S->gear = st.gear;
     S->ext_steer = 1; S->ext_pedals = 1; R->I = 0.2;
-    double dt = S->tick_dt; int n = 0;
+    double dt = S->tick_dt; int n = 0; FS = 1.0 / dt;
     for (double t = 0; t < st.T - 1e-9 && n < NMAX; t += dt) {
         dc_telemetry tl; dc_get_telemetry(S->car, &tl);
         double thr, brk, hb; int hold;
@@ -133,7 +134,7 @@ static void run(rig_t* R, int m, rec_t* out, int* n_out) {
     *n_out = n;
 }
 
-/* Welch band powers of x (fs = 240 Hz), 1 s Hann segments, 50 % overlap */
+/* Welch band powers of x (fs = host tick rate), 1 s Hann segments, 50 % overlap */
 static void bands(const double* x, int n, double fs, double out[4]) {
     static const double be[5] = {0, 5, 15, 40, 120.01};
     int L = (int)fs, hop = L / 2; memset(out, 0, 4 * sizeof(double));
@@ -182,7 +183,7 @@ static void compare(int m, const rec_t* a, const rec_t* b, int n, res_t* R, FILE
     R->r_rms = sqrt(er / n); R->sa_rms = sqrt(es / (4 * n)); R->fz_rms = sqrt(ef / (4 * n)); R->rk_rms = sqrt(ek / n); R->rk_sig = sqrt(sk / n);
     static double xa[NMAX], xb[NMAX]; double pa[4], pb[4];
     for (int i = 0; i < n; i++) { xa[i] = a[i].rack; xb[i] = b[i].rack; }
-    bands(xa, n, 240, pa); bands(xb, n, 240, pb);
+    bands(xa, n, FS, pa); bands(xb, n, FS, pb);
     int bad = 0; char* w = R->why; *w = 0;
 #define LIM(th, f) fmax(th, F ? F->f : 0)
 #define CHK(cond, ...) do { if (!(cond)) { bad++; w += snprintf(w, R->why + sizeof R->why - w, __VA_ARGS__); } } while (0)
@@ -213,7 +214,7 @@ static int pooled(int m, const char* car, res_t* R) {
         POOL_D = dd[a]; POOL_DV = dv[b]; int n;
         rig_init(&P, car, q ? "fast" : "reference"); run(&P, m, RR[2], &n); dc_destroy(P.S.car);
         static double x[NMAX]; double pb[4]; for (int i = 0; i < n; i++) x[i] = RR[2][i].rack;
-        bands(x, n, 240, pb); for (int k = 0; k < 4; k++) bp[q][k] += pb[k];
+        bands(x, n, FS, pb); for (int k = 0; k < 4; k++) bp[q][k] += pb[k];
         double fzm[4] = {0}; for (int i = 0; i < n; i++) for (int k = 0; k < 4; k++) fzm[k] += RR[2][i].fz[k] / n;
         for (int i = 0; i < n; i++) {
             acc[q][0] += RR[2][i].rack * RR[2][i].rack; acc[q][1] += RR[2][i].r * RR[2][i].r;
@@ -252,7 +253,7 @@ static void timing(int m, const char* car) {
         for (int i = 0; i < n; i++) { v[i] = mn[q][i]; s += v[i]; if (mn[q][i] > mn[q][wi]) wi = i; }
         qsort(v, n, sizeof(double), cmpd);
         printf("  %-17s %-9s intrinsic tick (min of %d) mean %4.0f p99 %4.0f max %5.0f us at t=%.3f s | raw max %6.0f us, raw ticks >2 ms %d of %d\n",
-               MN[m], q ? "fast" : "reference", N, s / n, v[(int)(0.99 * (n - 1))], v[n - 1], wi / 240.0, rawmax[q], over[q], n * N);
+               MN[m], q ? "fast" : "reference", N, s / n, v[(int)(0.99 * (n - 1))], v[n - 1], wi / FS, rawmax[q], over[q], n * N);
 #ifdef DC_PROF
         if (getenv("FC_STAGES")) {   /* per-stage cost (us/tick) of the minimum-cost repeat: mean over the run, and at the worst tick */
             printf("    stages mean/worst:"); for (int k = 0; k < DCP_S_N; k++) { double a = 0; for (int i = 0; i < n; i++) a += ST[q][i][k]; printf(" %s %.0f/%.0f", STN[k], a / n, ST[q][wi][k]); }
@@ -267,7 +268,7 @@ static void timing(int m, const char* car) {
    Lap time = time until the centre-line distance travelled reaches one track length. Returns ticks recorded. */
 static int LAPCAP;
 static int run_lap(rig_t* R, rec_t* out, double* lap_t, double tmax) {
-    sim_t* S = &R->S; double dt = S->tick_dt, s_prev = -1, s_acc = 0; int n = 0; *lap_t = -1;
+    sim_t* S = &R->S; double dt = S->tick_dt, s_prev = (FS = 1.0 / dt, -1), s_acc = 0; int n = 0; *lap_t = -1;
     for (double t = 0; t < tmax && n < NMAX * 8; t += dt) {
         struct timespec a, b; clock_gettime(CLOCK_THREAD_CPUTIME_ID, &a);
         sim_tick(S, dt);
@@ -322,12 +323,12 @@ static void lap_check(const char* layout, const char* car) {
             for (int i = 0; i < n2 && i < n[q]; i++) { if (T2[i].cpu > rawmax) rawmax = T2[i].cpu; over += T2[i].cpu > 2000; if (T2[i].cpu < LAP[q][i].cpu) LAP[q][i].cpu = T2[i].cpu; }
         }
         for (int i = 0; i < n[q]; i++) if (LAP[q][i].cpu > LAP[q][wi].cpu) wi = i;
-        if (rep > 1) printf("  %s: intrinsic (min of %d) worst tick %.0f us at t=%.3f s | raw max %.0f us, raw ticks > 2 ms: %d of %d\n", q ? "fast" : "reference", rep, LAP[q][wi].cpu, wi / 240.0, rawmax, over, n[q] * rep);
+        if (rep > 1) printf("  %s: intrinsic (min of %d) worst tick %.0f us at t=%.3f s | raw max %.0f us, raw ticks > 2 ms: %d of %d\n", q ? "fast" : "reference", rep, LAP[q][wi].cpu, wi / FS, rawmax, over, n[q] * rep);
     }
     double pb[2][4], acc[2] = {0, 0}; static double x[NMAX * 8];
     for (int q = 0; q < 2; q++) {
         for (int i = 0; i < n[q]; i++) { x[i] = LAP[q][i].rack; acc[q] += x[i] * x[i]; }
-        bands(x, n[q], 240, pb[q]);
+        bands(x, n[q], FS, pb[q]);
     }
     printf("lap %s: lap time ref %.3f s fast %.3f s (diff %+.3f s) | rack band dB", layout, lt[0], lt[1], lt[1] - lt[0]);
     int ok = lt[0] > 0 && lt[1] > 0 && fabs(lt[1] - lt[0]) <= 0.10;
@@ -359,7 +360,7 @@ int main(int argc, char** argv) {
     FILE* tr = getenv("FC_TRACE") ? fopen(getenv("FC_TRACE"), "w") : NULL;
     if (tr) fprintf(tr, "man,i,xr,yr,xf,yf,r_ref,r_fast,rack_ref,rack_fast,fz0_ref,fz0_fast\n");
     int fails = 0;
-    printf("fastcheck: physics.model=fast vs reference (car %s, 240 Hz x 4)\n", *car ? car : "default");
+    printf("fastcheck: physics.model=fast vs reference (car %s, 240 Hz x 4 unless CFGSET: %s)\n", *car ? car : "default", getenv("CFGSET") ? getenv("CFGSET") : "-");
     for (int m = 0; m < M_N; m++) {
         if (getenv("MAN") && !strstr(getenv("MAN"), MN[m])) continue;
         if (getenv("FC_REP")) { timing(m, car); continue; }
@@ -421,7 +422,7 @@ int main(int argc, char** argv) {
                R.ref_mean, R.ref_p99, R.ref_max, R.f_mean, R.f_p99, R.f_max, R.why);
         fprintf(s, "%s,%d,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.2f,%.2f,%.3f,%.3f,%.1f,%.3f,%.3f,%.3f,%.3f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f\n", MN[m], R.pass, R.floor_k, R.pos_max, R.r_rms, R.r_max, R.sa_rms, R.sa_max, R.fz_rms, R.fz_max, R.rk_rms, R.rk_max, R.rk_sig,
                 R.db[0], R.db[1], R.db[2], R.db[3], R.ref_mean, R.ref_p99, R.ref_max, R.f_mean, R.f_p99, R.f_max, R.ref_cpu_max, R.f_cpu_max);
-        if (getenv("FC_SPIKES")) for (int q = 0; q < 2; q++) for (int i = 0; i < n; i++) if (RR[q][i].cpu > 1500) printf("    spike %s tick %d (t=%.3f s) %.0f us cpu, %ld faults, %ld us sys\n", q ? "fast" : "ref ", i, i / 240.0, RR[q][i].cpu, RR[q][i].flt, RR[q][i].sys_us);
+        if (getenv("FC_SPIKES")) for (int q = 0; q < 2; q++) for (int i = 0; i < n; i++) if (RR[q][i].cpu > 1500) printf("    spike %s tick %d (t=%.3f s) %.0f us cpu, %ld faults, %ld us sys\n", q ? "fast" : "ref ", i, i / FS, RR[q][i].cpu, RR[q][i].flt, RR[q][i].sys_us);
         fflush(stdout);
     }
     fclose(s); if (tr) fclose(tr);
