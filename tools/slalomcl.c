@@ -5,7 +5,7 @@
    steering-wheel angle at the weave frequency f0 = v / 36 m (single-bin DFT), peak |ay|, rack-force band powers
    (Hann periodogram, bands 0-5 / 5-15 / 15-40 / 40-120 Hz, dB vs the first version), bit-identity with the first version,
    tick wall time mean / p99 / max.
-   Run: ./build/slalomcl [car.ini] label:model:substeps:bricks ...   (first version = comparison base)
+   Run: ./build/slalomcl [car.ini] label:model:substeps:bricks[:tick_hz] ...   (first version = comparison base)
    env SL_V (km/h, 50), SL_A (m, 1.2), SL_REP (timing repeats, 1)                                              */
 #define _GNU_SOURCE
 #include "../demo/sim.h"
@@ -30,14 +30,14 @@ static double ypath(double x) {
     double w = x < X0 ? (x - (X0 - 30)) / 30 : 1; w = w * w * (3 - 2 * w);
     return 150 + w * AMP * cos(M_PI * (x - X0) / 18);
 }
-enum { NMAX = 240 * 40 };
+enum { NMAX = 960 * 40 };
 typedef struct { double x, y, r, sw, ay, rack, wall; } rec_t;
 static rec_t REC[16][NMAX]; static int NREC[16];
 
-static int run(const char* car, const char* model, const char* sub, const char* bricks, rec_t* out) {
+static int run(const char* car, const char* model, const char* sub, const char* bricks, const char* thz, rec_t* out) {
     static sim_t S; static cfg_t cfg; memset(&S, 0, sizeof S); memset(&cfg, 0, sizeof cfg);
     cfg_set(&cfg, "autopilot.enabled", "0"); cfg_set(&cfg, "car.setup", "default"); cfg_set(&cfg, "physics.model", model);
-    cfg_set(&cfg, "physics.tick_hz", "240"); cfg_set(&cfg, "physics.substeps", sub); cfg_set(&cfg, "physics.bricks", bricks);
+    cfg_set(&cfg, "physics.tick_hz", thz); cfg_set(&cfg, "physics.substeps", sub); cfg_set(&cfg, "physics.bricks", bricks);
     cfg_set(&cfg, "car.ini", car);
     char err[256]; if (!sim_init(&S, &cfg, &TRK, NULL, err, sizeof err)) { fprintf(stderr, "sim_init: %s\n", err); exit(1); }
     const double WB = 2.265; double ratio = S.P.steer_ratio, lock = S.P.steer_lock_deg * M_PI / 180;
@@ -66,10 +66,10 @@ static int run(const char* car, const char* model, const char* sub, const char* 
 static void band_pow(const rec_t* q, int i0, int i1, double fs, double bp[4]) {
     int n = i1 - i0; double m = 0; for (int i = i0; i < i1; i++) m += q[i].rack; m /= n;
     static const double E[5] = {0, 5, 15, 40, 120}; for (int b = 0; b < 4; b++) bp[b] = 0;
-    for (int k = 1; k < n / 2; k++) {
+    for (int k = 1; k < n / 2 && k * fs / n < E[4]; k++) {
         double f = k * fs / n, re = 0, im = 0;
         for (int i = 0; i < n; i++) { double w = 0.5 - 0.5 * cos(2 * M_PI * i / (n - 1)), v = (q[i0 + i].rack - m) * w; re += v * cos(2 * M_PI * k * i / n); im -= v * sin(2 * M_PI * k * i / n); }
-        for (int b = 0; b < 4; b++) if (f >= E[b] && f < E[b + 1]) bp[b] += re * re + im * im;
+        for (int b = 0; b < 4; b++) if (f >= E[b] && f < E[b + 1]) bp[b] += (re * re + im * im) / ((double)n * n);   /* per-sample normalised: comparable across tick rates */
     }
 }
 static double phase_at(const rec_t* q, int i0, int i1, double f, double fs, int which) {
@@ -83,17 +83,18 @@ int main(int argc, char** argv) {
     X0 = TRK.cone_x[0]; XE = TRK.cone_x[TRK.ncone - 1];
     VT = (getenv("SL_V") ? atof(getenv("SL_V")) : 50) / 3.6; AMP = getenv("SL_A") ? atof(getenv("SL_A")) : 1.2;
     int rep = getenv("SL_REP") ? atoi(getenv("SL_REP")) : 1;
-    double fs = 240, f0 = VT / 36;
+    double f0 = VT / 36;
     printf("slalomcl: %s, v %.0f km/h, A %.2f m, f0 %.3f Hz, closed-loop pure pursuit (same driver every version)\n", car, VT * 3.6, AMP, f0);
     printf("%-22s %8s %8s %8s %8s %7s %26s %-24s %s\n", "version", "pe_rms_m", "pe_max_m", "lag_deg", "delay_ms", "ay_g", "rack dB 0-5/5-15/15-40/40-120", "bitwise_vs_first", "tick us mean/p99/max");
     double bp0[4] = {0};
     for (int v = 2; v < argc && v - 2 < 16; v++) {
         char spec[128]; snprintf(spec, sizeof spec, "%s", argv[v]);
-        char* f[4] = {0}; int nf = 0; for (char* t = strtok(spec, ":"); t && nf < 4; t = strtok(NULL, ":")) f[nf++] = t;
-        if (nf < 4) { fprintf(stderr, "spec label:model:substeps:bricks\n"); return 1; }
+        char* f[5] = {0}; int nf = 0; for (char* t = strtok(spec, ":"); t && nf < 5; t = strtok(NULL, ":")) f[nf++] = t;
+        if (nf < 4) { fprintf(stderr, "spec label:model:substeps:bricks[:tick_hz]\n"); return 1; }
+        const char* thz = nf > 4 ? f[4] : "240"; double fs = atof(thz); static double fs0; if (v == 2) fs0 = fs;
         rec_t* q = REC[v - 2]; double wsum[NMAX]; int n = 0;
         static double wall_all[NMAX * 8]; int nw = 0;
-        for (int r = 0; r < rep; r++) { n = run(car, f[1], f[2], f[3], q); for (int i = 0; i < n; i++) { if (r == 0) wsum[i] = q[i].wall; else wsum[i] = fmin(wsum[i], q[i].wall); } }
+        for (int r = 0; r < rep; r++) { n = run(car, f[1], f[2], f[3], thz, q); for (int i = 0; i < n; i++) { if (r == 0) wsum[i] = q[i].wall; else wsum[i] = fmin(wsum[i], q[i].wall); } }
         for (int i = 0; i < n; i++) wall_all[nw++] = wsum[i];
         NREC[v - 2] = n;
         int i0 = -1, i1 = n; for (int i = 0; i < n; i++) { if (i0 < 0 && q[i].x >= X0) i0 = i; if (q[i].x <= XE) i1 = i + 1; }
@@ -102,12 +103,12 @@ int main(int argc, char** argv) {
         int per = (int)lround(fs / f0); int i1p = i0 + ((i1 - i0) / per) * per;
         double lag = wrap(phase_at(q, i0, i1p, f0, fs, 0) - phase_at(q, i0, i1p, f0, fs, 1)) * 180 / M_PI;
         double bp[4]; band_pow(q, i0, i1, fs, bp); if (v == 2) memcpy(bp0, bp, sizeof bp);
-        int bw = -1; double dmax = 0; const rec_t* b = REC[0]; int nc = n < NREC[0] ? n : NREC[0];
-        for (int i = 0; i < nc; i++) { if (bw < 0 && (q[i].x != b[i].x || q[i].y != b[i].y || q[i].r != b[i].r || q[i].rack != b[i].rack)) bw = i; dmax = fmax(dmax, hypot(q[i].x - b[i].x, q[i].y - b[i].y)); }
-        char bws[64]; if (bw < 0 && n == NREC[0]) snprintf(bws, sizeof bws, "IDENTICAL"); else snprintf(bws, sizeof bws, "from tick %d, dpos %.3f m", bw < 0 ? nc : bw, dmax);
+        int bw = -1; double dmax = 0; if (fs != fs0) { bw = 0; } const rec_t* b = REC[0]; int nc = n < NREC[0] ? n : NREC[0];
+        for (int i = 0; fs == fs0 && i < nc; i++) { if (bw < 0 && (q[i].x != b[i].x || q[i].y != b[i].y || q[i].r != b[i].r || q[i].rack != b[i].rack)) bw = i; dmax = fmax(dmax, hypot(q[i].x - b[i].x, q[i].y - b[i].y)); }
+        char bws[64]; if (fs != fs0) snprintf(bws, sizeof bws, "n/a (other tick rate)"); else if (bw < 0 && n == NREC[0]) snprintf(bws, sizeof bws, "IDENTICAL"); else snprintf(bws, sizeof bws, "from tick %d, dpos %.3f m", bw < 0 ? nc : bw, dmax);
         qsort(wall_all, nw, sizeof(double), cmpd); double wm = 0; for (int i = 0; i < nw; i++) wm += wall_all[i]; wm /= nw;
-        printf("%-22s %8.3f %8.3f %8.2f %8.1f %7.3f   %+6.2f %+6.2f %+6.2f %+6.2f   %-24s %5.0f/%5.0f/%5.0f\n", f[0], sqrt(se / (i1 - i0)), me, lag, lag / 360 / f0 * 1000, ay / 9.81,
-               10 * log10(bp[0] / bp0[0]), 10 * log10(bp[1] / bp0[1]), 10 * log10(bp[2] / bp0[2]), 10 * log10(bp[3] / bp0[3]), bws, wm, wall_all[(int)(0.99 * (nw - 1))], wall_all[nw - 1]);
+        printf("%-22s %8.3f %8.3f %8.2f %8.1f %7.3f   %+6.2f %+6.2f %+6.2f %+6.2f   %-24s %5.0f/%5.0f/%5.0f  (%3.0f%% of a core)\n", f[0], sqrt(se / (i1 - i0)), me, lag, lag / 360 / f0 * 1000, ay / 9.81,
+               10 * log10(bp[0] / bp0[0]), 10 * log10(bp[1] / bp0[1]), 10 * log10(bp[2] / bp0[2]), 10 * log10(bp[3] / bp0[3]), bws, wm, wall_all[(int)(0.99 * (nw - 1))], wall_all[nw - 1], wm * fs / 1e4);
         fflush(stdout);
     }
     return 0;
