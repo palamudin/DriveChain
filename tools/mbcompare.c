@@ -51,13 +51,22 @@ static void start(double speed, int gear) {
     D = dc_driver_create(&dp);
     SIMT = 0; H_FIRST = 1;
 }
+/* Manoeuvre scripts count in 1/120 s steps. MB_TICK_HZ (a multiple of 120, default 120) sets the host tick rate:
+ * each step then runs MB_TICK_HZ/120 host ticks of driver update + dc_step, e.g. MB_TICK_HZ=240 with
+ * PSET="car.substep_hz=960" reproduces the demo's 240 Hz x 4 substeps. */
 static void tick(int autoshift) {
-    dc_driver_update(D, C, DT, &IN);
-    if (autoshift) IN.gear = auto_gear(IN.gear, T.engine_rpm);
-    dc_set_input(C, &IN);
-    clock_t c0 = clock();
-    dc_step(C, DT);
-    CPU += (double)(clock() - c0) / CLOCKS_PER_SEC;
+    static int nsub = 0; if (!nsub) { int hz = getenv("MB_TICK_HZ") ? atoi(getenv("MB_TICK_HZ")) : 120; nsub = hz >= 120 && hz % 120 == 0 ? hz / 120 : 1;
+        if (nsub * 120 != hz) fprintf(stderr, "MB_TICK_HZ %d: not a multiple of 120, using 120\n", hz); }
+    double h = DT / nsub;
+    for (int k = 0; k < nsub; k++) {
+        dc_driver_update(D, C, h, &IN);
+        if (autoshift) IN.gear = auto_gear(IN.gear, T.engine_rpm);
+        dc_set_input(C, &IN);
+        clock_t c0 = clock();
+        dc_step(C, h);
+        CPU += (double)(clock() - c0) / CLOCKS_PER_SEC;
+        if (k < nsub - 1) dc_get_telemetry(C, &T);
+    }
     dc_get_telemetry(C, &T); SIMT += DT;
     if (!H_FIRST && T.dissipated - H_DPREV < H_DMIN) { H_DMIN = T.dissipated - H_DPREV; H_DMIN_T = SIMT; snprintf(H_DMIN_M, sizeof H_DMIN_M, "%s", H_CUR); }
     if (getenv("DTRACE") && !H_FIRST && T.dissipated - H_DPREV < atof(getenv("DTRACE"))) fprintf(stderr, "dtrace %s t %.3f dE %.4f\n", H_CUR, SIMT, T.dissipated - H_DPREV);
