@@ -145,7 +145,11 @@ rate. Fast and reference models match to the printed digits at 960 × 4; fast co
 - **Pre-baked tyre tables** (a blind sweep of the tyre over the road surface, Hermite-interpolated, cached by hash;
   also a single-precision structure-of-arrays tyre path). Measured: the brush force costs about 5 µs per tick for all
   four wheels, so a table or SIMD path could save at most that. Not built; the fidelity risk (transient brush state,
-  interpolation across stick/slide) was not worth 5 µs. No bake step exists.
+  interpolation across stick/slide) was not worth 5 µs. What was built instead is a road bake (`[track] bake`,
+  off by default) and a float32 patch table for the road rays (the offload lane); see docs/BRICKS.md. The bake
+  saves 1–2 % of the tick for 188 MB and an 8 s load on the proving ground, so it stays off.
+- **Profiling overhead.** The demo build always records per-stage times (`-DDC_PROF`). Against a build without it the
+  tick costs about 1.5–7 % more (noisy box); the library and `make fastcheck` baselines are unaffected.
 - **Aligning-moment table and multi-rate bristle loop.** The aligning-moment solve is about 20 µs per tick; a
   multi-rate bristle loop would add work at this step size. Not built.
 - **Saturation predictor** (guessing which tyres leave the friction circle so the first solve already uses the right

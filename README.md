@@ -26,6 +26,9 @@ DriveChain has a C core with a Unity frontend (P/Invoke) and a raylib test drive
   pick never changes a result. `cpu`, `cpu_simd` (AVX2 when the CPU has it) and `gpu` (OpenCL, loaded at run time; the
   closest CPU backend if none) force one; `ref` keeps the double rays. The F7 overlay shows the pick and the live
   cost per backend. Design and measurements: docs/BRICKS.md (offload lane).
+- **Road bake (demo.ini `[track] bake`, off by default):** `32` or `16` samples the road band once at load into
+  float32 or 16-bit offset tiles (every exact zero stays exactly 0). On the proving ground: 313 / 188 MB, about 8 s.
+  It saves only 1–2 % of the tick, so it is off; docs/BRICKS.md has the numbers.
 - Costs and convergence tables: docs/PERFORMANCE.md.
 
 ## What is modelled
