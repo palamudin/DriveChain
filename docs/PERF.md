@@ -103,7 +103,7 @@ about a quarter. The tyre patch (phase A) is about 5 %.
 
 - M. Gipser, M. Baumann, *FTire on the Driving Simulator*, VI-grade users' conference 2018 (FTire/realtime: reduced
   resolution, smarter contact search, efficient Jacobian update, 1 ms global step). cosin scientific software,
-  *FTire HiL AC* product notes.
+  FTire hard-real-time HiL product notes (cosin.eu).
 - A. J. C. Schmeitz, H. B. Pacejka, *A semi-empirical three-dimensional tyre model for rolling over arbitrary road
   unevennesses*, Vehicle System Dynamics 41 (suppl.), 2004. MF-Tyre/MF-Swift 6.2 manual (effective road plane from
   elliptical cams; rigid ring valid to 60-100 Hz).
