@@ -26,6 +26,16 @@ DriveChain has a C core with a Unity frontend (P/Invoke) and a raylib test drive
   pick never changes a result. `cpu`, `cpu_simd` (AVX2 when the CPU has it) and `gpu` (OpenCL, loaded at run time; the
   closest CPU backend if none) force one; `ref` keeps the double rays. The F7 overlay shows the pick and the live
   cost per backend. Design and measurements: docs/BRICKS.md (offload lane).
+  `xcheck = N` re-runs every Nth lane batch on the plain CPU path in the same tick and reports contact flips and the
+  largest differences (F7 second lane line and the F8 dump). The F7 lane line also gives per-backend µs/call, the GPU
+  upload / exec / readback split and the count of planar-patch skips (flat ground never calls the lane).
+- **Input record / replay (demo.ini `[replay]`):** F9 starts recording the driver inputs from a flying restart at the
+  current pose and speed; F9 again writes `replay_<YYYYmmdd_HHMMSS>.dcr` next to the executable. `file = <recording>`
+  replays it from its start pose (F9 restarts it) and checks the end-state hash: bit-identical on the same backend, and
+  across cpu / cpu_simd / gpu / auto, which share bits; `ref` rounds differently, so record and replay with the same
+  `[offload] patch` class. `dump = 1` (default) writes the F8 perf dump when the replay ends; the dump names the backend
+  and the replay file. A replay refuses a different tick rate, substeps, model, solver, bricks, map, bake or car
+  parameters. Check: `make replaytest`.
 - **Road bake (demo.ini `[track] bake`, off by default):** `32` or `16` samples the road band once at load into
   float32 or 16-bit offset tiles (every exact zero stays exactly 0). On the proving ground: 313 / 188 MB, about 8 s.
   It saves only 1–2 % of the tick, so it is off; docs/BRICKS.md has the numbers.
@@ -99,7 +109,7 @@ The demo's proving layout includes:
 
 The demo spawns at the start hub on the dynamics pad (signposted; `[start] spot` in demo.ini). Keys 1–9 and 0 teleport to the spots: hub, start, skidpad, pave, undulations, oval, slalom, bumps, ruts, bumpy_corner. The list shows on the HUD for ~10 s at start, and F1 toggles it. F2 toggles the x-ray view, F3 cycles the HUD and F4 shows the force arrows. Screenshots are in results/shots/ (gitignored, because they render the private mesh).
 
-**Perf overlay (F7, off by default).** It covers the last 10 s of physics ticks: mean, p99 and max per stage (the tyre phase is split into its wheel sub-stages), the share of ticks over the tick budget, the six worst spikes with their dominant stage and a cause tag (kerb = a rough or kerb surface under a tyre, load-jump = a wheel load changing faster than 200 kN/s, fast-steer = the wheel turning faster than 360°/s), the physics real-time factor (tick budget divided by the mean tick cost, and simulated time divided by wall time), tick rate × substeps, solver threads, the CPU model and thread count, the GPU name, render fps, the offload lane's table memory, and the backend for each stage. **F8** writes `perf_dump_<YYYYmmdd_HHMMSS>.txt` next to the executable: a `#`-commented summary followed by the per-tick CSV of the same window. Recording is always on in the demo build (`-DDC_PROF`, a fixed 16384-tick ring allocated at start). The overlay recomputes its statistics twice a second and allocates nothing while it runs. `DEMO_PERF=1` starts the demo with the overlay shown.
+**Perf overlay (F7, off by default).** It covers the last 10 s of physics ticks: mean, p99 and max per stage (the tyre phase is split into its wheel sub-stages), the share of ticks over the tick budget, the six worst spikes with their dominant stage and a cause tag (kerb = a rough or kerb surface under a tyre, load-jump = a wheel load changing faster than 200 kN/s, fast-steer = the wheel turning faster than 360°/s), the physics real-time factor (tick budget divided by the mean tick cost, and simulated time divided by wall time), tick rate × substeps, solver threads, the CPU model and thread count, the GPU name, render fps, the offload lane's table memory, and the backend for each stage. **F9** records / replays inputs (see `[replay]`). **F8** writes `perf_dump_<YYYYmmdd_HHMMSS>.txt` next to the executable: a `#`-commented summary followed by the per-tick CSV of the same window. Recording is always on in the demo build (`-DDC_PROF`, a fixed 16384-tick ring allocated at start). The overlay recomputes its statistics twice a second and allocates nothing while it runs. `DEMO_PERF=1` starts the demo with the overlay shown.
 
 ## Demo car setup (`[car] setup` in demo.ini)
 
