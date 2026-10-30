@@ -205,6 +205,8 @@ DC_API int dc_offload_parse(const char* s) {
 }
 DC_API const char* dc_offload_name(int b) { return dc_lane_backend_name(b); }
 DC_API void dc_set_pool_opts(dc_car* c, double spin_us, int affinity) { dc_pool_set_spin(c->pool, spin_us); if (c->pool && affinity >= -1) dc_pool_set_affinity(c->pool, affinity); }
+DC_API int dc_set_pool_cpus(dc_car* c, const int* cpu, int n, int prio) { return c && c->pool ? dc_pool_set_cpus(c->pool, cpu, n, prio) : 0; }
+DC_API int dc_pool_prio_status(const dc_car* c) { return c && c->pool ? dc_pool_prio_get(c->pool) : -1; }
 DC_API void dc_prewake(dc_car* c) { dc_pool_prewake(c->pool); }
 double dc_wall(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec + 1e-9 * t.tv_nsec; }
 #ifdef DC_PROF

@@ -565,7 +565,7 @@ static void po_lane2(char* b, int nb, char* b2, int nb2, double* mem_kb) {
 static void draw_perf(int sw_, int sh_, double fps) {
     po_update(0);
     char b[640], lane[320], lane2[256]; double mem_kb; po_lane2(lane, sizeof lane, lane2, sizeof lane2, &mem_kb);
-    int x = sw_ - 560, y = 10, w = 550, h = 175 + 15 * (PO.nrow + PO.nspk + 2);
+    int x = sw_ - 560, y = 10, w = 550, h = 190 + 15 * (PO.nrow + PO.nspk + 2);
     DrawRectangle(x - 8, y - 4, w + 4, h, (Color){0, 0, 0, 170});
     Color hc = (Color){255, 220, 120, 255}, tc = RAYWHITE, dc = (Color){180, 220, 255, 255};
     snprintf(b, sizeof b, "PERF  (F7 hide, F8 dump)  last %.1f s, %d ticks", PO.win_s, PO.n); DrawText(b, x, y, 16, hc); y += 20;
@@ -573,6 +573,7 @@ static void draw_perf(int sw_, int sh_, double fps) {
              SIM.threads, VIEW.solver == 1 ? "multibody" : "legacy", SIM.P.model == DC_MODEL_FAST ? "fast" : "reference", PO.rt, PO.simwall); DrawText(b, x, y, 13, tc); y += 15;
     snprintf(b, sizeof b, "over budget (%.0f us): %.2f %% of ticks   render %.0f fps", PO.budget_us, PO.over_pct, fps); DrawText(b, x, y, 13, PO.over_pct > 0.5 ? ORANGE : tc); y += 15;
     snprintf(b, sizeof b, "CPU %s (%d threads)", PO.cpu, PO.cores); DrawText(b, x, y, 13, dc); y += 15;
+    sim_affinity_desc(&SIM, b, sizeof b); DrawText(b, x, y, 12, dc); y += 15;
     snprintf(b, sizeof b, "GPU %s", PO.gpu); DrawText(b, x, y, 13, dc); y += 15;
     snprintf(b, sizeof b, "lane tables %.0f KB   %s", mem_kb, lane); DrawText(b, x, y, 12, dc); y += 15;
     if (*lane2) { DrawText(lane2, x, y, 12, dc); y += 15; }
@@ -618,6 +619,7 @@ static void perf_dump_file(double fps) {
             SIM.P.model == DC_MODEL_FAST ? "fast" : "reference");
     fprintf(f, "# CPU %s (%d threads)\n# GPU %s\n# render %.0f fps\n# lane tables %.0f KB; %s\n", PO.cpu, PO.cores, PO.gpu, fps, mem_kb, lane);
     if (*lane2) fprintf(f, "# %s\n", lane2);
+    { char ab[400]; sim_affinity_desc(&SIM, ab, sizeof ab); fprintf(f, "# %s (physics.affinity = %s, physics.priority = %s)\n", ab, cfg_str(&CFG, "physics.affinity", "off"), cfg_str(&CFG, "physics.priority", "normal")); }
     fprintf(f, "# offload.patch = %s (in use %s); input %s", cfg_str(&CFG, "offload.patch", "ref"), dc_offload_name(SIM.offload_patch),
             VIEW.rep_on || VIEW.rep_done ? "replay" : VIEW.rec_on ? "live, recording" : "live");
     if (VIEW.rep_on || VIEW.rep_done) fprintf(f, " %s, tick %d / %d%s", VIEW.rep_path, VIEW.rep_i, VIEW.rep_n, VIEW.rep_done ? (VIEW.rep_match ? ", ended bit-identical" : ", ended DIFFERENT from the recording") : "");
@@ -968,6 +970,7 @@ int main(int argc, char** argv) {
     AUD.tyre_gain = (float)cfg_num(&CFG, "audio.tyres", 1.0); AUD.road_gain = (float)cfg_num(&CFG, "audio.road", 1.0); AUD.wind_gain = (float)cfg_num(&CFG, "audio.wind", 1.0);
     if (headless && (getenv("DEMO_SPOT") || !cfg_str(&CFG, "start.spot", NULL))) cfg_set(&CFG, "start.spot", getenv("DEMO_SPOT") ? getenv("DEMO_SPOT") : "start");   /* autopilot shots start on the straight */
     if (headless) { cfg_set(&CFG, "input.device", "keyboard"); if (!getenv("DEMO_MANUAL")) cfg_set(&CFG, "autopilot.enabled", "1"); }
+    if (!cfg_str(&CFG, "physics.affinity", NULL)) cfg_set(&CFG, "physics.affinity", "auto");   /* demo default (the core and the test harness default to off) */
     if (!sim_init(&SIM, &CFG, &TRK, &AUD, err, sizeof err)) { fprintf(stderr, "car init failed: %s\n", err); return 1; }
     snprintf(SIM.rec_dir, sizeof SIM.rec_dir, "%s", GetApplicationDirectory());   /* F9 recordings go next to the exe */
     { const char* rf = cfg_str(&CFG, "replay.file", ""); char e2[300];   /* relative [replay] file: retry next to the exe */

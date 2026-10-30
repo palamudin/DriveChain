@@ -65,12 +65,40 @@ static int make_car(sim_t* S) {
     bake_sync(S);
     if (S->bake) dc_set_road(S->car, roadbake_road_fn, S->bake); else dc_set_road(S->car, track_road_fn, S->trk); dc_set_road_flags(S->car, DC_ROAD_HEIGHT_ONLY | DC_ROAD_STATIC);   /* tracks are static */
     { int nt = (int)cfg_num(S->cfg, "physics.threads", 1); S->threads = nt > 1 ? dc_set_threads(S->car, nt) : 1; }
-    if (S->threads > 1) dc_set_pool_opts(S->car, cfg_num(S->cfg, "physics.pool_spin_us", 500), (int)cfg_num(S->cfg, "physics.affinity", -1));   /* opt-in step worker threads (track_road_fn is pure) */
+    if (S->threads > 1) dc_set_pool_opts(S->car, cfg_num(S->cfg, "physics.pool_spin_us", 500), -2);   /* opt-in step worker threads (track_road_fn is pure) */
+    /* thread placement: helpers pinned (or reset to the process mask: a new pool inherits the physics thread's pin)
+       here on every car rebuild, the physics thread pins itself on its next tick.
+       Harness default off (parallel test runs must not share cores); the interactive demo sets auto. */
+    { const char* as = cfg_str(S->cfg, "physics.affinity", "off");
+      int prio = dc_affinity_parse_prio(cfg_str(S->cfg, "physics.priority", "normal"));
+      int c0 = S->aff.cpu[0], p0 = S->prio, had = S->aff.nthreads > 0;
+      dc_affinity_plan(as, S->threads, &S->aff); S->prio = prio;
+      S->aff_pool_ok = S->threads > 1 ? dc_set_pool_cpus(S->car, S->aff.cpu, S->threads, prio) : -1;
+      S->aff_hprio = S->threads > 1 && prio ? -1 : 6;
+      if (!had || c0 != S->aff.cpu[0] || p0 != prio) S->aff_self_res = -1; }
     S->offload_patch = dc_set_offload(S->car, DC_STAGE_PATCH, dc_offload_parse(cfg_str(S->cfg, "offload.patch", "ref")));   /* compute-offload lane (fast model) */
     dc_set_offload_xcheck(S->car, cfg_int(S->cfg, "offload.xcheck", 0));   /* 0 off; n = re-run every n-th non-cpu lane batch on cpu, same tick */
     return 1;
 }
 
+/* one line for the F7 overlay / perf dump: "affinity auto: CCD 0 (96 MB L3, 8 cores) cpus 2,4,6,8 | priority normal ok" */
+void sim_affinity_desc(const sim_t* S, char* b, int n) {
+    const dc_affinity_info* A = &S->aff; int k = 0;
+    k += snprintf(b + k, n - k, "affinity %s", A->why[0] ? A->why : "off");
+    if (A->pinned > 0 && k < n) {
+        k += snprintf(b + k, n - k, ", %d cores", A->dom >= 0 && A->dom < 8 ? A->dom_cores[A->dom] : 0);
+        k += snprintf(b + k, n - k, "; cpus phys %d, helpers", A->cpu[0]);
+        for (int t = 1; t < A->nthreads && k < n; t++) k += snprintf(b + k, n - k, "%s%d", t > 1 ? "," : " ", A->cpu[t]);
+        if (A->smt_shared && k < n) k += snprintf(b + k, n - k, " (SMT shared)");
+    }
+    if (k < n && A->ndom > 1) { k += snprintf(b + k, n - k, " [L3:"); for (int d = 0; d < A->ndom && d < 8 && k < n; d++) k += snprintf(b + k, n - k, " %.0fMB/%dc", A->l3_mb[d], A->dom_cores[d]); if (k < n) k += snprintf(b + k, n - k, "]"); }
+    if (k < n) {
+        int sr = S->aff_self_res, hp = S->aff_hprio;
+        const char* pin = A->pinned <= 0 ? "" : (sr < 0 ? " pin pending" : ((sr & 1) && S->aff_pool_ok != 0 ? " pin ok" : " pin FAILED"));
+        const char* pr = S->prio == 0 ? "" : (sr < 0 || hp < 0 ? " pending" : (((sr & 2) && (hp & 2)) ? ((sr & 4) ? " ok (MMCSS Games)" : " ok") : " denied"));
+        snprintf(b + k, n - k, " |%s priority %s%s", pin, dc_affinity_prio_name(S->prio), pr);
+    }
+}
 int sim_init(sim_t* S, cfg_t* cfg, track_t* trk, audio_t* audio, char* err, int errlen) {
     memset(S, 0, sizeof *S);
     S->cfg = cfg; S->trk = trk; S->audio = audio;
@@ -410,6 +438,11 @@ void sim_tick(sim_t* S, double dt) {
     }
 }
 static void sim_tick_body(sim_t* S, double dt) {
+    if (S->aff_self_res < 0) {   /* first tick in the thread that runs the physics (demo: phys_thread) */
+        S->aff_self_cpu = S->aff.cpu[0];
+        S->aff_self_res = (S->aff.cpu[0] >= 0 || S->prio || S->aff_self_cpu > 0) ? dc_pin_thread(S->aff.cpu[0], S->prio) : 0;
+    }
+    if (S->aff_hprio < 0) S->aff_hprio = dc_pool_prio_status(S->car);   /* helpers apply the priority at their first run */
     S->tick_n = 0; S->tick_step_us = 0;
     sim_ctl* C = &S->ctl;
     if (C->rec_toggle != S->ctl_seen.rec_toggle) {   /* F9: replay stop / again, else record start / stop */

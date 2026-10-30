@@ -378,6 +378,46 @@ DC_API int    dc_set_threads(dc_car* c, int n);
 /* worker-pool timing knobs (no effect on results): helpers spin spin_us after a run before sleeping (default 500);
    affinity >= 0 pins helper i to core affinity + i (opt-in, -1 = unpinned, default). Call after dc_set_threads. */
 DC_API void   dc_set_pool_opts(dc_car* c, double spin_us, int affinity);
+/* thread placement (host-side helpers, no effect on results). dc_affinity_plan reads the CPU topology (Linux sysfs,
+   Windows GetLogicalProcessorInformationEx; the process affinity mask is respected) and picks one logical CPU per
+   step thread: cpu[0] for the physics (calling) thread, cpu[i] for pool helper i. Specs:
+     "off" (or "-1")  no pinning
+     "auto"           pin only if one L3 domain (CCD) has >= nthreads allowed physical cores: the largest L3 first,
+                      then the faster efficiency class; one logical CPU per physical core (no SMT siblings), and the
+                      core holding CPU 0 is skipped when the domain has a spare core. Otherwise nothing is pinned.
+     "vcache"         the largest-L3 domain even if SMT siblings are needed to fit (threads beyond it stay unpinned)
+     "2,4,6,8" "2-5"  explicit logical CPU list, physics thread first, then helpers (missing entries stay unpinned)
+     "N"              legacy numeric key: physics thread on N, helper i on N + i
+   Nothing is pinned by the plan itself: apply with dc_set_pool_cpus (helpers) and dc_pin_thread (the physics thread,
+   from that thread). Priority: 0 normal, 1 high (Windows THREAD_PRIORITY_HIGHEST; Linux nice -5, needs
+   CAP_SYS_NICE / RLIMIT_NICE, else reported as denied), 2 mmcss (Windows: MMCSS task "Games" via avrt.dll, falls back
+   to high; Linux: as high). */
+#define DC_AFF_MAXT 16
+typedef struct {
+    int mode;                  /* 0 off, 1 auto, 2 vcache, 3 list, 4 legacy first-core */
+    int nthreads;              /* threads planned (physics + helpers) */
+    int cpu[DC_AFF_MAXT];      /* logical CPU per thread, -1 = unpinned */
+    int pinned;                /* threads with a CPU in the plan */
+    int dom, ndom;             /* chosen L3 domain (index in topology order, -1 none) and domains found */
+    double dom_l3_mb;          /* L3 size of the chosen domain */
+    double l3_mb[8];           /* L3 size of each domain (first 8) */
+    int dom_cores[8];          /* allowed physical cores per domain (first 8) */
+    int nlogical, ncores;      /* allowed logical CPUs / physical cores */
+    int smt_shared;            /* 1 if two planned threads share a physical core */
+    int topo_ok;               /* topology read */
+    char why[96];              /* plan decision in words */
+} dc_affinity_info;
+DC_API int  dc_affinity_plan(const char* spec, int nthreads, dc_affinity_info* out);   /* 1 = something to pin */
+DC_API int  dc_affinity_parse_prio(const char* s);                                      /* "normal|high|mmcss" -> 0/1/2 */
+DC_API const char* dc_affinity_prio_name(int prio);
+/* pin the calling thread to a logical CPU (-1 = the process mask) and set its priority; returns bit 0 = affinity ok,
+   bit 1 = priority ok (as requested), bit 2 = mmcss active */
+DC_API int  dc_pin_thread(int cpu, int prio);
+/* helpers: helper i -> cpu[i] for i = 1..n-1 (cpu[0] is the physics thread, ignored here), priority applied by each
+   helper at its next run. Returns 1 if all affinity calls succeeded; *prio_ok (optional) reports the helpers' result
+   after their next run (dc_pool_prio_status). Call after dc_set_threads. */
+DC_API int  dc_set_pool_cpus(dc_car* c, const int* cpu, int n, int prio);
+DC_API int  dc_pool_prio_status(const dc_car* c);   /* bitwise AND over helpers of dc_pin_thread's priority bits (-1 none yet) */
 /* wake sleeping helpers ahead of the next dc_step (hosts that sleep between ticks call it ~0.2-0.5 ms before the tick) */
 DC_API void   dc_prewake(dc_car* c);
 /* compute-offload lane: per stage backend. Stages: DC_STAGE_PATCH = the fast model's TARMAC patch rays (float32

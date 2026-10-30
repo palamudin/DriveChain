@@ -15,4 +15,7 @@ void     dc_pool_prewake(dc_pool* p);                  /* wake sleeping helpers 
                                                           condvar wake-up latency when called shortly before the next run */
 void     dc_pool_set_spin(dc_pool* p, double spin_us);
 int      dc_pool_set_affinity(dc_pool* p, int first_core); /* pin helper i to core first_core + i (-1: unpin); 1 ok */
+int      dc_pool_set_cpus(dc_pool* p, const int* cpu, int n, int prio); /* helper i -> cpu[i] (i >= 1, -1 unpinned); prio applied
+                                                          by each helper at its next run (-1 leave) */
+int      dc_pool_prio_get(const dc_pool* p);           /* AND of the helpers' priority result bits, -1 not applied yet */
 #endif
