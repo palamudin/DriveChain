@@ -84,15 +84,25 @@ The demo's proving layout includes:
 
 The demo spawns at the start hub on the dynamics pad (signposted; `[start] spot` in demo.ini). Keys 1–9 and 0 teleport to the spots: hub, start, skidpad, pave, undulations, oval, slalom, bumps, ruts, bumpy_corner. The list shows on the HUD for ~10 s at start, and F1 toggles it. Screenshots are in results/shots/ (gitignored, because they render the private mesh).
 
-## Opt-in proposal cars (Windows build)
+## Demo car setup (`[car] setup` in demo.ini)
 
-The Windows zip ships variants of each car next to the defaults. Defaults are unchanged, and every variant is a proposal
-to drive and compare.
+- `setup = default` (shipped): the car file plus two proposal sets, each applied only where it was derived:
+  - `propBR` on multibody-core cars (`solver = 1`): compliant arm-pivot bushings (kr 2e6, ka 5e5, kt 300) and an 8 kN/mm rack mount (docs/BUSHINGS.md).
+  - `propD` on 185/60R14 cars: the TARMAC tyre study set (docs/TYRE_DATA.md).
+  - The console prints which sets were applied. `hatch_fwd` (reduced core, 205 tyres) is unchanged.
+- `setup = legacy`, or `--set car.setup=legacy`: the car file as-is, which is the earlier demo setup.
+- An absent key means `legacy`. The headless harnesses (drivetest, drvhost, perf tests) therefore keep their baselines; pass `--set car.setup=default` to them for the demo setup.
+
+## Proposal car variants (Windows build)
+
+The Windows zip ships variants of each car next to the base files. Each variant is a complete setup, so drive it with
+`setup = legacy`. With `default`, propBR/propD would be laid over it.
 - `_tarmac` / `_tarmac_brush`: the project owner's TARMAC tyre (docs/TYRE_TARMAC.md).
 - `_propF2` / `_propD`: tyre-study sets (docs/TYRE_DATA.md).
 - Multibody-core cars only (`solver = 1`):
   - `_propV`: rotary-valve pressure states (docs/VALVE.md)
   - `_propB`: compliant arm-pivot bushings (docs/BUSHINGS.md)
+  - `_propBR`: propB plus the rack mount (docs/BUSHINGS.md); the demo default on these cars
   - `_propC`: propshaft and diff-carrier inertia (docs/CARRIER.md)
 
 ## Driving it from code

@@ -39,6 +39,15 @@ The console window prints the joysticks it found, which one it picked, and wheth
   spins unless you catch it), let go of the wheel in a slide (countersteer should appear on its own),
   sustained drift on throttle, and single-wheel bumps (feel the kick in the wheel).
 
+## Car setup (`setup` in demo.ini `[car]`)
+- `setup = default` (shipped): the car file plus two proposal sets. The console prints which ones were applied.
+  - Multibody-core cars: compliant arm-pivot bushings and a stiff rack mount (`propBR`, docs/BUSHINGS.md).
+  - 185/60R14 cars, i.e. both MX-5 files: the TARMAC tyre study set `propD` (docs/TYRE_DATA.md).
+  - `hatch_fwd.ini` is unchanged.
+- `setup = legacy`: the car file exactly as written, which was the setup before this build. Use it for A/B
+  comparison, or start with `drivechain_demo.exe --set car.setup=legacy`.
+- The `*_tarmac*` / `*_prop*` car variants are complete setups of their own, so drive them with `setup = legacy`.
+
 ## Controls
 | Action | Keyboard | Wheel / pedals (SDL joystick) | Gamepad |
 |---|---|---|---|
@@ -161,7 +170,7 @@ You spawn at the **start hub**: a painted box on the flat dynamics pad inside th
     - Faithful TARMAC peaks early (≈ 2.5° slip) and loses grip quickly once sliding, so it spins where the default tyre
       recovers.
     - Add `tyre_tm_slide_floor = 1.0` (or 0.85) under `[front]` and `[rear]` for a gentler slide.
-    - The default envelope tyre remains the recommended model; see `docs/TYRE_TARMAC.md`.
+    - With `setup = default` both MX-5 files already run TARMAC via `propD`; see `docs/TYRE_TARMAC.md` and `docs/TYRE_DATA.md`.
 - `assets/miata_mesh/`: the car mesh, with wheels, calipers/hubs and the steering wheel split out so each is posed from the physics.
 
 ## Countersteer and drift

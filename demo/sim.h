@@ -59,6 +59,7 @@ typedef struct sim_s {
     /* external control hook (JSON-lines protocol, demo/drvproto.c): phase 0 before input mapping, 1 after the step */
     void (*ext_hook)(struct sim_s* S, int phase); void* ext_ctx; int ext_clients;
 } sim_t;
+int  sim_apply_setup(dc_car_params* P, const char* setup, char* err, int errlen);   /* car.setup: default (propBR + propD where applicable) | legacy */
 int  sim_init(sim_t* S, cfg_t* cfg, track_t* trk, audio_t* audio, char* err, int errlen);
 void sim_tick(sim_t* S, double dt);         /* one physics tick (dt = S->tick_dt) incl. input + FFB + audio */
 void sim_reset_on_track(sim_t* S, double s, double d, double speed);
