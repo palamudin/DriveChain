@@ -329,8 +329,8 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
     /* compute-offload lane (dc_lane.h): fast model rays as float32 lookups in a per-substep patch table */
 #ifdef DC_PROF
     if (dc_lanechk < 0) { const char* e = getenv("DC_LANECHK"); dc_lanechk = e && atoi(e) > 0; }
-#endif
     if (dc_laneq16 < 0) { const char* e = getenv("DC_LANE_Q16"); dc_laneq16 = e && atoi(e) > 0; }
+#endif
     dc_lanew* LW = fast && c->lw && dc_lane_get(c->lane, DC_LANE_PATCH) != DC_OFFLOAD_REF ? &c->lw[i] : NULL;
     int lti0 = 0, ltj0 = 0;
     {
@@ -350,10 +350,12 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
             for (int ii = i0; ii <= i1; ii++) for (int jj = j0; jj <= j1; jj++) {
                 double hn = grid_node(&GR, c, ii, jj, &gd); if (hn > hmax) hmax = hn;
                 const int q = (jj - j0) * ni + (ii - i0); LW->T.h[q] = (float)(hn - cw.z); LW->T.g[q] = (float)gd;
+#ifdef DC_PROF
                 if (dc_laneq16) {   /* measurement: 16-bit table entries (h: 2^-16 m steps, +-0.5 m; grip: 2^-14 steps); exact 0 stays 0 */
                     double hq = fmin(fmax(hn - cw.z, -0.5), 0.5 - 1.0 / 65536); LW->T.h[q] = (float)(rint(hq * 65536) / 65536);
                     LW->T.g[q] = (float)(rint(fmin(fmax(gd, 0), 3.99) * 16384) / 16384);
                 }
+#endif
                 if (planar && (gd != pg || fabs(hn - (pa + pbx * (ii - i0) + pby * (jj - j0))) > TM_PLANE_TOL)) planar = 0;
             }
         } else if (fast) {   /* fast model: is every node the footprint can touch on one plane (and one grip)? then bilinear = plane, exactly */
