@@ -186,10 +186,13 @@ dc_mbcar* dc_mbcar_create(dc_car* c) {
     if (!m->W) { free(m); return NULL; }
     mb_world* W = m->W;
     if (P->model == DC_MODEL_FAST) {   /* bounded PGS: the solves of one tick share a sweep budget (fair share of what is left,
-                                          carried over), each solve also stops at the reference cap and exits exact limit cycles */
-        W->fast = 1; W->pgs_cap0 = W->pgs_iters; W->tick_budget = DC_FAST_TICK_SWEEPS; W->budget_floor = DC_FAST_SWEEP_FLOOR;
+                                          carried over), each solve also stops at the reference cap and exits exact limit cycles; the friction-circle
+                                          re-solve reuses the pass-0 factor by a Woodbury low-rank update (mb_resolve_lowrank) */
+        W->fast = 1; W->pgs_cap0 = W->pgs_iters; W->tick_budget = DC_FAST_TICK_SWEEPS; W->budget_floor = DC_FAST_SWEEP_FLOOR; m->lowrank = 1;
 #ifdef DC_PROF
         if (getenv("DC_FAST_BUDGET")) W->tick_budget = atoi(getenv("DC_FAST_BUDGET"));   /* measurement builds only */
+        if (getenv("DC_FAST_LOWRANK")) m->lowrank = atoi(getenv("DC_FAST_LOWRANK"));
+        if (getenv("DC_FAST_DOT4")) W->dot4 = atoi(getenv("DC_FAST_DOT4"));
 #endif
     }
     v3 off = V3(P->sprung_cg[0], P->sprung_cg[1], P->sprung_cg[2]);
@@ -824,7 +827,7 @@ void dc_mbcar_step(dc_car* c) {
             int cap = W->budget_left / rem; if (cap < W->budget_floor) cap = W->budget_floor; if (cap > W->pgs_cap0) cap = W->pgs_cap0;
             W->pgs_iters = cap;
         }
-        mb_solve(W);
+        if (pass > 0 && m->lowrank) mb_resolve_lowrank(W); else mb_solve(W);
         if (W->fast && W->tick_budget > 0) W->budget_left -= W->pgs_used;
         DCP_RESET(tp);
         int redo = 0;

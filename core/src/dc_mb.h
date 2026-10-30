@@ -72,6 +72,7 @@ typedef struct {                     /* force element, filled each step */
     int nb, b[3];
     double j[3][6];
     double f, k, c, gd;              /* force along +j, df/dg (<=0 stable), df/dgdot (<=0), current gdot */
+    double s_asm;                    /* matrix weight -(h c + h^2 k) used by the last assemble (low-rank re-solve) */
 } mb_elem;
 
 typedef struct {
@@ -123,6 +124,13 @@ typedef struct {
     int pgs_used;                     /* sweeps run by the last solve */
     double pgs_hist[8][MB_MAXBOX];    /* fast: last PGS iterates, exact limit-cycle detection (see mb_solve) */
     long long pgs_cycle_exits;        /* fast: solves finished by the limit-cycle shortcut (diagnostic) */
+    int dot4;                         /* fast: PGS row dots with 4 partial sums (latency-bound chain split; rounding differs) */
+    unsigned char ce_ok[MB_MAXBOX];   /* isotropic-group eigen-decomposition of its diagonal Schur block, cached per solve */
+    double ce_w[MB_MAXBOX * 6], ce_Q[MB_MAXBOX * 36], ce_F[MB_MAXBOX * 36];   /* ok bit 1: eigen, bit 2: elimination factors */
+#define MB_LR 6
+    double* lr_y; int lr_k, lr_el[MB_LR]; double lr_ci[MB_LR * MB_LR];   /* fast: Woodbury re-solve, Y = K^-1 U, C^-1 */
+    double lr_P[MB_MAXBOX * MB_LR];
+    long long lr_solves;              /* re-solves done by the low-rank update (diagnostic) */
     /* stats */
     double pgs_res; int fact_fail; int pgs_it;
     int pgs_ncapped;                  /* solves that ended at the pgs_iters cap (cumulative, diagnostic) */
@@ -163,6 +171,11 @@ void mb_begin(mb_world* W, double h); /* R, Iw; clears F/T and elements; evaluat
 void mb_eval_joint(mb_world* W, int j);
 int  mb_elem_add(mb_world* W, int nb, const int* b, double j[][6], double f, double k, double c);
 void mb_solve(mb_world* W);          /* V+ (velocities only) */
+/* fast model: re-solve after changing only force-element f/c/k and body F/T (velocities restored to the values of the
+   last mb_solve). The changed element weights are a low-rank update of the factored K, applied exactly with the
+   Sherman-Morrison-Woodbury identity to the free solution, the box-row Schur complement and the source couplings,
+   so no refactor and no Schur rebuild; PGS then runs as in mb_solve (warm-started from the last solve). */
+void mb_resolve_lowrank(mb_world* W);
 void mb_integrate(mb_world* W, int project);
 /* helpers */
 void mb_row_point(const mb_body* B, v3 p, v3 u, double out[6]);  /* force u at world point p -> 6-row */

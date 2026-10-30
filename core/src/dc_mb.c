@@ -25,7 +25,7 @@ static void prof_knobs(void) {
 void mb_destroy(mb_world* W) {
     if (!W) return;
     free(W->nbr); free(W->nbr_blk); free(W->blkpos); free(W->blk); free(W->L); free(W->D); free(W->Dinv);
-    free(W->x); free(W->r); free(W->z); free(W->zb); free(W->gb); free(W->rch); free(W->yv); free(W->gv); free(W->vr_sj); free(W->vr_row); free(W->Cv); free(W);
+    free(W->x); free(W->r); free(W->z); free(W->zb); free(W->gb); free(W->rch); free(W->yv); free(W->gv); free(W->vr_sj); free(W->vr_row); free(W->Cv); free(W->lr_y); free(W);
 }
 
 static m3 m3inv(const m3* A) {
@@ -370,6 +370,7 @@ int mb_finalize(mb_world* W) {
     W->vr_sj = (int*)calloc((size_t)W->nvr_max + 1, sizeof(int)); W->vr_row = (int*)calloc((size_t)W->nvr_max + 1, sizeof(int));
     W->yv = (double*)calloc((size_t)W->nvr_max * N + 1, sizeof(double)); W->gv = (double*)calloc((size_t)W->nvr_max * N + 1, sizeof(double));
     W->Cv = (double*)calloc((size_t)W->nvr_max * MB_MAXBOX + 1, sizeof(double));
+    W->lr_y = (double*)calloc((size_t)MB_LR * N + 1, sizeof(double));
     (void)orig; free(orig); free(adj); free(elim);
     #undef ADJ
     W->ready = 1;
@@ -461,7 +462,7 @@ static void ksolve(const mb_world* W, double* x) {
 
 /* ------------------------------------------------------------------ per step */
 void mb_begin(mb_world* W, double h) {
-    W->h = h; W->ne = 0;
+    W->h = h; W->ne = 0; W->lr_k = 0;
     for (int i = 0; i < W->nb; i++) {
         mb_body* B = &W->B[i];
         B->R = qtom(B->q);
@@ -521,6 +522,7 @@ static void assemble(mb_world* W) {
     for (int e = 0; e < W->ne; e++) {
         mb_elem* E = &W->E[e];
         double s = -(h * E->c + h * h * E->k); if (s < 0) s = 0;
+        E->s_asm = s;
         double ff = h * (E->f - E->c * E->gd);
         for (int a = 0; a < E->nb; a++) {
             int ba = E->b[a]; if (ba < 0) continue;
@@ -547,8 +549,52 @@ static void assemble(mb_world* W) {
     }
 }
 
+/* right-hand side only (same expressions as assemble) */
+static void assemble_rhs(mb_world* W) {
+    int nb = W->nb; double h = W->h;
+    memset(W->r, 0, sizeof(double) * W->N);
+    for (int i = 0; i < nb; i++) {
+        mb_body* B = &W->B[i]; double* r = W->r + W->off[i];
+        v3 L = mv(&B->Iw, B->w), g = gyro_impulse(B, h);
+        r[0] = B->m * B->v.x + h * B->F.x; r[1] = B->m * B->v.y + h * B->F.y; r[2] = B->m * B->v.z + h * B->F.z;
+        r[3] = L.x + h * B->T.x + g.x; r[4] = L.y + h * B->T.y + g.y; r[5] = L.z + h * B->T.z + g.z;
+    }
+    for (int e = 0; e < W->ne; e++) {
+        mb_elem* E = &W->E[e];
+        double ff = h * (E->f - E->c * E->gd);
+        for (int a = 0; a < E->nb; a++) { int ba = E->b[a]; if (ba < 0) continue; double* r = W->r + W->off[ba]; for (int q = 0; q < 6; q++) r[q] += E->j[a][q] * ff; }
+    }
+    for (int j = 0; j < W->nj; j++) {
+        int nd = W->node_of_joint[j]; if (nd < 0) continue;
+        double* r = W->r + W->off[nd]; for (int a = 0; a < W->Jt[j].m; a++) r[a] = W->Jt[j].t[a];
+    }
+}
+static double elem_dot(const mb_world* W, const mb_elem* E, const double* x) {
+    double s = 0; for (int a = 0; a < E->nb; a++) { int b = E->b[a]; if (b < 0) continue; for (int q = 0; q < 6; q++) s += E->j[a][q] * x[W->off[b] + q]; } return s;
+}
+static double brow_dot(const mb_world* W, int s, const double* x) {
+    const mb_joint* J = &W->Jt[W->box_j[s]]; int r = W->box_r[s]; double u = 0;
+    for (int k = 0; k < J->nb; k++) { int b = J->b[k]; if (b < 0) continue; for (int q = 0; q < 6; q++) u += J->J[r][k][q] * x[W->off[b] + q]; }
+    return u;
+}
+/* x <- x - Y C^-1 U' x  (K'^-1 b from K^-1 b) */
+static void lr_correct(const mb_world* W, double* x) {
+    int k = W->lr_k, N = W->N; double z[MB_LR], w[MB_LR];
+    for (int a = 0; a < k; a++) z[a] = elem_dot(W, &W->E[W->lr_el[a]], x);
+    for (int a = 0; a < k; a++) { double t = 0; for (int b = 0; b < k; b++) t += W->lr_ci[a * k + b] * z[b]; w[a] = t; }
+    for (int a = 0; a < k; a++) { const double* y = W->lr_y + (size_t)a * N; for (int i = 0; i < N; i++) x[i] -= y[i] * w[a]; }
+}
+
 /* load-dependent friction bound of box joint J from the normal reactions of its source joints, evaluated at the
    current box impulses: factorised multipliers are mu = x_free + sum_s zb_s hb_s (lambda = -mu, sign irrelevant). */
+static inline double dot4(const double* a, const double* b, int n) {
+    double s0 = 0, s1 = 0, s2 = 0, s3 = 0; int i = 0;
+    for (; i + 4 <= n; i += 4) { s0 += a[i] * b[i]; s1 += a[i + 1] * b[i + 1]; s2 += a[i + 2] * b[i + 2]; s3 += a[i + 3] * b[i + 3]; }
+    for (; i < n; i++) s0 += a[i] * b[i];
+    return (s0 + s1) + (s2 + s3);
+}
+/* reference order (strictly sequential) or, in the fast model with dot4, four partial sums */
+#define ROWDOT(W, acc, row, v, n) do { if ((W)->dot4) (acc) += dot4((row), (v), (n)); else { const double* r_ = (row); for (int t_ = 0; t_ < (n); t_++) (acc) += r_[t_] * (v)[t_]; } } while (0)
 static double fric_bound(const mb_world* W, const mb_joint* J, int nbx) {
     double B = J->pre; int N = W->N, jj = (int)(J - W->Jt);
     for (int k = 0; k < J->nsrc; k++) {
@@ -557,7 +603,7 @@ static double fric_bound(const mb_world* W, const mb_joint* J, int nbx) {
         for (int a = 0; a < nr; a++) {
             int o = W->off[nd] + J->src[k].r0 + a; double x = W->x[o];
             if (W->schur_dense) for (int s = 0; s < nbx; s++) x += W->zb[(size_t)s * N + o] * W->hb[s];
-            else { const double* C = W->Cv + (size_t)(W->vr_off[jj][k] + a) * MB_MAXBOX; for (int s = 0; s < nbx; s++) x += C[s] * W->hb[s]; }
+            else { const double* C = W->Cv + (size_t)(W->vr_off[jj][k] + a) * MB_MAXBOX; ROWDOT(W, x, C, W->hb, nbx); }
             v[a] = x;
         }
         v3 ax = J->src[k].ax;
@@ -568,13 +614,6 @@ static double fric_bound(const mb_world* W, const mb_joint* J, int nbx) {
     return B;
 }
 
-/* small dense SPD solve (n <= 6), Gaussian elimination without pivoting (A is SPD) */
-static void spd_solve(int n, const double* A, double mu, const double* b, double* x) {
-    double M[6][7];
-    for (int i = 0; i < n; i++) { for (int j = 0; j < n; j++) M[i][j] = A[i * 6 + j] + (i == j ? mu : 0); M[i][n] = b[i]; }
-    for (int k = 0; k < n; k++) for (int i = k + 1; i < n; i++) { double f = M[i][k] / M[k][k]; for (int j = k; j <= n; j++) M[i][j] -= f * M[k][j]; }
-    for (int i = n - 1; i >= 0; i--) { double v = M[i][n]; for (int j = i + 1; j < n; j++) v -= M[i][j] * x[j]; x[i] = v / M[i][i]; }
-}
 /* symmetric eigen-decomposition (cyclic Jacobi), n <= 6: A = Q diag(w) Q', Q column-major in q[i*6+k] = Q_ik */
 static void sym_eig(int n, const double* A, double* w, double* q) {
     double a[6][6];
@@ -599,14 +638,31 @@ static void sym_eig(int n, const double* A, double* w, double* q) {
    Sliding case: the secular equation in the eigenbasis of A, |l(mu)|^2 = sum c_i^2/(w_i+mu)^2 = B^2 (c = -Q'b),
    solved by safeguarded Newton on 1/|l| - 1/B (More & Sorensen 1983) inside a bisection bracket. Each iteration is
    O(n) scalar work, so ill-conditioned blocks (near-singular A, the "hard case") cost no extra linear solves. */
-static void cone_block(int n, const double* A, const double* b, double B, double* l) {
+/* spd_solve with mu = 0 split into the elimination of A (multipliers below, U above the diagonal) and the right-hand
+   side sweep, performing exactly the same floating-point operations in the same order, so a factor reused for many
+   right-hand sides gives the same bits as spd_solve */
+static void spd_fac(int n, const double* A, double* F) {
+    double M[6][6];
+    for (int i = 0; i < n; i++) for (int j = 0; j < n; j++) M[i][j] = A[i * 6 + j] + (i == j ? 0.0 : 0);
+    for (int k = 0; k < n; k++) for (int i = k + 1; i < n; i++) { double f = M[i][k] / M[k][k]; for (int j = k; j < n; j++) M[i][j] -= f * M[k][j]; M[i][k] = f; }
+    for (int i = 0; i < n; i++) for (int j = 0; j < n; j++) F[i * 6 + j] = M[i][j];
+}
+static void spd_fsolve(int n, const double* F, const double* b, double* x) {
+    double r[6]; for (int i = 0; i < n; i++) r[i] = b[i];
+    for (int k = 0; k < n; k++) for (int i = k + 1; i < n; i++) r[i] -= F[i * 6 + k] * r[k];
+    for (int i = n - 1; i >= 0; i--) { double v = r[i]; for (int j = i + 1; j < n; j++) v -= F[i * 6 + j] * x[j]; x[i] = v / F[i * 6 + i]; }
+}
+static void cone_block(int n, const double* A, const double* b, double B, double* l, unsigned char* ok, double* wc, double* Qc, double* Fc) {
     double nb[6]; for (int i = 0; i < n; i++) nb[i] = -b[i];
-    spd_solve(n, A, 0, nb, l);
+    if (!(*ok & 2)) { spd_fac(n, A, Fc); *ok |= 2; }
+    spd_fsolve(n, Fc, nb, l);
     double n2 = 0; for (int i = 0; i < n; i++) n2 += l[i] * l[i];
     if (B <= 0) { for (int i = 0; i < n; i++) l[i] = 0; return; }
     if (n2 <= B * B) return;
-    double w[6], Q[36], c[6], cn = 0, wmax = 0;
-    sym_eig(n, A, w, Q);
+    /* the block A is constant during one PGS solve: its eigen-decomposition is computed once and reused (same values) */
+    double w[6], c[6], cn = 0, wmax = 0; const double* Q = Qc;
+    if (!(*ok & 1)) { sym_eig(n, A, wc, Qc); *ok |= 1; }
+    for (int i = 0; i < n; i++) w[i] = wc[i];
     for (int i = 0; i < n; i++) wmax = fmax(wmax, fabs(w[i]));
     for (int i = 0; i < n; i++) { double s = 0; for (int k = 0; k < n; k++) s += Q[k * 6 + i] * nb[k]; c[i] = s; cn += s * s; if (w[i] < 1e-15 * wmax) w[i] = 1e-15 * wmax; }
     cn = sqrt(cn);
@@ -770,52 +826,9 @@ static void schur_sparse(mb_world* W, int nbx) {
 extern int mb_trace;
 int mb_trace = 0;
 #endif
-void mb_solve(mb_world* W) {
-    DCP_T(tp); DCP_CNT(solves, 1);
-    assemble(W);
-    DCP_LAP(DCP_S_ASSEMBLE, tp);
-    factor(W);
-    DCP_LAP(DCP_S_FACTOR, tp);
-    int N = W->N;
-    /* free solution */
-    memcpy(W->x, W->r, sizeof(double) * N);
-    ksolve(W, W->x);
-    DCP_LAP(DCP_S_KSOLVE, tp);
-    /* box rows */
-    int nbx = 0; W->box_dropped = 0;
-    for (int j = 0; j < W->nj; j++) {
-        mb_joint* J = &W->Jt[j]; W->box_of[j] = -1; if (!J->box) continue;
-        for (int r = 0; r < J->m; r++) {
-            int dyn = J->nsrc > 0;
-            if (!J->active || (!dyn && J->lo[r] == 0 && J->hi[r] == 0)) { J->lam[r] = 0; continue; }
-            if (nbx >= MB_MAXBOX) { W->box_dropped++; J->lam[r] = 0; continue; }
-            if (W->box_of[j] < 0) W->box_of[j] = nbx;
-            W->box_j[nbx] = j; W->box_r[nbx] = r; nbx++;
-        }
-    }
-    W->nbox = nbx; W->pgs_it = 0; W->pgs_used = 0;
-    DCP_LAP(DCP_S_BOXROWS, tp); DCP_MAX(nbx_max, nbx); DCP_CNT(nbx_sum, nbx);
-    if (nbx > 0 && !W->schur_dense) schur_sparse(W, nbx);
-    else if (nbx > 0) {
-        for (int s = 0; s < nbx; s++) {
-            mb_joint* J = &W->Jt[W->box_j[s]]; int r = W->box_r[s];
-            double* z = W->zb + (size_t)s * N; memset(z, 0, sizeof(double) * N);
-            for (int k = 0; k < J->nb; k++) { int b = J->b[k]; if (b < 0) continue; for (int q = 0; q < 6; q++) z[W->off[b] + q] += J->J[r][k][q]; }
-            ksolve(W, z);
-        }
-        for (int s = 0; s < nbx; s++) {
-            mb_joint* J = &W->Jt[W->box_j[s]]; int r = W->box_r[s];
-            double u0 = 0;
-            for (int k = 0; k < J->nb; k++) { int b = J->b[k]; if (b < 0) continue; for (int q = 0; q < 6; q++) u0 += J->J[r][k][q] * W->x[W->off[b] + q]; }
-            W->ub[s] = u0;
-            for (int t2 = 0; t2 < nbx; t2++) {
-                const double* z = W->zb + (size_t)t2 * N; double w = 0;
-                for (int k = 0; k < J->nb; k++) { int b = J->b[k]; if (b < 0) continue; for (int q = 0; q < 6; q++) w += J->J[r][k][q] * z[W->off[b] + q]; }
-                W->W[s * MB_MAXBOX + t2] = w;
-            }
-        }
-    }
-    DCP_LAP(DCP_S_SCHUR, tp);
+
+static void box_solve(mb_world* W, int nbx) {
+    DCP_T(tp); int N = W->N;
     if (nbx > 0) {
         for (int s = 0; s < nbx; s++) {
             mb_joint* J = &W->Jt[W->box_j[s]]; int r = W->box_r[s];
@@ -833,6 +846,7 @@ void mb_solve(mb_world* W) {
            fire any more and the solve would run to the cap; the capped result is the iterate with the same phase, so we
            stop at the first sweep in phase with the cap. Bit-identical to running the sweeps out (reference behaviour). */
         int cyc_m = W->pgs_ssm > 0 ? W->pgs_ssm : 1, cyc_R = 2 * cyc_m, cyc_on = W->fast && cyc_R <= 8;
+        memset(W->ce_ok, 0, (size_t)nbx);
         if (cyc_on) memcpy(W->pgs_hist[0], W->hb, sizeof(double) * nbx);
         for (it = 0; it < W->pgs_iters; it++) {
             res = 0;
@@ -847,18 +861,18 @@ void mb_solve(mb_world* W) {
                     int n = 0; while (s + n < nbx && W->box_j[s + n] == jj && n < 6) n++;
                     double A[36], b[6], l[6];
                     for (int a = 0; a < n; a++) {
-                        double u = W->ub[s + a]; for (int t2 = 0; t2 < nbx; t2++) u += W->W[(s + a) * MB_MAXBOX + t2] * W->hb[t2];
+                        double u = W->ub[s + a]; ROWDOT(W, u, W->W + (s + a) * MB_MAXBOX, W->hb, nbx);
                         for (int c2 = 0; c2 < n; c2++) { A[a * 6 + c2] = W->W[(s + a) * MB_MAXBOX + s + c2]; u -= A[a * 6 + c2] * W->hb[s + c2]; }
                         b[a] = u - J->t[W->box_r[s + a]];
                     }
-                    cone_block(n, A, b, J->bound, l);
+                    cone_block(n, A, b, J->bound, l, &W->ce_ok[s], W->ce_w + 6 * s, W->ce_Q + 36 * s, W->ce_F + 36 * s);
                     for (int a = 0; a < n; a++) {
                         double dq = fabs(l[a] - W->hb[s + a]) * sqrt(A[a * 6 + a]); if (dq > res) res = dq;
                         W->hb[s + a] = l[a];
                     }
                     s += n - 1; continue;
                 }
-                double u = W->ub[s]; for (int t2 = 0; t2 < nbx; t2++) u += W->W[s * MB_MAXBOX + t2] * W->hb[t2];
+                double u = W->ub[s]; ROWDOT(W, u, W->W + s * MB_MAXBOX, W->hb, nbx);
                 double d = W->W[s * MB_MAXBOX + s]; if (d <= 1e-300) continue;
                 double nl = W->hb[s] - (u - J->t[r]) / d;
                 nl = nl < lo ? lo : (nl > hi ? hi : nl);
@@ -871,12 +885,12 @@ void mb_solve(mb_world* W) {
             double vres = 0, vhard = 0, pfric = 0;
             for (int s = 0; s < nbx; s++) {
                 int jj = W->box_j[s]; mb_joint* J = &W->Jt[jj];
-                double u = W->ub[s] - J->t[W->box_r[s]]; for (int t2 = 0; t2 < nbx; t2++) u += W->W[s * MB_MAXBOX + t2] * W->hb[t2];
+                double u = W->ub[s] - J->t[W->box_r[s]]; ROWDOT(W, u, W->W + s * MB_MAXBOX, W->hb, nbx);
                 double v;
                 if (J->cone && J->nsrc > 0) {   /* group: stuck -> |v| ; sliding -> v must be anti-parallel to lam */
                     int n = 0; double vv[6], ll[6], ln = 0, vl = 0, v2 = 0;
                     while (s + n < nbx && W->box_j[s + n] == jj && n < 6) {
-                        double un = W->ub[s + n] - J->t[W->box_r[s + n]]; for (int t2 = 0; t2 < nbx; t2++) un += W->W[(s + n) * MB_MAXBOX + t2] * W->hb[t2];
+                        double un = W->ub[s + n] - J->t[W->box_r[s + n]]; ROWDOT(W, un, W->W + (s + n) * MB_MAXBOX, W->hb, nbx);
                         vv[n] = un; ll[n] = W->hb[s + n]; ln += ll[n] * ll[n]; vl += vv[n] * ll[n]; v2 += vv[n] * vv[n]; n++;
                     }
                     ln = sqrt(ln);
@@ -921,7 +935,7 @@ void mb_solve(mb_world* W) {
             J->lam[r] = W->hb[s];
             for (int k = 0; k < J->nb; k++) { int b = J->b[k]; if (b < 0) continue; for (int q = 0; q < 6; q++) W->x[W->off[b] + q] += J->J[r][k][q] * W->hb[s]; }
         }
-        ksolve(W, W->x);
+        ksolve(W, W->x); if (W->lr_k) lr_correct(W, W->x);
     }
     DCP_ADD(DCP_S_BACKSUB, tp);
     for (int i = 0; i < W->nb; i++) {
@@ -932,6 +946,129 @@ void mb_solve(mb_world* W) {
         int nd = W->node_of_joint[j]; if (nd < 0) continue;
         for (int a = 0; a < W->Jt[j].m; a++) W->Jt[j].lam[a] = -W->x[W->off[nd] + a];
     }
+}
+
+void mb_solve(mb_world* W) {
+    DCP_T(tp); DCP_CNT(solves, 1);
+    W->lr_k = 0;
+    assemble(W);
+    DCP_LAP(DCP_S_ASSEMBLE, tp);
+    factor(W);
+    DCP_LAP(DCP_S_FACTOR, tp);
+    int N = W->N;
+    /* free solution */
+    memcpy(W->x, W->r, sizeof(double) * N);
+    ksolve(W, W->x);
+#ifdef DC_PROF
+    { static double xp = -1; if (xp < 0) xp = getenv("DC_XPERT") ? atof(getenv("DC_XPERT")) : 0;   /* debug: roundoff-sized perturbation */
+      if (xp > 0 && W->fast) for (int i = 0; i < N; i++) W->x[i] *= 1 + xp * ((i * 7919 % 13) - 6) / 6.0; }
+#endif
+    DCP_LAP(DCP_S_KSOLVE, tp);
+    /* box rows */
+    int nbx = 0; W->box_dropped = 0;
+    for (int j = 0; j < W->nj; j++) {
+        mb_joint* J = &W->Jt[j]; W->box_of[j] = -1; if (!J->box) continue;
+        for (int r = 0; r < J->m; r++) {
+            int dyn = J->nsrc > 0;
+            if (!J->active || (!dyn && J->lo[r] == 0 && J->hi[r] == 0)) { J->lam[r] = 0; continue; }
+            if (nbx >= MB_MAXBOX) { W->box_dropped++; J->lam[r] = 0; continue; }
+            if (W->box_of[j] < 0) W->box_of[j] = nbx;
+            W->box_j[nbx] = j; W->box_r[nbx] = r; nbx++;
+        }
+    }
+    W->nbox = nbx; W->pgs_it = 0; W->pgs_used = 0;
+    DCP_LAP(DCP_S_BOXROWS, tp); DCP_MAX(nbx_max, nbx); DCP_CNT(nbx_sum, nbx);
+    if (nbx > 0 && !W->schur_dense) schur_sparse(W, nbx);
+    else if (nbx > 0) {
+        for (int s = 0; s < nbx; s++) {
+            mb_joint* J = &W->Jt[W->box_j[s]]; int r = W->box_r[s];
+            double* z = W->zb + (size_t)s * N; memset(z, 0, sizeof(double) * N);
+            for (int k = 0; k < J->nb; k++) { int b = J->b[k]; if (b < 0) continue; for (int q = 0; q < 6; q++) z[W->off[b] + q] += J->J[r][k][q]; }
+            ksolve(W, z);
+        }
+        for (int s = 0; s < nbx; s++) {
+            mb_joint* J = &W->Jt[W->box_j[s]]; int r = W->box_r[s];
+            double u0 = 0;
+            for (int k = 0; k < J->nb; k++) { int b = J->b[k]; if (b < 0) continue; for (int q = 0; q < 6; q++) u0 += J->J[r][k][q] * W->x[W->off[b] + q]; }
+            W->ub[s] = u0;
+            for (int t2 = 0; t2 < nbx; t2++) {
+                const double* z = W->zb + (size_t)t2 * N; double w = 0;
+                for (int k = 0; k < J->nb; k++) { int b = J->b[k]; if (b < 0) continue; for (int q = 0; q < 6; q++) w += J->J[r][k][q] * z[W->off[b] + q]; }
+                W->W[s * MB_MAXBOX + t2] = w;
+            }
+        }
+    }
+    DCP_LAP(DCP_S_SCHUR, tp);
+    box_solve(W, nbx);
+}
+
+void mb_resolve_lowrank(mb_world* W) {
+    if (W->schur_dense || !W->lr_y) { mb_solve(W); return; }
+    DCP_T(tp); DCP_CNT(solves, 1);
+    int N = W->N, k = 0; double h = W->h, ds[MB_LR];
+    for (int e = 0; e < W->ne; e++) {
+        const mb_elem* E = &W->E[e];
+        double s = -(h * E->c + h * h * E->k); if (s < 0) s = 0;
+        if (s == E->s_asm) continue;
+        if (k == MB_LR) { mb_solve(W); return; }
+        W->lr_el[k] = e; ds[k] = s - E->s_asm; k++;
+    }
+    /* Y = K^-1 U, C = diag(1/ds) + U' Y (K symmetric, so U' K^-1 = Y') */
+    double C[MB_LR * MB_LR];
+    for (int a = 0; a < k; a++) {
+        const mb_elem* E = &W->E[W->lr_el[a]]; double* y = W->lr_y + (size_t)a * N; memset(y, 0, sizeof(double) * N);
+        for (int q = 0; q < E->nb; q++) { int b = E->b[q]; if (b < 0) continue; for (int c = 0; c < 6; c++) y[W->off[b] + c] += E->j[q][c]; }
+        ksolve(W, y);
+    }
+    for (int a = 0; a < k; a++) for (int b = 0; b < k; b++)
+        C[a * k + b] = elem_dot(W, &W->E[W->lr_el[a]], W->lr_y + (size_t)b * N) + (a == b ? 1 / ds[a] : 0);
+    if (k > 0 && !inv_small(k, C, W->lr_ci)) { mb_solve(W); return; }
+    W->lr_k = k;
+    assemble_rhs(W);
+    DCP_LAP(DCP_S_ASSEMBLE, tp);
+    memcpy(W->x, W->r, sizeof(double) * N);
+    ksolve(W, W->x); if (k) lr_correct(W, W->x);
+    DCP_LAP(DCP_S_KSOLVE, tp);
+    int nbx = W->nbox; W->pgs_it = 0; W->pgs_used = 0;   /* box rows: same set as the last mb_solve (no joint changed) */
+    for (int s = 0; s < nbx; s++) {
+        W->ub[s] = brow_dot(W, s, W->x);
+        for (int a = 0; a < k; a++) W->lr_P[s * MB_LR + a] = brow_dot(W, s, W->lr_y + (size_t)a * N);
+    }
+    if (k) {
+        double PC[MB_MAXBOX * MB_LR];   /* P C^-1 */
+        for (int s = 0; s < nbx; s++) for (int a = 0; a < k; a++) { double t = 0; for (int b = 0; b < k; b++) t += W->lr_P[s * MB_LR + b] * W->lr_ci[b * k + a]; PC[s * MB_LR + a] = t; }
+        for (int s = 0; s < nbx; s++) for (int t2 = 0; t2 < nbx; t2++) {
+            double d = 0; for (int a = 0; a < k; a++) d += PC[s * MB_LR + a] * W->lr_P[t2 * MB_LR + a];
+            W->W[s * MB_MAXBOX + t2] -= d;
+        }
+        for (int v = 0; v < W->nvr; v++) {
+            int o = W->vr_row[v]; double yc[MB_LR];
+            for (int a = 0; a < k; a++) { double t = 0; for (int b = 0; b < k; b++) t += W->lr_y[(size_t)b * N + o] * W->lr_ci[b * k + a]; yc[a] = t; }
+            double* Cr = W->Cv + (size_t)v * MB_MAXBOX;
+            for (int t2 = 0; t2 < nbx; t2++) { double d = 0; for (int a = 0; a < k; a++) d += yc[a] * W->lr_P[t2 * MB_LR + a]; Cr[t2] -= d; }
+        }
+    }
+    W->lr_solves++;
+#ifdef DC_PROF
+    { static int chk = -1; if (chk < 0) chk = getenv("DC_LRCHK") ? atoi(getenv("DC_LRCHK")) : 0;
+      if (chk) {   /* debug: compare with the full refactor (the run continues on the exact values) */
+        static double xs[4096], Ws[MB_MAXBOX * MB_MAXBOX], ubs[MB_MAXBOX], Cs[64 * MB_MAXBOX]; static double emax[4]; static long nchk;
+        memcpy(xs, W->x, sizeof(double) * N); memcpy(Ws, W->W, sizeof W->W); memcpy(ubs, W->ub, sizeof W->ub); memcpy(Cs, W->Cv, sizeof(double) * W->nvr * MB_MAXBOX);
+        assemble(W); factor(W); memcpy(W->x, W->r, sizeof(double) * N); ksolve(W, W->x); W->lr_k = 0; schur_sparse(W, nbx);
+        double ex = 0, xm = 0, ew = 0, wm = 0, eu = 0, um = 0;
+        for (int i = 0; i < N; i++) { ex = fmax(ex, fabs(xs[i] - W->x[i])); xm = fmax(xm, fabs(W->x[i])); }
+        for (int a = 0; a < nbx; a++) { eu = fmax(eu, fabs(ubs[a] - W->ub[a])); um = fmax(um, fabs(W->ub[a]));
+            for (int b = 0; b < nbx; b++) { ew = fmax(ew, fabs(Ws[a * MB_MAXBOX + b] - W->W[a * MB_MAXBOX + b])); wm = fmax(wm, fabs(W->W[a * MB_MAXBOX + b])); } }
+        double ec = 0, cm = 0; for (int i = 0; i < W->nvr * MB_MAXBOX; i++) if (i % MB_MAXBOX < nbx) { ec = fmax(ec, fabs(Cs[i] - W->Cv[i])); cm = fmax(cm, fabs(W->Cv[i])); }
+        if (chk == 2) { memcpy(W->x, xs, sizeof(double) * N); memcpy(W->W, Ws, sizeof W->W); memcpy(W->ub, ubs, sizeof W->ub); memcpy(W->Cv, Cs, sizeof(double) * W->nvr * MB_MAXBOX); }
+        if (chk == 3) memcpy(W->Cv, Cs, sizeof(double) * W->nvr * MB_MAXBOX);
+        double r1 = ex / (xm + 1e-300), r2 = ew / (wm + 1e-300), r3 = eu / (um + 1e-300); emax[3] = fmax(emax[3], ec / (cm + 1e-300));
+        nchk++; if (r1 > emax[0] || r2 > emax[1] || r3 > emax[2]) { emax[0] = fmax(emax[0], r1); emax[1] = fmax(emax[1], r2); emax[2] = fmax(emax[2], r3);
+            fprintf(stderr, "lrchk %ld k %d: rel err x %.2e W %.2e ub %.2e Cv(max so far) %.2e (ds %.3e)\n", nchk, k, r1, r2, r3, emax[3], k ? ds[0] : 0.0); }
+      } }
+#endif
+    DCP_LAP(DCP_S_SCHUR, tp);
+    box_solve(W, nbx);   /* lr_k stays set: the post-stabilisation in mb_integrate solves with this factor too */
 }
 
 /* debug: residual of the assembled KKT system at the current solution (re-assembles, so call right after mb_solve) */
@@ -993,7 +1130,7 @@ void mb_integrate(mb_world* W, int project) {
         eval_std(W, J, Jt, phi);
         for (int a = 0; a < J->m; a++) x[W->off[nd] + a] = -phi[a];
     }
-    ksolve(W, x);
+    ksolve(W, x); if (W->lr_k) lr_correct(W, x);
     /* SHAKE-style: the position correction is also a velocity correction dx/h (it is the centripetal/curvature part of
        the constraint impulse that the velocity-level rows at q_n cannot see); its multiplier is added to the reaction. */
     double ih = 1.0 / h;

@@ -57,6 +57,7 @@ typedef struct dc_mbcar {
     double Fs[4], Fd[4], Fb[4], tau_tb, T_hands, F_assist, F_rack;
     int vmodel; dc_valve vlv; double vp[3], vQp, v_th, v_F0, v_c, v_rd0; int v_fail;   /* valve pressure states (valve_model > 0) */
     int resolves;                            /* friction-circle re-solves (statistics) */
+    int lowrank;    /* fast: pass-1 re-solve by the Woodbury low-rank update (mb_resolve_lowrank) */
     /* test hooks */
     v3 extF[MB_MAXB], extT[MB_MAXB];
 } dc_mbcar;
