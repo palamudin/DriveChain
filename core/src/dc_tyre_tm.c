@@ -340,6 +340,7 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
         } else
         for (int ii = i0; ii <= i1; ii++) for (int jj = j0; jj <= j1; jj++) { double hn = grid_node(&GR, c, ii, jj, &gd); if (hn > hmax) hmax = hn; }
     }
+    DCP_WLAP(i, DCP_W_CULL, tp);
     const double pHx = pbx * GR.idw, pHy = pby * GR.idw;   /* plane slope (planar only) */
     v3 pn = vnorm(V3(-pHx, -pHy, 1));
 #define PLANE_H(x, y) (pa + pbx * ((x) * GR.idw - pi0) + pby * ((y) * GR.idw - pj0))

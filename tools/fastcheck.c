@@ -237,7 +237,7 @@ static int pooled(int m, const char* car, res_t* R) {
    repeats is the intrinsic cost; its maximum is the worst intrinsic tick. Raw (single-run) maxima are reported beside it. */
 static float ST[2][NMAX][DCP_S_N], WH[2][NMAX][DCP_W_TOTAL]; static int SW[2][NMAX];
 static const char* STN[DCP_S_N] = {"begin","phaseA","loads","assemble","factor","ksolve","boxrows","schur","pgs","subspace","backsub","resolve_chk","commit","integrate","post","step_total"};
-static const char* WHN[DCP_W_TOTAL] = {"w_setup","w_rays","w_rim","w_brush","w_mz"};
+static const char* WHN[DCP_W_TOTAL] = {"w_setup","w_rays","w_rim","w_brush","w_mz","w_cull"};
 static void timing(int m, const char* car) {
     int N = atoi(getenv("FC_REP")); static rig_t P; static double mn[2][NMAX], rawmax[2]; static int over[2]; int n = 0;
     for (int q = 0; q < 2; q++) { rawmax[q] = 0; over[q] = 0; for (int i = 0; i < NMAX; i++) mn[q][i] = 1e30; }

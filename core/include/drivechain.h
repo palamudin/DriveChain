@@ -381,7 +381,7 @@ DC_API int    dc_set_threads(dc_car* c, int n);
 enum { DCP_S_BEGIN, DCP_S_PHASEA, DCP_S_LOADS, DCP_S_ASSEMBLE, DCP_S_FACTOR, DCP_S_KSOLVE, DCP_S_BOXROWS, DCP_S_SCHUR,
        DCP_S_PGS, DCP_S_SUBSPACE, DCP_S_BACKSUB, DCP_S_RESOLVE_CHK, DCP_S_COMMIT, DCP_S_INTEGRATE, DCP_S_POST,
        DCP_S_STEP_TOTAL, DCP_S_N };
-enum { DCP_W_SETUP, DCP_W_RAYS, DCP_W_RIM, DCP_W_BRUSH, DCP_W_MZ, DCP_W_TOTAL, DCP_W_N = 8 };   /* wh[i][..]: one 64-byte line per wheel; TARMAC laps; tail (twist, torques) = total - the rest */
+enum { DCP_W_SETUP, DCP_W_RAYS, DCP_W_RIM, DCP_W_BRUSH, DCP_W_MZ, DCP_W_CULL, DCP_W_TOTAL, DCP_W_N = 8 };   /* wh[i][..]: one 64-byte line per wheel; TARMAC laps (cull = footprint node bound, rays = the ray casts); tail (twist, torques) = total - the rest */
 typedef struct {
     double st[DCP_S_N];                /* seconds per stage, summed */
     double wh[4][DCP_W_N];             /* seconds per wheel phase-A part (TARMAC), summed */
