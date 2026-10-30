@@ -33,12 +33,19 @@ static void rig_init(rig_t* R, const char* car, const char* model) {
       if (cs && *cs) { char buf[1024]; snprintf(buf, sizeof buf, "%s", cs);
           for (char* tok = strtok(buf, ";"); tok; tok = strtok(NULL, ";")) { char* eq = strchr(tok, '='); if (eq) { *eq = 0; cfg_set(&R->cfg, tok, eq + 1); } } } }
     cfg_set(&R->cfg, "physics.model", model);
+    { const char* fs = getenv("FC_FAST_SET");   /* settings for the fast rig only (e.g. physics.bricks=1: fast + brick vs reference) */
+      if (fs && !strcmp(model, "fast")) { char buf[512]; snprintf(buf, sizeof buf, "%s", fs);
+          for (char* tok = strtok(buf, ";"); tok; tok = strtok(NULL, ";")) { char* eq = strchr(tok, '='); if (eq) { *eq = 0; cfg_set(&R->cfg, tok, eq + 1); } } } }
     if (getenv("FC_THREADS")) cfg_set(&R->cfg, "physics.threads", getenv("FC_THREADS"));   /* demo default is 4 (bit-identical results) */
 #ifdef DC_PROF
     { extern int dc_prof_pgs_cap; dc_prof_pgs_cap = !strcmp(model, "fast") && getenv("FC_CAP_B") ? atoi(getenv("FC_CAP_B")) : 0; }   /* measurement: fast-model sweep cap override */
 #endif
     char err[256];
     if (!sim_init(&R->S, &R->cfg, &TRK, NULL, err, sizeof err)) { fprintf(stderr, "sim_init: %s\n", err); exit(1); }
+    { const char* fp = getenv("FC_FAST_PARAM");   /* car parameters for the fast rig only (sensitivity: is a brick's deviation inside parameter uncertainty?) */
+      if (fp && !strcmp(model, "fast")) { char buf[512]; snprintf(buf, sizeof buf, "%s", fp);
+          for (char* tok = strtok(buf, ";"); tok; tok = strtok(NULL, ";")) { char* eq = strchr(tok, '='); if (eq) { *eq = 0; if (!dc_set_param(&R->S.P, "car", tok, eq + 1)) { fprintf(stderr, "FC_FAST_PARAM %s\n", tok); exit(1); } } }
+          if (!sim_rebuild_car(&R->S)) exit(1); } }
 }
 
 /* ---------------- manoeuvres: inputs as a function of time (+ speed for the hold) ---------------- */
