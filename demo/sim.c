@@ -206,6 +206,9 @@ static void prof_tick(sim_t* S, double w0, double w1) {
     for (int i = 0; i < 4; i++) { sl += (float)t->w[i].sliding; if (t->w[i].sliding > 0.5) ns++; float a = (float)(fabs(t->w[i].slip_angle) * 57.2958); if (a > sm) sm = a; }
     p->slide = sl; p->nslide = ns; p->slip_max_deg = sm; p->speed = (float)fabs(t->speed);
     p->rack_n = (float)t->rack_force; p->column_nm = (float)t->column_torque; p->mz_fl = (float)t->w[0].mz; p->mz_fr = (float)t->w[1].mz; p->sw_deg = (float)(t->sw_angle * 57.2958);
+    for (int i = 0; i < 4; i++) p->fz[i] = (float)t->w[i].fz;
+    p->surf_mask = 0; for (int i = 0; i < 4; i++) if (S->snap.surf[i] >= 0 && S->snap.surf[i] < 31) p->surf_mask |= 1 << S->snap.surf[i];   /* bit per SURF_* id under any wheel */
+    p->px = (float)S->snap.parts[0].pos[0]; p->py = (float)S->snap.parts[0].pos[1];
 }
 void prof_dump(const char* prefix) {
     char path[512]; FILE* f;
@@ -214,14 +217,14 @@ void prof_dump(const char* prefix) {
     if ((f = fopen(path, "w"))) {
         fprintf(f, "tw_us,simt,tick_us,poll_us,input_us,step_us,ffb_us,post_us");
         for (int k = 0; k < DCP_S_N; k++) fprintf(f, ",s_%s", SN[k]);
-        fprintf(f, ",wh0,wh1,wh2,wh3,w_setup,w_rays,w_rim,w_brush,w_mz,nsub,solves,resolves,sweeps,sweep_max,capped,nbx_max,pool_runs,pool_wakes,pool_wait_us,pool_wait_max_us,slide,nslide,slip_max_deg,speed,rack_n,column_nm,mz_fl,mz_fr,sw_deg\n");
+        fprintf(f, ",wh0,wh1,wh2,wh3,w_setup,w_rays,w_rim,w_brush,w_mz,nsub,solves,resolves,sweeps,sweep_max,capped,nbx_max,pool_runs,pool_wakes,pool_wait_us,pool_wait_max_us,slide,nslide,slip_max_deg,speed,rack_n,column_nm,mz_fl,mz_fr,sw_deg,fz0,fz1,fz2,fz3,px,py,surf_mask\n");
         for (int i = 0; i < PT_n; i++) { const prof_tick_t* p = &PT[i];
             fprintf(f, "%.1f,%.5f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f", p->tw, p->simt, p->tick_us, p->poll_us, p->input_us, p->step_us, p->ffb_us, p->post_us);
             for (int k = 0; k < DCP_S_N; k++) fprintf(f, ",%.2f", p->st_us[k]);
             for (int k = 0; k < 4; k++) fprintf(f, ",%.2f", p->wh_us[k]);
             for (int k = 0; k < DCP_W_TOTAL; k++) fprintf(f, ",%.2f", p->whs_us[k]);
-            fprintf(f, ",%d,%d,%d,%d,%d,%d,%d,%d,%d,%.2f,%.2f,%.3f,%d,%.2f,%.2f,%.3f,%.5f,%.4f,%.4f,%.4f\n", p->nsub, p->solves, p->resolves, p->sweeps, p->sweep_max, p->capped, p->nbx_max,
-                    p->pool_runs, p->pool_wakes, p->pool_wait_us, p->pool_wait_max_us, p->slide, p->nslide, p->slip_max_deg, p->speed, p->rack_n, p->column_nm, p->mz_fl, p->mz_fr, p->sw_deg); }
+            fprintf(f, ",%d,%d,%d,%d,%d,%d,%d,%d,%d,%.2f,%.2f,%.3f,%d,%.2f,%.2f,%.3f,%.5f,%.4f,%.4f,%.4f,%.0f,%.0f,%.0f,%.0f,%.2f,%.2f,%d\n", p->nsub, p->solves, p->resolves, p->sweeps, p->sweep_max, p->capped, p->nbx_max,
+                    p->pool_runs, p->pool_wakes, p->pool_wait_us, p->pool_wait_max_us, p->slide, p->nslide, p->slip_max_deg, p->speed, p->rack_n, p->column_nm, p->mz_fl, p->mz_fr, p->sw_deg, p->fz[0], p->fz[1], p->fz[2], p->fz[3], p->px, p->py, p->surf_mask); }
         fclose(f); }
     snprintf(path, sizeof path, "%s_batches.csv", prefix);
     if ((f = fopen(path, "w"))) { fprintf(f, "tw_us,sleep_req_us,sleep_us,lockwait_max_us,batch_us,backlog_ms,ticks,dropped,broke\n");
