@@ -344,6 +344,9 @@ static void lap_check(const char* layout, const char* car) {
 #ifdef DC_MB_TRACE
 extern int mb_trace;
 #endif
+#ifdef DC_PROF
+extern dc_prof_rec dc_prof_g;
+#endif
 int main(int argc, char** argv) {
 #ifdef DC_MB_TRACE
     mb_trace = getenv("FC_MBTRACE") ? atoi(getenv("FC_MBTRACE")) : 0;
@@ -376,9 +379,25 @@ int main(int argc, char** argv) {
 #ifdef DC_PROF
         { extern int dc_prof_pgs_cap; dc_prof_pgs_cap = getenv("FC_CAP_B") ? atoi(getenv("FC_CAP_B")) : 0; }
 #endif
-        rig_init(&B, car, self ? "reference" : "fast"); run(&B, m, RR[1], &nb); PERTURB = 0; dc_destroy(B.S.car);
+#ifdef DC_PROF
+        dc_prof_g.lane_chk_n = dc_prof_g.lane_chk_flip = dc_prof_g.snap_air_n = dc_prof_g.snap_air_hit = 0;
+        dc_prof_g.lane_err_th = dc_prof_g.lane_err_th_sum = dc_prof_g.lane_err_n = dc_prof_g.lane_err_g = dc_prof_g.lane_flip_pen = 0;
+#endif
+        rig_init(&B, car, self ? "reference" : "fast"); run(&B, m, RR[1], &nb); PERTURB = 0;
+        {   /* compute-offload lane: backend, calls, rays, hand-backs and cost of the fast run */
+            dc_offload_stats os;
+            memset(&os, 0, sizeof os); os.backend = DC_OFFLOAD_REF; dc_get_offload(B.S.car, DC_STAGE_PATCH, &os);
+            if (os.backend != DC_OFFLOAD_REF)
+                printf("  %-17s lane patch: %s%s (w%d) calls %lld rays %lld handed back %lld (%.2f%%) | %.2f us/call mean, max %.0f us%s%s\n", MN[m], dc_offload_name(os.backend),
+                       os.gpu_ok ? " [gpu up]" : "", os.simd_width, os.calls, os.rays, os.fallback, 100.0 * os.fallback / (os.rays ? os.rays : 1),
+                       1e6 * os.seconds / (os.calls ? os.calls : 1), 1e6 * os.max_s, os.gpu_ok ? " device " : "", os.device);
+        }
+        dc_destroy(B.S.car);
 #ifdef DC_PROF
         { extern int dc_prof_pgs_cap; dc_prof_pgs_cap = 0; }
+        if (dc_prof_g.lane_chk_n) printf("  %-17s lane vs double walk: %lld rays, %lld hit/miss flips (deepest %.2e m) | max |dt| %.2e m (mean %.2e) | max |dn| %.2e | max |dgrip| %.2e\n", MN[m],
+            dc_prof_g.lane_chk_n, dc_prof_g.lane_chk_flip, dc_prof_g.lane_flip_pen, dc_prof_g.lane_err_th, dc_prof_g.lane_err_th_sum / fmax(1, dc_prof_g.lane_chk_n - dc_prof_g.lane_chk_flip), dc_prof_g.lane_err_n, dc_prof_g.lane_err_g);
+        if (dc_prof_g.snap_air_n) printf("  %-17s zero snaps: %lld airborne decays, %lld snapped a state to 0 (%.2f%%)\n", MN[m], dc_prof_g.snap_air_n, dc_prof_g.snap_air_hit, 100.0 * dc_prof_g.snap_air_hit / dc_prof_g.snap_air_n);
 #endif
         int n = na < nb ? na : nb; res_t R; compare(m, RR[0], RR[1], n, &R, tr, NULL);
         int ens = getenv("FC_ENS") ? atoi(getenv("FC_ENS")) : 8; R.floor_k = 0;

@@ -19,9 +19,11 @@
 #include "dc_tyre.h"
 #include "dc_mbcar.h"
 #include "dc_pool.h"
+#include "dc_lane.h"
 #include "dc_prof.h"
 #include <time.h>
 #include <string.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>
 
@@ -173,7 +175,7 @@ DC_API dc_car* dc_create(const dc_car_params* pin) {
     return c;
 }
 
-DC_API void dc_destroy(dc_car* c) { if (!c) return; if (c->mb) dc_mbcar_destroy(c->mb); dc_pool_destroy(c->pool); free(c->rc); free(c); }
+DC_API void dc_destroy(dc_car* c) { if (!c) return; if (c->mb) dc_mbcar_destroy(c->mb); dc_pool_destroy(c->pool); dc_lane_destroy(c->lane); free(c->lw); free(c->rc); free(c); }
 DC_API int dc_set_threads(dc_car* c, int n) {
     if (n > 4) n = 4;   /* the parallel sections split by wheel */
     if (n < 1) n = 1;
@@ -183,12 +185,30 @@ DC_API int dc_set_threads(dc_car* c, int n) {
     if (c->mb) c->mb->W->pool = c->pool;
     return dc_pool_threads(c->pool);
 }
+DC_API int dc_set_offload(dc_car* c, int stage, int backend) {
+    if (!c || stage != DC_STAGE_PATCH) return DC_OFFLOAD_REF;
+    if (backend != DC_OFFLOAD_REF && !c->lane) {
+        c->lane = dc_lane_create(); c->lw = (dc_lanew*)calloc(4, sizeof(dc_lanew));
+        if (!c->lane || !c->lw) { dc_lane_destroy(c->lane); free(c->lw); c->lane = NULL; c->lw = NULL; return DC_OFFLOAD_REF; }
+    }
+    return c->lane ? dc_lane_set(c->lane, stage, backend) : DC_OFFLOAD_REF;
+}
+DC_API void dc_get_offload(const dc_car* c, int stage, dc_offload_stats* out) { dc_lane_stats(c ? c->lane : NULL, stage, out); if (c && c->lw) out->mem_bytes = 4 * (long long)sizeof(dc_lanew); }
+DC_API int dc_offload_parse(const char* s) {
+    if (!s) return DC_OFFLOAD_AUTO;
+    if (!strcmp(s, "ref") || !strcmp(s, "off")) return DC_OFFLOAD_REF;
+    if (!strcmp(s, "cpu")) return DC_OFFLOAD_CPU;
+    if (!strcmp(s, "cpu_simd") || !strcmp(s, "simd")) return DC_OFFLOAD_SIMD;
+    if (!strcmp(s, "gpu")) return DC_OFFLOAD_GPU;
+    return DC_OFFLOAD_AUTO;
+}
+DC_API const char* dc_offload_name(int b) { return dc_lane_backend_name(b); }
 DC_API void dc_set_pool_opts(dc_car* c, double spin_us, int affinity) { dc_pool_set_spin(c->pool, spin_us); if (c->pool && affinity >= -1) dc_pool_set_affinity(c->pool, affinity); }
 DC_API void dc_prewake(dc_car* c) { dc_pool_prewake(c->pool); }
 double dc_wall(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec + 1e-9 * t.tv_nsec; }
 #ifdef DC_PROF
 dc_prof_rec dc_prof_g;
-DC_API void dc_prof_take(dc_prof_rec* out) { *out = dc_prof_g; memset(&dc_prof_g, 0, sizeof dc_prof_g); }
+DC_API void dc_prof_take(dc_prof_rec* out) { *out = dc_prof_g; memset(&dc_prof_g, 0, offsetof(dc_prof_rec, lane_chk_n)); }   /* the lane-check and zero-snap tallies (last fields) run on until the caller resets them */
 #endif
 DC_API void dc_get_profile(const dc_car* c, dc_profile* p, int reset) { *p = c->prof; if (reset) memset(&((dc_car*)c)->prof, 0, sizeof c->prof); }
 DC_API int dc_active_solver(const dc_car* c) { return c->mb ? DC_SOLVER_MULTIBODY : DC_SOLVER_REDUCED; }

@@ -28,7 +28,12 @@
  */
 #include "dc_tyre.h"
 #include "dc_rgrid.h"
+#include "dc_lane.h"
 #include "dc_prof.h"
+#ifdef DC_PROF
+#include <stdlib.h>
+static int dc_lanechk = -1;
+#endif
 
 #define TM_FLANGE 0.0175       /* ETRTO J-flange height (TARMAC FLANGE) */
 #define TM_EPS_RING 0.0004     /* m: cell ramp-in width of the footprint threshold (TARMAC) */
@@ -321,6 +326,12 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
     double hmax = -1e30;
     const int fast = c->P.model == DC_MODEL_FAST;
     int planar = 0, pi0 = 0, pj0 = 0; double pa = 0, pbx = 0, pby = 0, pg = 0;
+    /* compute-offload lane (dc_lane.h): fast model rays as float32 lookups in a per-substep patch table */
+#ifdef DC_PROF
+    if (dc_lanechk < 0) { const char* e = getenv("DC_LANECHK"); dc_lanechk = e && atoi(e) > 0; }
+#endif
+    dc_lanew* LW = fast && c->lw && dc_lane_get(c->lane, DC_LANE_PATCH) != DC_OFFLOAD_REF ? &c->lw[i] : NULL;
+    int lti0 = 0, ltj0 = 0;
     {
         double bx0 = 1e30, bx1 = -1e30, by0 = 1e30, by1 = -1e30, gd;
         double ext = R0 + fabs(bx) + 0.02, wy = 0.5 * B->tread + fabs(by) + 0.02;
@@ -329,7 +340,18 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
             bx0 = fmin(bx0, pb.x); bx1 = fmax(bx1, pb.x); by0 = fmin(by0, pb.y); by1 = fmax(by1, pb.y);
         }
         int i0 = ifloor(bx0 / dw), i1 = ifloor(bx1 / dw) + 1, j0 = ifloor(by0 / dw), j1 = ifloor(by1 / dw) + 1;
-        if (fast) {   /* fast model: is every node the footprint can touch on one plane (and one grip)? then bilinear = plane, exactly */
+        if (LW && (i1 - i0 + 1) * (j1 - j0 + 1) > DC_PT_MAXN) LW = NULL;   /* footprint larger than the table: double rays */
+        if (LW) { LW->T.ni = i1 - i0 + 1; LW->T.nj = j1 - j0 + 1; LW->T.idw = (float)GR.idw; LW->T.gax = NULL; lti0 = i0; ltj0 = j0; }
+        if (LW) {   /* fast model, lane on: the same bound and plane test, and the nodes into the float32 patch table */
+            double g0, g1, g2; const int ni = i1 - i0 + 1;
+            pa = grid_node(&GR, c, i0, j0, &g0); pbx = grid_node(&GR, c, i0 + 1, j0, &g1) - pa; pby = grid_node(&GR, c, i0, j0 + 1, &g2) - pa;
+            pg = g0; planar = g1 == g0 && g2 == g0; pi0 = i0; pj0 = j0;
+            for (int ii = i0; ii <= i1; ii++) for (int jj = j0; jj <= j1; jj++) {
+                double hn = grid_node(&GR, c, ii, jj, &gd); if (hn > hmax) hmax = hn;
+                const int q = (jj - j0) * ni + (ii - i0); LW->T.h[q] = (float)(hn - cw.z); LW->T.g[q] = (float)gd;
+                if (planar && (gd != pg || fabs(hn - (pa + pbx * (ii - i0) + pby * (jj - j0))) > TM_PLANE_TOL)) planar = 0;
+            }
+        } else if (fast) {   /* fast model: is every node the footprint can touch on one plane (and one grip)? then bilinear = plane, exactly */
             double g0, g1, g2;
             pa = grid_node(&GR, c, i0, j0, &g0); pbx = grid_node(&GR, c, i0 + 1, j0, &g1) - pa; pby = grid_node(&GR, c, i0, j0 + 1, &g2) - pa;
             pg = g0; planar = g1 == g0 && g2 == g0; pi0 = i0; pj0 = j0;
@@ -348,9 +370,34 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
     double Vsum = 0, dmax = 0; int nfill = 0;
     v3 dir[DC_TM_NR];
     for (int k = 0; k < DC_TM_NR; k++) dir[k] = vadd(vscl(dn, B->cth[k]), vscl(fw, B->sth[k]));
+/* one ray's hit -> footprint cell (shared by the double walk and the lane's unpack) */
+#define TM_ADD_CELL() \
+            if (th < 0) continue; \
+            double pen = R0 - th; \
+            if (pen <= 0) continue; \
+            if (th <= 0 && ts <= 0) { \
+                /* ray origin inside the solid (a face taller than the wheel centre beside the lane: the lane is in a \
+                   wall). The ray reads its full length whatever the depth, so it has no depth gradient: it is no tread \
+                   contact and carries no load (TARMAC's lanes are tread columns; a sidewall jammed against a wall is \
+                   outside the model and left to the flange row of the lanes still outside and to body contact). \
+                   Kept in, its top-surface normal pointed a full-radius flange pinch straight up (1.3 m wall at 10 deg: \
+                   car launched, +155 % KE) and its volume read as a 0.25 m vertical squash along the face normal. */ \
+                nfill++; \
+                continue; \
+            } \
+            tm_cell* cl = &C[nc++]; \
+            cl->pen = pen; cl->area = B->w[k] * fabs(d.z) * B->laneW; cl->len = cl->area / B->laneW; \
+            cl->P = vmad(o, d, th); cl->n = nh; cl->g = gg; cl->lane = j; \
+            Vsum += pen * B->w[k]; \
+            if (pen > dmax) dmax = pen; \
+            ;
+    if (planar) LW = NULL;
+    v3 olane[DC_TM_NL];
+    if (LW) { LW->R.n = 0; LW->R.tmax = (float)R0; }
     for (int j = 0; j < nl; j++) {
         double y = B->lane[j], e = -(y * asR) * roll;
         v3 o = vadd(vadd(vmad(cw, a, y), vscl(sL, by)), vadd(vscl(fw, bx), vscl(dn, e)));
+        olane[j] = o;
         for (int k = 0; k < DC_TM_NR; k++) {
             v3 d = dir[k];
             if (d.z >= 0) continue;
@@ -359,31 +406,45 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
             double ts = o.z > hmax ? (o.z - hmax) / (-d.z) : 0;
             v3 nh; double gg;
             double th;
+            if (LW) {   /* pack: ray in table cells (x, y) and metres relative to the wheel centre (z) */
+                const int r = LW->R.n++;
+                LW->R.u0[r] = (float)(o.x * GR.idw - lti0); LW->R.v0[r] = (float)(o.y * GR.idw - ltj0); LW->R.z0[r] = (float)(o.z - cw.z);
+                LW->R.du[r] = (float)(d.x * GR.idw); LW->R.dv[r] = (float)(d.y * GR.idw); LW->R.dz[r] = (float)d.z; LW->R.ts[r] = (float)ts;
+                LW->jk[r] = (unsigned short)(j << 8 | k);
+                continue;
+            }
             if (planar) {   /* f(t) = o.z + t d.z - H(o + t d) is linear on a plane: the cell walk's root, in closed form */
                 double c0 = o.z - PLANE_H(o.x, o.y), c1 = d.z - (pHx * d.x + pHy * d.y), fa = c0 + c1 * ts;
                 th = fa <= 0 ? ts : (c1 < 0 && c0 + c1 * R0 <= 0 ? -c0 / c1 : -1);
                 nh = pn; gg = pg;
             } else th = tm_ray(&GR, c, o, d, ts, R0, &nh, &gg);
-            if (th < 0) continue;
-            double pen = R0 - th;
-            if (pen <= 0) continue;
-            if (th <= 0 && ts <= 0) {
-                /* ray origin inside the solid (a face taller than the wheel centre beside the lane: the lane is in a
-                   wall). The ray reads its full length whatever the depth, so it has no depth gradient: it is no tread
-                   contact and carries no load (TARMAC's lanes are tread columns; a sidewall jammed against a wall is
-                   outside the model and left to the flange row of the lanes still outside and to body contact).
-                   Kept in, its top-surface normal pointed a full-radius flange pinch straight up (1.3 m wall at 10 deg:
-                   car launched, +155 % KE) and its volume read as a 0.25 m vertical squash along the face normal. */
-                nfill++;
-                continue;
-            }
-            tm_cell* cl = &C[nc++];
-            cl->pen = pen; cl->area = B->w[k] * fabs(d.z) * B->laneW; cl->len = cl->area / B->laneW;
-            cl->P = vmad(o, d, th); cl->n = nh; cl->g = gg; cl->lane = j;
-            Vsum += pen * B->w[k];
-            if (pen > dmax) dmax = pen;
+            TM_ADD_CELL();
         }
     }
+    if (LW && LW->R.n) {
+        dc_lane_patch(c->lane, i, &LW->T, &LW->R);
+        for (int r = 0; r < LW->R.n; r++) {   /* unpack, in the packing order (= the double path's cell order) */
+            const int j = LW->jk[r] >> 8, k = LW->jk[r] & 255, st = LW->R.st[r];
+            v3 o = olane[j], d = dir[k], nh = V3(0, 0, 1); double gg = 0, th = -1;
+            double ts = o.z > hmax ? (o.z - hmax) / (-d.z) : 0;
+            if (st < 0) th = tm_ray(&GR, c, o, d, ts, R0, &nh, &gg);   /* left the table: the double walk */
+            else if (st > 0) { th = LW->R.th[r]; nh = vnorm(V3(-(double)LW->R.hx[r], -(double)LW->R.hy[r], 1)); gg = LW->R.gr[r]; }
+#ifdef DC_PROF
+            if (dc_lanechk && st >= 0) {   /* measurement: the double walk beside the float32 lookup (both miss/hit status and values) */
+                v3 n2; double g2, t2 = tm_ray(&GR, c, o, d, ts, R0, &n2, &g2);
+                dc_prof_g.lane_chk_n++;
+                if (st > 0 && t2 >= 0) {
+                    double e = fabs(t2 - th); if (e > dc_prof_g.lane_err_th) dc_prof_g.lane_err_th = e; dc_prof_g.lane_err_th_sum += e;
+                    double en = vlen(vsub(n2, nh)); if (en > dc_prof_g.lane_err_n) dc_prof_g.lane_err_n = en;
+                    double eg = fabs(g2 - gg); if (eg > dc_prof_g.lane_err_g) dc_prof_g.lane_err_g = eg;
+                } else if ((st > 0) != (t2 >= 0)) { dc_prof_g.lane_chk_flip++; double tt = st > 0 ? th : t2; if (R0 - tt > dc_prof_g.lane_flip_pen) dc_prof_g.lane_flip_pen = R0 - tt; }
+            }
+#endif
+            if (st == 0) continue;
+            TM_ADD_CELL();
+        }
+    }
+#undef TM_ADD_CELL
     (void)nfill;
     DCP_WLAP(i, DCP_W_RAYS, tp);
     if (nc == 0) goto airborne;
@@ -662,6 +723,16 @@ airborne:
     /* airborne: the free tread's shear deflection relaxes (hysteresis), as in the envelope model */
     t->contact = 0; t->pe = 0;
     S->ex /= (1 + h * 60); S->ey /= (1 + h * 60); S->phi /= (1 + h * 60);
+    if (fast) {   /* zero-state reset: a relaxed deflection is snapped to exactly 0 (it would otherwise decay forever) */
+        const double z = 1e-9;   /* m (rad for phi): far below the shear-deflection resolution of the brush */
+#ifdef DC_PROF
+        dc_prof_g.snap_air_n++;
+        if ((S->ex != 0 && fabs(S->ex) < z) || (S->ey != 0 && fabs(S->ey) < z) || (S->phi != 0 && fabs(S->phi) < z)) dc_prof_g.snap_air_hit++;
+#endif
+        if (fabs(S->ex) < z) S->ex = 0;
+        if (fabs(S->ey) < z) S->ey = 0;
+        if (fabs(S->phi) < z) S->phi = 0;
+    }
     t->arm_x = -R0; t->Re = R0; t->kx = 0; t->D = 0;
 }
 

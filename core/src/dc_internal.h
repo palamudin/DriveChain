@@ -104,6 +104,8 @@ struct dc_car {
     struct dc_pool* pool;            /* step worker pool (dc_set_threads), NULL = serial */
     dc_profile prof;
     struct dc_mbcar* mb;             /* multibody solver state (solver = DC_SOLVER_MULTIBODY), else NULL */
+    struct dc_lane* lane;            /* compute-offload lane (dc_set_offload), NULL = every stage on its reference path */
+    struct dc_lanew* lw;             /* [4] per-wheel patch-stage scratch, with the lane */
 };
 
 /* kinematics */

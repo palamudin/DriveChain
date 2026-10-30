@@ -380,6 +380,24 @@ DC_API int    dc_set_threads(dc_car* c, int n);
 DC_API void   dc_set_pool_opts(dc_car* c, double spin_us, int affinity);
 /* wake sleeping helpers ahead of the next dc_step (hosts that sleep between ticks call it ~0.2-0.5 ms before the tick) */
 DC_API void   dc_prewake(dc_car* c);
+/* compute-offload lane: per stage backend. Stages: DC_STAGE_PATCH = the fast model's TARMAC patch rays (float32
+   ray/road-table lookups; "ref" keeps the double-precision rays). Backends cpu / cpu_simd (SSE2 or AVX2) / gpu
+   (OpenCL, loaded at run time) give identical bits; auto times them on a self-test batch and takes the fastest one
+   that matches cpu bit for bit. gpu without a usable OpenCL device falls back to cpu_simd. Returns the backend in use. */
+enum { DC_OFFLOAD_REF = -2, DC_OFFLOAD_AUTO = -1, DC_OFFLOAD_CPU = 0, DC_OFFLOAD_SIMD = 1, DC_OFFLOAD_GPU = 2 };
+enum { DC_STAGE_PATCH = 0 };
+typedef struct {
+    int backend, simd_width, gpu_ok;
+    long long calls, rays, fallback;   /* batches, rays, rays handed back to the double path */
+    double seconds, max_s;             /* wall time in the backend (pack/unpack excluded), summed and worst batch */
+    double cal_us[3]; int cal_match[3];   /* auto calibration: us per self-test batch and bit-match, per backend (-1 = not run) */
+    char device[96];                   /* OpenCL device name when the gpu backend is up */
+    long long mem_bytes;               /* the stage's working tables and batch buffers (host side) */
+} dc_offload_stats;
+DC_API int    dc_set_offload(dc_car* c, int stage, int backend);
+DC_API void   dc_get_offload(const dc_car* c, int stage, dc_offload_stats* out);
+DC_API int    dc_offload_parse(const char* s);   /* "ref" "auto" "cpu" "cpu_simd" "gpu" -> DC_OFFLOAD_*, unknown -> auto */
+DC_API const char* dc_offload_name(int backend);
 #ifdef DC_PROF
 /* profiling builds only (-DDC_PROF, see core/src/dc_prof.h): per-stage wall time of the multibody substep, per-wheel
    phase-A parts, solver and worker-pool counters, accumulated since the last dc_prof_take (process-wide). */
@@ -394,6 +412,9 @@ typedef struct {
     long long pool_runs, pool_wakes;   /* dispatches; dispatches that had to wake sleeping helpers (condvar) */
     double pool_wait_s, pool_wait_max_s;   /* calling thread spinning for helpers after its own share */
     long long pool_prewakes;           /* dc_prewake / step-start calls that woke sleeping helpers early */
+    long long lane_chk_n, lane_chk_flip;   /* DC_LANECHK=1: patch rays checked against the double walk; hit/miss disagreements */
+    double lane_err_th, lane_err_th_sum, lane_err_n, lane_err_g, lane_flip_pen;
+    long long snap_air_n, snap_air_hit;   /* fast model: airborne tyre-state decays, and those that snapped a state to exactly 0 */   /* max |dt| m (sum), max |dn|, max |dgrip|, deepest disagreeing hit m */
 } dc_prof_rec;
 DC_API void   dc_prof_take(dc_prof_rec* out);   /* copy and reset */
 #endif
