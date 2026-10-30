@@ -70,8 +70,12 @@ static void prof_knobs(void) {
 }
 #endif
 void mb_destroy(mb_world* W) {
+#ifdef DC_PROF
+    if (W && W->store) fprintf(stderr, "store: fast %d hits %lld misses %lld dev rel max %.3e mean %.3e\n", W->fast, W->st_hit, W->st_miss,
+                               W->st_dev_max, W->st_miss ? W->st_dev_sum / (double)W->st_miss : 0.0);
+#endif
     if (!W) return;
-    free(W->nbr); free(W->nbr_blk); free(W->blkpos); free(W->blk); free(W->L); free(W->D); free(W->Dinv);
+    free(W->nbr); free(W->nbr_blk); free(W->blkpos); free(W->blk); free(W->L); free(W->D); free(W->Dinv); free(W->st_D); free(W->st_blk); free(W->st_J);
     free(W->x); free(W->r); free(W->z); free(W->zb); free(W->gb); free(W->rch); free(W->yv); free(W->gv); free(W->vr_sj); free(W->vr_row); free(W->Cv); free(W->lr_y); free(W);
 }
 
@@ -418,6 +422,8 @@ int mb_finalize(mb_world* W) {
     W->yv = (double*)calloc((size_t)W->nvr_max * N + 1, sizeof(double)); W->gv = (double*)calloc((size_t)W->nvr_max * N + 1, sizeof(double));
     W->Cv = (double*)calloc((size_t)W->nvr_max * MB_MAXBOX + 1, sizeof(double));
     W->lr_y = (double*)calloc((size_t)MB_LR * N + 1, sizeof(double));
+    W->st_D = (double*)calloc((size_t)n * 36, sizeof(double)); W->st_blk = (double*)calloc((size_t)W->nblk_d + 1, sizeof(double));
+    W->st_J = (double*)calloc((size_t)MB_MAXBOX * MB_JB * 6, sizeof(double)); W->st_ok = 0;
     (void)orig; free(orig); free(adj); free(elim);
     #undef ADJ
     W->ready = 1;
@@ -1025,9 +1031,25 @@ void mb_solve(mb_world* W) {
     W->lr_k = 0;
     assemble(W);
     DCP_LAP(DCP_S_ASSEMBLE, tp);
-    factor(W);
+    int N = W->N, hit = 0;
+    if (W->store && W->st_D && !W->schur_dense) {
+        size_t nD = (size_t)W->n * 36, nB = (size_t)W->nblk_d + 1;
+        hit = W->st_ok && !memcmp(W->D, W->st_D, sizeof(double) * nD) && !memcmp(W->blk, W->st_blk, sizeof(double) * nB);
+        if (!hit) {
+#ifdef DC_PROF
+            if (W->store > 1 && W->st_ok) {   /* diagnostic: size of the deviation from the stored source */
+                double dm = 0, km = 0;
+                for (size_t i = 0; i < nD; i++) { dm = fmax(dm, fabs(W->D[i] - W->st_D[i])); km = fmax(km, fabs(W->st_D[i])); }
+                for (size_t i = 0; i < nB; i++) { dm = fmax(dm, fabs(W->blk[i] - W->st_blk[i])); km = fmax(km, fabs(W->st_blk[i])); }
+                double d = dm / (km + 1e-300); W->st_dev_max = fmax(W->st_dev_max, d); W->st_dev_sum += d;
+            }
+#endif
+            memcpy(W->st_D, W->D, sizeof(double) * nD); memcpy(W->st_blk, W->blk, sizeof(double) * nB); W->st_ok = 0;
+        }
+    }
+    if (hit) { W->fact_fail += W->st_ff; }
+    else { int ff = W->fact_fail; factor(W); W->st_ff = W->fact_fail - ff; }
     DCP_LAP(DCP_S_FACTOR, tp);
-    int N = W->N;
     /* free solution */
     memcpy(W->x, W->r, sizeof(double) * N);
     ksolve(W, W->x);
@@ -1050,8 +1072,29 @@ void mb_solve(mb_world* W) {
     }
     W->nbox = nbx; W->pgs_it = 0; W->pgs_used = 0;
     DCP_LAP(DCP_S_BOXROWS, tp); DCP_MAX(nbx_max, nbx); DCP_CNT(nbx_sum, nbx);
-    if (nbx > 0 && !W->schur_dense) schur_sparse(W, nbx);
-    else if (nbx > 0) {
+    if (W->store && !W->schur_dense) {   /* the box rows are inputs of the stored Schur system too */
+        if (hit) {
+            hit = W->st_ok == 2 && W->st_nbx == nbx;
+            for (int s = 0; hit && s < nbx; s++) {
+                const mb_joint* J = &W->Jt[W->box_j[s]]; int r = W->box_r[s];
+                hit = W->st_bj[s] == W->box_j[s] && W->st_br[s] == r;
+                for (int k = 0; hit && k < J->nb; k++) hit = !memcmp(J->J[r][k], W->st_J + ((size_t)s * MB_JB + k) * 6, sizeof(double) * 6);
+            }
+        }
+        if (hit) W->st_hit++; else W->st_miss++;
+        if (!hit) {
+            W->st_nbx = nbx;
+            for (int s = 0; s < nbx; s++) {
+                const mb_joint* J = &W->Jt[W->box_j[s]]; int r = W->box_r[s];
+                W->st_bj[s] = (short)W->box_j[s]; W->st_br[s] = (short)r;
+                for (int k = 0; k < J->nb; k++) memcpy(W->st_J + ((size_t)s * MB_JB + k) * 6, J->J[r][k], sizeof(double) * 6);
+            }
+        }
+    }
+    if (hit) { for (int s = 0; s < nbx; s++) W->ub[s] = brow_dot(W, s, W->x); }   /* stored Schur system; only J x is new */
+    else if (nbx > 0 && !W->schur_dense) { schur_sparse(W, nbx); if (W->store) W->st_ok = 2; }
+    else if (W->store) W->st_ok = 2;
+    if (nbx > 0 && W->schur_dense) {
         for (int s = 0; s < nbx; s++) {
             mb_joint* J = &W->Jt[W->box_j[s]]; int r = W->box_r[s];
             double* z = W->zb + (size_t)s * N; memset(z, 0, sizeof(double) * N);
@@ -1107,6 +1150,7 @@ void mb_resolve_lowrank(mb_world* W) {
         for (int a = 0; a < k; a++) W->lr_P[s * MB_LR + a] = brow_dot(W, s, W->lr_y + (size_t)a * N);
     }
     if (k) {
+        W->st_ok = 0;   /* W and Cv now differ from the stored source build */
         double PC[MB_MAXBOX * MB_LR];   /* P C^-1 */
         for (int s = 0; s < nbx; s++) for (int a = 0; a < k; a++) { double t = 0; for (int b = 0; b < k; b++) t += W->lr_P[s * MB_LR + b] * W->lr_ci[b * k + a]; PC[s * MB_LR + a] = t; }
         for (int s = 0; s < nbx; s++) for (int t2 = 0; t2 < nbx; t2++) {
@@ -1126,7 +1170,7 @@ void mb_resolve_lowrank(mb_world* W) {
       if (chk) {   /* debug: compare with the full refactor (the run continues on the exact values) */
         static double xs[4096], Ws[MB_MAXBOX * MB_MAXBOX], ubs[MB_MAXBOX], Cs[64 * MB_MAXBOX]; static double emax[4]; static long nchk;
         memcpy(xs, W->x, sizeof(double) * N); memcpy(Ws, W->W, sizeof W->W); memcpy(ubs, W->ub, sizeof W->ub); memcpy(Cs, W->Cv, sizeof(double) * W->nvr * MB_MAXBOX);
-        assemble(W); factor(W); memcpy(W->x, W->r, sizeof(double) * N); ksolve(W, W->x); W->lr_k = 0; schur_sparse(W, nbx);
+        assemble(W); factor(W); memcpy(W->x, W->r, sizeof(double) * N); ksolve(W, W->x); W->lr_k = 0; schur_sparse(W, nbx); W->st_ok = 0;
         double ex = 0, xm = 0, ew = 0, wm = 0, eu = 0, um = 0;
         for (int i = 0; i < N; i++) { ex = fmax(ex, fabs(xs[i] - W->x[i])); xm = fmax(xm, fabs(W->x[i])); }
         for (int a = 0; a < nbx; a++) { eu = fmax(eu, fabs(ubs[a] - W->ub[a])); um = fmax(um, fabs(W->ub[a]));

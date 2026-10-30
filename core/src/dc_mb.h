@@ -131,6 +131,12 @@ typedef struct {
     double* lr_y; int lr_k, lr_el[MB_LR]; double lr_ci[MB_LR * MB_LR];   /* fast: Woodbury re-solve, Y = K^-1 U, C^-1 */
     double lr_P[MB_MAXBOX * MB_LR];
     long long lr_solves;              /* re-solves done by the low-rank update (diagnostic) */
+    /* stored source build (opt-in, exact): the assembled K and box-row inputs of the last full build; a later solve whose
+       inputs match it bitwise reuses the stored factor and Schur system (bit-identical by construction) */
+    int store, st_ok, st_ff, st_nbx;
+    double *st_D, *st_blk, *st_J;
+    short st_bj[MB_MAXBOX], st_br[MB_MAXBOX];
+    long long st_hit, st_miss; double st_dev_max, st_dev_sum;   /* diagnostics: matches, misses, rel. deviation on a miss */
     /* stats */
     double pgs_res; int fact_fail; int pgs_it;
     int pgs_ncapped;                  /* solves that ended at the pgs_iters cap (cumulative, diagnostic) */

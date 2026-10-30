@@ -254,6 +254,9 @@ dc_mbcar* dc_mbcar_create(dc_car* c) {
         if (getenv("DC_FAST_DOT4")) W->dot4 = atoi(getenv("DC_FAST_DOT4"));
 #endif
     }
+#ifdef DC_PROF
+    if (getenv("DC_STORE")) W->store = atoi(getenv("DC_STORE"));   /* measurement builds: stored source build (exact match) */
+#endif
     v3 off = V3(P->sprung_cg[0], P->sprung_cg[1], P->sprung_cg[2]);
     double msum = 0; v3 mom = V3(0, 0, 0);
     #define ACC(b) do { msum += W->B[b].m; mom = vadd(mom, vscl(W->B[b].x, W->B[b].m)); } while (0)
