@@ -1,6 +1,7 @@
 # Fast physics model (`physics.model = fast`)
 
-The demo ticks the car at 240 Hz with 4 substeps. The target is a **physics tick that never takes more than 2 ms**
+The demo now ticks the car at 960 Hz with 4 substeps (3840 Hz mechanics; FFB and input at 960 Hz); the sections below
+that quote 240 Hz × 4 are the earlier default and remain the fidelity reference. The original target was a **physics tick that never takes more than 2 ms**
 (p100), with mean and p99 well below, while the car behaves the same as the reference model.
 The demo runs `physics.model = fast` by default (demo.ini). `physics.model = reference` stays selectable and is unchanged bit for bit (checked against the previous commit with
 `FC_REFDUMP`, below). The legacy solver (`solver = 0`) is untouched.
@@ -112,6 +113,32 @@ PGS at the worst fast tick fell from 650-780 µs to 75-330 µs. The worst fast t
 spread over several stages: PGS about 0.33 ms, Schur complement about 0.19 ms, factorisation about 0.15 ms, contact and
 tyre (phase A) about 0.13 ms, assembly about 0.12 ms. The TARMAC brush force itself is about 5 µs per tick for all
 four wheels.
+
+## 960 Hz × 4 default (3840 Hz mechanics)
+
+At 960 Hz the tick budget is 1042 µs and no 2 ms gate is applied; the goal is to see what spikes. Measured on an
+8-vCPU VM (software GL), mx5_na, proving ground, 60 s autopilot, `DC_PROF` stage timers.
+
+| Run | tick mean / p99 / max µs | ticks over 1042 µs | real-time factor |
+|---|---|---|---|
+| native, threads 1 | 884 / 1529 / 5778 | 13.0 % | 0.986 |
+| native, threads 4 | 724 / 1212 / 23973 | 3.0 % | 0.996 |
+| wine, threads 1 | 944 / 1570 / 8530 | 22.8 % | 0.924 |
+| wine, threads 4 | 736 / 1309 / 18782 | 3.4 % | 1.000 |
+
+Stage means (native, threads 1): road/tyre phase 287 µs (ray casts 217), Schur 190, factor 160, integrate 42,
+assemble 37, PGS 31, back-substitution 31. With 4 threads the tyre phase drops to ~108 µs. Ticks between 1.04 and 2 ms
+are work-driven and concentrate on kerbs and rough surfaces (×2–5 more likely), fast wheel-load changes (dFz > 200 N
+per tick, ×2–3) and fast steering (> 200 °/s, ×3–4); sliding adds ×1.1–2. Ticks above 2 ms are mostly one stage
+stalling with no correlation to the driving, i.e. scheduler/VM preemption, and at 4 threads include pool wake-up
+tails. Keep `threads = 4`. Optimisation order: (1) road ray casts, (2) Schur + factor reuse across substeps when the
+active set is unchanged, (3) assemble/PGS on kerbs, (4) thread-pool wake latency.
+
+Closed-loop slalom (`slalomcl`, 50 km/h, same driver): 960 × 4 against 240 × 4 changes path error by +0.002 m rms,
+yaw lag by −0.02° (−0.2 ms), peak lateral g by −0.001; rack-force band power is −1.5 / −6.0 / −9.6 / −10.3 dB in
+0–5 / 5–15 / 15–40 / 40–120 Hz. Sampling the 960 Hz run only at the 240 Hz instants gives the same numbers, and
+240 × 8 gives nearly the same drop, so it is the finer mechanics step (less high-frequency rack noise), not the FFB
+rate. Fast and reference models match to the printed digits at 960 × 4; fast costs 60 % of a core, reference 89 %.
 
 ## Not done, and why
 
