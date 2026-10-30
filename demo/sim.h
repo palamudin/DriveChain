@@ -15,7 +15,22 @@ typedef struct {            /* render thread -> physics */
     int reset, puncture, toggle_assist, pause, autopilot;
     int spot, spot_req;         /* teleport to track_spot(spot) when spot_req changes */
     int drv_toggle;             /* edge count: engage / release the plug-in driver (key G) */
+    int rec_toggle;             /* edge count: input record start / stop, or replay stop / restart (key F9) */
 } sim_ctl;
+/* input record / replay (key F9, [replay] file = ...): a recording starts from a freshly built car placed at the
+   current pose and forward speed (flying restart) and stores, per tick, the final dc_input handed to dc_step plus
+   puncture events. Replaying it on the same build, car, map, tick rate and backend reproduces the run bit for bit;
+   the end-state hash of the recording is checked when the replay ends. */
+#define SIM_REC_MAGIC "DCREC01"
+typedef struct {
+    char magic[8]; int version, nticks;
+    double tick_dt, substep_hz, x, y, yaw, speed;
+    int gear, model, solver, bricks, layout, threads, backend, bake_bits;
+    double track_len;
+    unsigned long long end_hash, param_hash;
+    char map[96], car[160], setup[32], backend_cfg[16];
+} sim_rec_hdr;
+typedef struct { dc_input in; int ev, arg; } sim_rec_tick;   /* ev 1 = puncture wheel arg (applied before the step) */
 typedef struct {            /* physics -> render */
     dc_telemetry t;
     dc_xform parts[DC_PART_COUNT];
@@ -27,6 +42,7 @@ typedef struct {            /* physics -> render */
     char device[128];
     double raw_axis[8]; int raw_buttons, raw_naxes, hgear;   /* input diagnostics for mapping */
     int drv_on, drv_takeover, drv_mode, drv_clients; dc_driver_state drv_st;
+    int rec_on, rep_on, rep_done, rep_match, rep_i, rep_n, rec_n; char rec_msg[200], rep_path[256], rec_path[256];   /* record / replay status */
 } sim_snap;
 typedef struct sim_s {
     cfg_t* cfg; track_t* trk; audio_t* audio;
@@ -61,6 +77,12 @@ typedef struct sim_s {
     double drv_takeover_stick, drv_takeover_wheel, drv_takeover_pedal;
     /* external control hook (JSON-lines protocol, demo/drvproto.c): phase 0 before input mapping, 1 after the step */
     void (*ext_hook)(struct sim_s* S, int phase); void* ext_ctx; int ext_clients;
+    /* record / replay (owned by the physics thread; the render thread reads the scalars under the sim lock) */
+    char rec_dir[400];                    /* where F9 recordings go (demo: the exe folder) */
+    sim_rec_tick* rec_buf; int rec_on, rec_n, rec_cap, rec_ev, rec_arg; sim_rec_hdr rec_h; char rec_path[600];
+    sim_rec_tick* rep_buf; int rep_on, rep_i, rep_n, rep_done, rep_match; sim_rec_hdr rep_h; char rep_path[600];
+    unsigned long long rep_hash;
+    char rec_msg[200];                    /* last record / replay status line (HUD) */
 #ifdef DC_PROF
     double pf_poll0, pf_poll1, pf_step0, pf_step1, pf_ffb1;   /* tick-phase stamps (us) */
 #endif
@@ -73,6 +95,10 @@ void sim_reset_at(sim_t* S, double x, double y, double yaw, double speed);
 void sim_shutdown(sim_t* S);
 int  sim_rebuild_car(sim_t* S);            /* after editing S->P: recreate the car at the current pose and speed */
 void sim_driver_engage(sim_t* S, int on);   /* engage (1) / release (0) the plug-in driver */
+int  sim_replay_load(sim_t* S, const char* path, char* err, int errlen);   /* load + start a replay (also [replay] file) */
+void sim_record_start(sim_t* S);           /* physics thread (F9 edge); headless tools may call it directly */
+void sim_record_stop(sim_t* S);            /* writes the file to rec_dir (or [replay] record_file) */
+unsigned long long sim_state_hash(sim_t* S);   /* FNV-1a over every body pose and the wheel forces */
 #ifdef DC_PROF
 /* profiling builds only (-DDC_PROF): per-tick / per-physics-batch / per-frame records in rings preallocated by
    prof_init (no allocation while running), dumped as CSV by prof_dump. Each ring has a single writer thread. */

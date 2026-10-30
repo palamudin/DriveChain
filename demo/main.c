@@ -538,18 +538,34 @@ static void po_tagstr(int tg, char* b, int nb) {
     snprintf(b, nb, "%s%s%s%s", tg & PT_TAG_KERB ? "kerb " : "", tg & PT_TAG_LOAD ? "load-jump " : "", tg & PT_TAG_STEER ? "fast-steer " : "", tg ? "" : "-");
     int l = (int)strlen(b); if (l > 1 && b[l - 1] == ' ') b[l - 1] = 0;
 }
-static void po_lane(char* b, int nb, double* mem_kb) {
+/* lane line: backend, per-call cost, live us per backend that ran (whole call: gpu includes pack, upload, launch,
+   readback), self-test us (auto only, "-" = not run); detail line (b2): batches, planar skips, gpu phase split,
+   failed gpu launches and the same-tick cpu cross-check ([offload] xcheck = n) */
+static void po_lane2(char* b, int nb, char* b2, int nb2, double* mem_kb) {
     dc_offload_stats os; memset(&os, 0, sizeof os); os.backend = DC_OFFLOAD_REF; dc_get_offload(SIM.car, DC_STAGE_PATCH, &os);
-    *mem_kb = os.mem_bytes / 1024.0;
+    *mem_kb = os.mem_bytes / 1024.0; if (b2) *b2 = 0;
     if (os.backend == DC_OFFLOAD_REF) { snprintf(b, nb, "patch: ref (double rays)"); return; }
-    snprintf(b, nb, "patch: %s%s%s w%d  %.2f us/call (max %.0f)  hand-backs %.2f%%  live us cpu %.1f simd %.1f gpu %.1f%s%s", dc_offload_name(os.backend), os.auto_sel == 1 ? " (auto)" : os.auto_sel == 2 ? (os.calls ? " (auto, probing)" : " (auto, idle)") : "",
+    char lv[3][16], cl[3][16];
+    for (int k = 0; k < 3; k++) {
+        if (os.live_us[k] >= 0) snprintf(lv[k], 16, "%.1f", os.live_us[k]); else snprintf(lv[k], 16, "-");
+        if (os.cal_us[k] >= 0) snprintf(cl[k], 16, "%.1f%s", os.cal_us[k], k && !os.cal_match[k] ? "!" : ""); else snprintf(cl[k], 16, "-");
+    }
+    snprintf(b, nb, "patch: %s%s%s w%d  %.2f us/call (max %.0f)  hand-backs %.2f%%  live us cpu %s simd %s gpu %s  self-test cpu %s simd %s gpu %s%s%s", dc_offload_name(os.backend),
+             os.auto_sel == 1 ? " (auto)" : os.auto_sel == 2 ? (os.calls ? " (auto, probing)" : " (auto, idle)") : "",
              os.backend == DC_OFFLOAD_GPU && !os.gpu_ok ? "(n/a)" : "", os.simd_width, 1e6 * os.seconds / (os.calls ? os.calls : 1), 1e6 * os.max_s,
-             100.0 * os.fallback / (os.rays ? os.rays : 1), os.auto_sel ? os.live_us[0] : os.cal_us[0], os.auto_sel ? os.live_us[1] : os.cal_us[1], os.auto_sel ? os.live_us[2] : os.cal_us[2], os.gpu_ok ? "  " : "", os.device);
+             100.0 * os.fallback / (os.rays ? os.rays : 1), lv[0], lv[1], lv[2], cl[0], cl[1], cl[2], os.gpu_ok ? "  " : "", os.device);
+    if (!b2) return;
+    int l = snprintf(b2, nb2, "lane batches %lld, planar skips %lld", os.calls, os.skips);
+    if (os.gpu_calls || os.gpu_fail)
+        l += snprintf(b2 + l, nb2 - l, "  gpu %lld calls: up %.1f exec %.1f read %.1f us, failed %lld", os.gpu_calls, os.gpu_phase_us[0], os.gpu_phase_us[1], os.gpu_phase_us[2], os.gpu_fail);
+    if (os.xcheck)
+        snprintf(b2 + l, nb2 - l, "  xcheck 1/%d: %lld checked, flips %lld, max dth %.3g, max dxy/grip %.3g", os.xcheck, os.xc_calls, os.xc_flips, os.xc_max_dth, os.xc_max_dother);
+    else snprintf(b2 + l, nb2 - l, "  xcheck off");
 }
 static void draw_perf(int sw_, int sh_, double fps) {
     po_update(0);
-    char b[512], lane[256]; double mem_kb; po_lane(lane, sizeof lane, &mem_kb);
-    int x = sw_ - 560, y = 10, w = 550, h = 160 + 15 * (PO.nrow + PO.nspk + 2);
+    char b[640], lane[320], lane2[256]; double mem_kb; po_lane2(lane, sizeof lane, lane2, sizeof lane2, &mem_kb);
+    int x = sw_ - 560, y = 10, w = 550, h = 175 + 15 * (PO.nrow + PO.nspk + 2);
     DrawRectangle(x - 8, y - 4, w + 4, h, (Color){0, 0, 0, 170});
     Color hc = (Color){255, 220, 120, 255}, tc = RAYWHITE, dc = (Color){180, 220, 255, 255};
     snprintf(b, sizeof b, "PERF  (F7 hide, F8 dump)  last %.1f s, %d ticks", PO.win_s, PO.n); DrawText(b, x, y, 16, hc); y += 20;
@@ -559,6 +575,7 @@ static void draw_perf(int sw_, int sh_, double fps) {
     snprintf(b, sizeof b, "CPU %s (%d threads)", PO.cpu, PO.cores); DrawText(b, x, y, 13, dc); y += 15;
     snprintf(b, sizeof b, "GPU %s", PO.gpu); DrawText(b, x, y, 13, dc); y += 15;
     snprintf(b, sizeof b, "lane tables %.0f KB   %s", mem_kb, lane); DrawText(b, x, y, 12, dc); y += 15;
+    if (*lane2) { DrawText(lane2, x, y, 12, dc); y += 15; }
     /* raylib's default font is proportional: one DrawText per column at fixed x */
     const int cx[5] = {0, 190, 250, 310, 370};
     const char* hd[5] = {"stage (us per tick)", "mean", "p99", "max", "backend"};
@@ -596,10 +613,16 @@ static void perf_dump_file(double fps) {
     strftime(ts, sizeof ts, "%Y%m%d_%H%M%S", lt);
     snprintf(path, sizeof path, "%sperf_dump_%s.txt", GetApplicationDirectory(), ts);
     FILE* f = fopen(path, "w"); if (!f) { fprintf(stderr, "[perf] cannot write %s\n", path); return; }
-    char lane[256]; double mem_kb; po_lane(lane, sizeof lane, &mem_kb);
+    char lane[320], lane2[256]; double mem_kb; po_lane2(lane, sizeof lane, lane2, sizeof lane2, &mem_kb);
     fprintf(f, "# DriveChain perf dump %s\n# physics %.0f Hz x %d substeps (%.0f Hz), threads %d, model %s\n", ts, 1 / SIM.tick_dt, (int)(SIM.P.substep_hz * SIM.tick_dt + 0.5), SIM.P.substep_hz, SIM.threads,
             SIM.P.model == DC_MODEL_FAST ? "fast" : "reference");
     fprintf(f, "# CPU %s (%d threads)\n# GPU %s\n# render %.0f fps\n# lane tables %.0f KB; %s\n", PO.cpu, PO.cores, PO.gpu, fps, mem_kb, lane);
+    if (*lane2) fprintf(f, "# %s\n", lane2);
+    fprintf(f, "# offload.patch = %s (in use %s); input %s", cfg_str(&CFG, "offload.patch", "ref"), dc_offload_name(SIM.offload_patch),
+            VIEW.rep_on || VIEW.rep_done ? "replay" : VIEW.rec_on ? "live, recording" : "live");
+    if (VIEW.rep_on || VIEW.rep_done) fprintf(f, " %s, tick %d / %d%s", VIEW.rep_path, VIEW.rep_i, VIEW.rep_n, VIEW.rep_done ? (VIEW.rep_match ? ", ended bit-identical" : ", ended DIFFERENT from the recording") : "");
+    if (*VIEW.rec_path) fprintf(f, "; last recording %s", VIEW.rec_path);
+    fprintf(f, "\n");
     fprintf(f, "# window %.2f s, %d ticks; budget %.0f us; over budget %.3f %%; RT x%.3f; sim/wall %.4f\n", PO.win_s, PO.n, PO.budget_us, PO.over_pct, PO.rt, PO.simwall);
     fprintf(f, "# stage,mean_us,p99_us,max_us\n");
     for (int r = 0; r < PO.nrow; r++) { const char* nm = PO.row[r].name; while (*nm == ' ') nm++; fprintf(f, "# %s,%.2f,%.2f,%.1f\n", nm, PO.row[r].mean, PO.row[r].p99, PO.row[r].max); }
@@ -630,6 +653,9 @@ static void draw_hud(const sim_snap* V, const dc_car_params* P, int sw_, int sh_
     snprintf(b, sizeof b, "rack %+6.1f mm  F %+6.0f N  assist %s %+6.0f N", t->rack_pos * 1e3, t->rack_force, V->assist ? "HYD" : "off", t->assist_force); DrawText(b, x, y, 14, RAYWHITE); y += 18;
     snprintf(b, sizeof b, "ay %+5.2f g  ax %+5.2f g  yaw %+5.1f deg/s  beta %+5.1f deg", t->ay / 9.81, t->ax / 9.81, t->yaw_rate * 180 / M_PI, V->beta * 180 / M_PI); DrawText(b, x, y, 14, RAYWHITE); y += 18;
     snprintf(b, sizeof b, "physics %s  %.1f us/substep @%.0f Hz (%.1fx RT)  render %.0f fps  cam %s", V->solver == 1 ? "MULTIBODY" : "legacy", V->us_per_substep, P->substep_hz, V->rt_factor, fps, cam); DrawText(b, x, y, 14, (Color){180, 220, 255, 255}); y += 20;
+    if (V->rec_on) { snprintf(b, sizeof b, "REC %.1f s  (F9 stop)", V->rec_n * SIM.tick_dt); DrawText(b, sw_ / 2 - 80, 10, 20, RED); }
+    else if (V->rep_on) { snprintf(b, sizeof b, "REPLAY %.1f / %.1f s  (F9 stop)", V->rep_i * SIM.tick_dt, V->rep_n * SIM.tick_dt); DrawText(b, sw_ / 2 - 120, 10, 20, SKYBLUE); }
+    else if (V->rec_msg[0]) DrawText(V->rec_msg, sw_ / 2 - 200, 10, 14, V->rep_done && !V->rep_match ? ORANGE : SKYBLUE);
     if (!full) return;
     DrawText("      Fz     Fx     Fy    Mz   alpha  kappa slide trav  psi   rim  surf", x, y, 13, (Color){255, 220, 120, 255}); y += 16;
     static const char* cn[4] = {"FL", "FR", "RL", "RR"};
@@ -675,7 +701,7 @@ static void draw_hud(const sim_snap* V, const dc_car_params* P, int sw_, int sh_
     }
     DrawText("FFB N m (y) / steer (b)", gx, gy + gh + 2, 10, RAYWHITE);
     draw_title(TextFormat("map: %s  (F6 next)", MAP_TITLE), 10, sh_ - 34, 12, (Color){255, 220, 120, 220});
-    DrawText("keys: 1-9,0 spots  F1 spot list  F6 map  arrows/WASD drive  A/Z or Q/E shift  C cam  F2 x-ray  F3 hud  F4 forces  F7 perf  F8 perf dump  H assist  P puncture  R reset  O autopilot  G plug-in driver  Space handbrake  LShift clutch",
+    DrawText("keys: 1-9,0 spots  F1 spot list  F6 map  arrows/WASD drive  A/Z or Q/E shift  C cam  F2 x-ray  F3 hud  F4 forces  F7 perf  F8 perf dump  F9 record/replay  H assist  P puncture  R reset  O autopilot  G plug-in driver  Space handbrake  LShift clutch",
              10, sh_ - 18, 12, (Color){230, 230, 230, 200});
     (void)sw_;
 }
@@ -943,6 +969,7 @@ int main(int argc, char** argv) {
     if (headless && (getenv("DEMO_SPOT") || !cfg_str(&CFG, "start.spot", NULL))) cfg_set(&CFG, "start.spot", getenv("DEMO_SPOT") ? getenv("DEMO_SPOT") : "start");   /* autopilot shots start on the straight */
     if (headless) { cfg_set(&CFG, "input.device", "keyboard"); if (!getenv("DEMO_MANUAL")) cfg_set(&CFG, "autopilot.enabled", "1"); }
     if (!sim_init(&SIM, &CFG, &TRK, &AUD, err, sizeof err)) { fprintf(stderr, "car init failed: %s\n", err); return 1; }
+    snprintf(SIM.rec_dir, sizeof SIM.rec_dir, "%s", GetApplicationDirectory());   /* F9 recordings go next to the exe */
     const dc_car_params* P = dc_params(SIM.car);
     /* plug-in driver control port (JSON lines over TCP, see docs/DRIVER_INTERFACE.md): --drive-port N or driver.port */
     static proto_t PROTO;
@@ -1041,6 +1068,7 @@ int main(int argc, char** argv) {
         if (IsKeyPressed(KEY_H)) C->toggle_assist++;
         if (IsKeyPressed(KEY_O)) C->autopilot++;
         if (IsKeyPressed(KEY_G)) C->drv_toggle++;
+        if (IsKeyPressed(KEY_F9)) C->rec_toggle++;
         if (IsKeyPressed(KEY_PAUSE) || IsKeyPressed(KEY_F5)) C->pause = !C->pause;
         if (IsKeyPressed(KEY_F6) && !headless && big) switch_map(C);
         if (headless) {   /* synchronous fixed-step physics for reproducible shots */
@@ -1064,6 +1092,7 @@ int main(int argc, char** argv) {
         if (IsKeyPressed(KEY_F4)) forces = !forces;
         if (IsKeyPressed(KEY_F7)) PERF_ON = !PERF_ON;
         if (IsKeyPressed(KEY_F8)) perf_dump_file(GetFPS());
+        { static int rep_was; if (VIEW.rep_done && !rep_was && cfg_int(&CFG, "replay.dump", 1)) perf_dump_file(GetFPS()); rep_was = VIEW.rep_done; }   /* replay end: auto F8 */
         if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) { Vector2 d = GetMouseDelta(); ORB_Y -= d.x * 0.01; ORB_P = fmin(1.4, fmax(-0.1, ORB_P + d.y * 0.01)); }
         ORB_D = fmax(2, ORB_D - GetMouseWheelMove() * 0.5);
         H_ffb[H_n % HIST] = (float)VIEW.t.column_torque; H_sw[H_n % HIST] = (float)VIEW.t.sw_angle; H_ay[H_n % HIST] = (float)VIEW.t.ay; H_n++;

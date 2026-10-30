@@ -67,6 +67,7 @@ static int make_car(sim_t* S) {
     { int nt = (int)cfg_num(S->cfg, "physics.threads", 1); S->threads = nt > 1 ? dc_set_threads(S->car, nt) : 1; }
     if (S->threads > 1) dc_set_pool_opts(S->car, cfg_num(S->cfg, "physics.pool_spin_us", 500), (int)cfg_num(S->cfg, "physics.affinity", -1));   /* opt-in step worker threads (track_road_fn is pure) */
     S->offload_patch = dc_set_offload(S->car, DC_STAGE_PATCH, dc_offload_parse(cfg_str(S->cfg, "offload.patch", "ref")));   /* compute-offload lane (fast model) */
+    dc_set_offload_xcheck(S->car, cfg_int(S->cfg, "offload.xcheck", 0));   /* 0 off; n = re-run every n-th non-cpu lane batch on cpu, same tick */
     return 1;
 }
 
@@ -128,6 +129,9 @@ int sim_init(sim_t* S, cfg_t* cfg, track_t* trk, audio_t* audio, char* err, int 
         sim_reset_at(S, x, y, yaw, cfg_num(cfg, "start.speed", 0));
     }
     else sim_reset_on_track(S, cfg_num(cfg, "start.s", 30), cfg_num(cfg, "start.d", 0), cfg_num(cfg, "start.speed", 0));
+    { const char* rf = cfg_str(cfg, "replay.file", ""); char e2[300];   /* [replay] file = <recording>: replay it from the start */
+      if (*rf && !sim_replay_load(S, rf, e2, sizeof e2)) { fprintf(stderr, "[replay] %s\n", e2); snprintf(S->rec_msg, sizeof S->rec_msg, "replay: %.180s", e2); } }
+    if (cfg_int(cfg, "replay.record", 0) && !S->rep_on) sim_record_start(S);   /* record from the spawn (headless runs) */
     return 1;
 }
 void sim_reset_at(sim_t* S, double x, double y, double yaw, double speed) {
@@ -291,6 +295,97 @@ void prof_dump(const char* prefix) {
     fprintf(stderr, "[prof] %d ticks, %d batches, %d frames -> %s_*.csv\n", PT_n, PB_n, PF_n, prefix);
 }
 #endif
+/* ---------------- input record / replay ---------------- */
+static unsigned long long fnv(unsigned long long h, const void* p, size_t n) { const unsigned char* b = (const unsigned char*)p; for (size_t i = 0; i < n; i++) { h ^= b[i]; h *= 1099511628211ULL; } return h; }
+unsigned long long sim_state_hash(sim_t* S) {
+    unsigned long long h = 1469598103934665603ULL;
+    dc_xform x[DC_PART_COUNT]; memset(x, 0, sizeof x); int n = dc_get_parts(S->car, x, DC_PART_COUNT);
+    for (int i = 0; i < n && i < DC_PART_COUNT; i++) { h = fnv(h, x[i].pos, sizeof x[i].pos); h = fnv(h, x[i].quat, sizeof x[i].quat); }
+    dc_telemetry t; memset(&t, 0, sizeof t); dc_get_telemetry(S->car, &t);
+    for (int i = 0; i < 4; i++) { double v[5] = {t.w[i].fz, t.w[i].fx, t.w[i].fy, t.w[i].slip_ratio, t.w[i].slip_angle}; h = fnv(h, v, sizeof v); }
+    double e[3] = {t.engine_rpm, t.sw_angle, t.column_torque}; return fnv(h, e, sizeof e);
+}
+static void rec_fill_hdr(sim_t* S, sim_rec_hdr* H, double x, double y, double yaw, double v) {
+    memset(H, 0, sizeof *H); memcpy(H->magic, SIM_REC_MAGIC, 8); H->version = 1;
+    H->tick_dt = S->tick_dt; H->substep_hz = S->P.substep_hz; H->x = x; H->y = y; H->yaw = yaw; H->speed = v; H->gear = S->gear;
+    H->model = S->P.model; H->solver = S->P.solver; H->bricks = S->P.bricks; H->layout = S->trk->layout; H->threads = S->threads;
+    H->backend = S->offload_patch; H->bake_bits = cfg_int(S->cfg, "track.bake", 0); H->track_len = S->trk->length;
+    H->param_hash = fnv(1469598103934665603ULL, &S->P, sizeof S->P);   /* car params incl. setup (struct is memset before load) */
+    snprintf(H->map, sizeof H->map, "%s", S->trk->layout == TRACK_MESH ? S->trk->name : track_layout_name(S->trk));
+    snprintf(H->car, sizeof H->car, "%s", cfg_str(S->cfg, "car.ini", "(built-in)")); snprintf(H->setup, sizeof H->setup, "%s", cfg_str(S->cfg, "car.setup", "legacy"));
+    snprintf(H->backend_cfg, sizeof H->backend_cfg, "%s", cfg_str(S->cfg, "offload.patch", "ref"));
+}
+static void rec_restart(sim_t* S, double x, double y, double yaw, double v, int gear) {   /* fresh car: no history carried in */
+    make_car(S); sim_reset_at(S, x, y, yaw, v); S->gear = gear; S->shift_timer_ms = 0; S->shift_left_s = 0;
+}
+void sim_record_start(sim_t* S) {
+    if (S->rec_on || S->rep_on) return;
+    int cap = (int)(cfg_num(S->cfg, "replay.max_s", 600) / S->tick_dt);
+    if (!S->rec_buf || S->rec_cap != cap) { free(S->rec_buf); S->rec_buf = (sim_rec_tick*)malloc(sizeof(sim_rec_tick) * (size_t)cap); S->rec_cap = S->rec_buf ? cap : 0; }
+    if (!S->rec_buf) { snprintf(S->rec_msg, sizeof S->rec_msg, "record: out of memory"); return; }
+    dc_xform ch[DC_PART_COUNT]; dc_get_parts(S->car, ch, DC_PART_COUNT);
+    dc_telemetry t0; dc_get_telemetry(S->car, &t0);
+    double q0 = ch[0].quat[0], q1 = ch[0].quat[1], q2 = ch[0].quat[2], q3 = ch[0].quat[3];
+    double yaw = atan2(2 * (q0 * q3 + q1 * q2), 1 - 2 * (q2 * q2 + q3 * q3));
+    rec_restart(S, ch[0].pos[0], ch[0].pos[1], yaw, t0.vx, S->gear);
+    rec_fill_hdr(S, &S->rec_h, ch[0].pos[0], ch[0].pos[1], yaw, t0.vx);
+    S->rec_n = 0; S->rec_ev = 0; S->rec_on = 1;
+    snprintf(S->rec_msg, sizeof S->rec_msg, "REC (F9 stops)");
+    fprintf(stderr, "[replay] recording from x %.2f y %.2f yaw %.1f deg v %.2f m/s gear %d\n", ch[0].pos[0], ch[0].pos[1], yaw * 180 / M_PI, t0.vx, S->gear);
+}
+void sim_record_stop(sim_t* S) {
+    if (!S->rec_on) return;
+    S->rec_on = 0; S->rec_h.nticks = S->rec_n; S->rec_h.end_hash = sim_state_hash(S);
+    const char* fx = cfg_str(S->cfg, "replay.record_file", NULL);
+    if (fx && *fx) snprintf(S->rec_path, sizeof S->rec_path, "%s", fx);
+    else { time_t tt = time(NULL); struct tm* lt = localtime(&tt); char ts[32]; strftime(ts, sizeof ts, "%Y%m%d_%H%M%S", lt);
+           snprintf(S->rec_path, sizeof S->rec_path, "%sreplay_%s.dcr", S->rec_dir, ts); }
+    FILE* f = fopen(S->rec_path, "wb");
+    int ok = f && fwrite(&S->rec_h, sizeof S->rec_h, 1, f) == 1 && (S->rec_n == 0 || fwrite(S->rec_buf, sizeof *S->rec_buf, (size_t)S->rec_n, f) == (size_t)S->rec_n);
+    if (f) ok &= fclose(f) == 0;
+    if (ok) snprintf(S->rec_msg, sizeof S->rec_msg, "recorded %.1f s -> %.170s", S->rec_n * S->tick_dt, S->rec_path);
+    else snprintf(S->rec_msg, sizeof S->rec_msg, "record: cannot write %.170s", S->rec_path);
+    fprintf(stderr, "[replay] %s (%d ticks, end hash %016llx)\n", S->rec_msg, S->rec_n, S->rec_h.end_hash);
+}
+static void rep_begin(sim_t* S) {
+    const sim_rec_hdr* H = &S->rep_h;
+    rec_restart(S, H->x, H->y, H->yaw, H->speed, H->gear);
+    S->rep_i = 0; S->rep_on = 1; S->rep_done = 0; S->rep_match = -1; S->rep_hash = 0;
+    snprintf(S->rec_msg, sizeof S->rec_msg, "REPLAY %.180s", S->rep_path);
+}
+int sim_replay_load(sim_t* S, const char* path, char* err, int errlen) {
+    FILE* f = fopen(path, "rb"); sim_rec_hdr H;
+    if (!f) { snprintf(err, errlen, "cannot open %s", path); return 0; }
+    if (fread(&H, sizeof H, 1, f) != 1 || memcmp(H.magic, SIM_REC_MAGIC, 8) || H.version != 1 || H.nticks < 0) { fclose(f); snprintf(err, errlen, "%s: not a recording", path); return 0; }
+    sim_rec_tick* b = (sim_rec_tick*)malloc(sizeof *b * (size_t)(H.nticks ? H.nticks : 1));
+    if (!b || fread(b, sizeof *b, (size_t)H.nticks, f) != (size_t)H.nticks) { fclose(f); free(b); snprintf(err, errlen, "%s: truncated", path); return 0; }
+    fclose(f);
+    /* the physics must be the same run: refuse what would silently diverge */
+    sim_rec_hdr C; rec_fill_hdr(S, &C, 0, 0, 0, 0);
+    const char* why = H.tick_dt != C.tick_dt ? "physics.tick_hz" : H.substep_hz != C.substep_hz ? "physics.substeps" : H.model != C.model ? "physics.model" :
+                      H.solver != C.solver ? "car.solver" : H.bricks != C.bricks ? "physics.bricks" : H.layout != C.layout || H.track_len != C.track_len || strcmp(H.map, C.map) ? "map" :
+                      H.bake_bits != C.bake_bits ? "track.bake" : H.param_hash != C.param_hash ? "car / setup parameters" : NULL;
+    if (why) { free(b); snprintf(err, errlen, "%s: recorded with a different %s (%s %s, %.0f Hz)", path, why, H.map, H.car, 1 / H.tick_dt); return 0; }
+    if (H.backend != C.backend) {
+        int hr = (H.backend == DC_OFFLOAD_REF), cr = (C.backend == DC_OFFLOAD_REF);
+        fprintf(stderr, "[replay] note: recorded on backend %s, replaying on %s (%s)\n", dc_offload_name(H.backend), dc_offload_name(C.backend),
+                hr != cr ? "ref and the lane backends round differently: expect a DIFFERENT end hash, set [offload] patch to match" : "the lane backends give the same bits");
+    }
+    free(S->rep_buf); S->rep_buf = b; S->rep_n = H.nticks; S->rep_h = H; snprintf(S->rep_path, sizeof S->rep_path, "%s", path);
+    rep_begin(S);
+    fprintf(stderr, "[replay] %s: %d ticks (%.1f s), recorded on %s, threads %d\n", path, H.nticks, H.nticks * H.tick_dt, dc_offload_name(H.backend), H.threads);
+    return 1;
+}
+static void snap_rec(sim_t* S) {
+    sim_snap* N = &S->snap;
+    N->rec_on = S->rec_on; N->rep_on = S->rep_on; N->rep_done = S->rep_done; N->rep_match = S->rep_match; N->rep_i = S->rep_i; N->rep_n = S->rep_n; N->rec_n = S->rec_n;
+    snprintf(N->rec_msg, sizeof N->rec_msg, "%s", S->rec_msg); snprintf(N->rep_path, sizeof N->rep_path, "%.250s", S->rep_path); snprintf(N->rec_path, sizeof N->rec_path, "%.250s", S->rec_path);
+}
+static void rep_finish(sim_t* S) {
+    S->rep_on = 0; S->rep_done = 1; S->rep_hash = sim_state_hash(S); S->rep_match = S->rep_hash == S->rep_h.end_hash;
+    snprintf(S->rec_msg, sizeof S->rec_msg, "replay done: %s (hash %016llx) - F9 replays again", S->rep_match ? "BIT-IDENTICAL" : "DIFFERS", S->rep_hash);
+    fprintf(stderr, "[replay] end after %d ticks: hash %016llx, recorded %016llx -> %s\n", S->rep_n, S->rep_hash, S->rep_h.end_hash, S->rep_match ? "bit-identical" : "DIFFERS");
+}
 static void sim_tick_body(sim_t* S, double dt);
 void sim_tick(sim_t* S, double dt) {
     double w0 = now_us();
@@ -315,6 +410,19 @@ void sim_tick(sim_t* S, double dt) {
 static void sim_tick_body(sim_t* S, double dt) {
     S->tick_n = 0; S->tick_step_us = 0;
     sim_ctl* C = &S->ctl;
+    if (C->rec_toggle != S->ctl_seen.rec_toggle) {   /* F9: replay stop / again, else record start / stop */
+        S->ctl_seen.rec_toggle = C->rec_toggle;
+        if (S->rep_on) { S->rep_on = 0; snprintf(S->rec_msg, sizeof S->rec_msg, "replay stopped at tick %d / %d", S->rep_i, S->rep_n); }
+        else if (S->rep_done) rep_begin(S);
+        else if (S->rec_on) sim_record_stop(S);
+        else sim_record_start(S);
+    }
+    if (S->rep_on || S->rep_done) {   /* replay owns the car: drop the one-shot requests (pause stays live) */
+        S->ctl_seen.toggle_assist = C->toggle_assist; S->ctl_seen.reset = C->reset; S->ctl_seen.spot_req = C->spot_req; S->ctl_seen.puncture = C->puncture;
+        if (S->rep_done) { S->snap.paused = 1; snap_rec(S); return; }   /* hold the end state for the dump (F9 replays again) */
+    }
+    if (S->rec_on && (C->toggle_assist != S->ctl_seen.toggle_assist || C->reset != S->ctl_seen.reset || C->spot_req != S->ctl_seen.spot_req))
+        sim_record_stop(S);   /* a teleport / car rebuild ends the recording */
     /* one-shot requests */
     if (C->toggle_assist != S->ctl_seen.toggle_assist) {
         S->ctl_seen.toggle_assist = C->toggle_assist;
@@ -339,11 +447,11 @@ static void sim_tick_body(sim_t* S, double dt) {
             sim_reset_at(S, x, y, yaw, 0); S->gear = 1;
         }
     }
-    if (C->puncture != S->ctl_seen.puncture) { S->ctl_seen.puncture = C->puncture; dc_puncture(S->car, (C->puncture - 1) & 3, 2.0); }
+    if (C->puncture != S->ctl_seen.puncture) { S->ctl_seen.puncture = C->puncture; dc_puncture(S->car, (C->puncture - 1) & 3, 2.0); S->rec_ev = 1; S->rec_arg = (C->puncture - 1) & 3; }
     if (C->autopilot != S->ctl_seen.autopilot) { S->ctl_seen.autopilot = C->autopilot; S->autopilot = !S->autopilot; }
     if (C->drv_toggle != S->ctl_seen.drv_toggle) { S->ctl_seen.drv_toggle = C->drv_toggle; sim_driver_engage(S, !S->drv_on); }
     if (S->ext_hook) S->ext_hook(S, 0);
-    if (C->pause) { S->snap.paused = 1; return; }
+    if (C->pause) { S->snap.paused = 1; snap_rec(S); return; }
     S->snap.paused = 0;
 
 #ifdef DC_PROF
@@ -433,6 +541,14 @@ static void sim_tick_body(sim_t* S, double dt) {
         if (S->shift_timer_ms > 60) in.throttle = 0;
     }
     in.clutch = clu; in.gear = S->gear;
+    if (S->rep_on) {   /* replay: the recorded input replaces everything mapped above */
+        const sim_rec_tick* r = &S->rep_buf[S->rep_i++];
+        if (r->ev == 1) dc_puncture(S->car, r->arg & 3, 2.0);
+        in = r->in; S->gear = in.gear;
+    } else if (S->rec_on) {
+        sim_rec_tick* r = &S->rec_buf[S->rec_n++]; r->in = in; r->ev = S->rec_ev; r->arg = S->rec_arg;
+    }
+    S->rec_ev = 0;
     dc_set_input(S->car, &in);
     double t0 = now_us();
     int n = dc_step(S->car, dt);
@@ -478,6 +594,9 @@ static void sim_tick_body(sim_t* S, double dt) {
     if (S->drv) dc_driver_get_state(S->drv, &N->drv_st);
     N->raw_buttons = S->dev.buttons_raw; N->raw_naxes = S->dev.naxes; N->hgear = S->dev.hgear;
     if (S->ext_hook) S->ext_hook(S, 1);
+    if (S->rep_on && S->rep_i >= S->rep_n) rep_finish(S);
+    if (S->rec_on && S->rec_n >= S->rec_cap) sim_record_stop(S);   /* buffer full ([replay] max_s) */
+    snap_rec(S);
     if (S->steps_acc >= 2000) { N->us_per_substep = S->us_acc / S->steps_acc; N->rt_factor = 1e6 / (N->us_per_substep * S->P.substep_hz); S->us_acc = 0; S->steps_acc = 0; }
 }
-void sim_shutdown(sim_t* S) { input_close(); S->bake = NULL; if (S->car) dc_destroy(S->car); S->car = NULL; if (S->drv) dc_driver_destroy(S->drv); S->drv = NULL; }
+void sim_shutdown(sim_t* S) { sim_record_stop(S); free(S->rec_buf); free(S->rep_buf); S->rec_buf = S->rep_buf = NULL; input_close(); S->bake = NULL; if (S->car) dc_destroy(S->car); S->car = NULL; if (S->drv) dc_driver_destroy(S->drv); S->drv = NULL; }
