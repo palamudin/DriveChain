@@ -43,6 +43,7 @@ static int make_car(sim_t* S) {
     dc_set_road(S->car, track_road_fn, S->trk); dc_set_road_flags(S->car, DC_ROAD_HEIGHT_ONLY | DC_ROAD_STATIC);   /* tracks are static */
     { int nt = (int)cfg_num(S->cfg, "physics.threads", 1); S->threads = nt > 1 ? dc_set_threads(S->car, nt) : 1; }
     if (S->threads > 1) dc_set_pool_opts(S->car, cfg_num(S->cfg, "physics.pool_spin_us", 500), (int)cfg_num(S->cfg, "physics.affinity", -1));   /* opt-in step worker threads (track_road_fn is pure) */
+    S->offload_patch = dc_set_offload(S->car, DC_STAGE_PATCH, dc_offload_parse(cfg_str(S->cfg, "offload.patch", "ref")));   /* compute-offload lane (fast model) */
     return 1;
 }
 
@@ -177,20 +178,37 @@ static void autopilot(sim_t* S, const dc_telemetry* t, const dc_xform* ch, dc_in
 
 #ifdef DC_PROF
 static prof_tick_t* PT; static prof_batch_t* PB; static prof_frame_t* PF; static int PT_cap, PB_cap, PF_cap, PT_n, PB_n, PF_n;
+static int PT_ring; static long long PT_tot;   /* ring mode (perf overlay): PT_tot ticks written, slot PT_tot % PT_cap */
 double prof_now_us(void) { return now_us(); }
 void prof_init(int cap) {
     PT_cap = cap; PB_cap = cap; PF_cap = cap;
     PT = (prof_tick_t*)calloc(PT_cap, sizeof *PT); PB = (prof_batch_t*)calloc(PB_cap, sizeof *PB); PF = (prof_frame_t*)calloc(PF_cap, sizeof *PF);
     dc_prof_rec r; dc_prof_take(&r);   /* drop anything before the run */
 }
-const prof_tick_t* prof_last(void) { return PT && PT_n > 0 ? &PT[PT_n - 1] : NULL; }
-void prof_rewind(void) { PT_n = PB_n = PF_n = 0; }
+void prof_init_ring(int cap) {
+    PT_cap = cap; PT_ring = 1; PT_tot = 0;
+    PT = (prof_tick_t*)calloc(PT_cap, sizeof *PT);   /* once, at start; nothing is allocated while running */
+    dc_prof_rec r; dc_prof_take(&r);
+}
+long long prof_ring_copy(prof_tick_t* dst, int max) {
+    /* newest ticks, oldest first; single writer (physics thread) publishes PT_tot after the record (release), the reader
+       drops any slot the writer may have lapped while copying. Returns the count copied. */
+    if (!PT || !PT_ring) return 0;
+    long long n1 = __atomic_load_n(&PT_tot, __ATOMIC_ACQUIRE), k = n1 < max ? n1 : max;
+    if (k > PT_cap - 64) k = PT_cap - 64;
+    for (long long i = 0; i < k; i++) dst[i] = PT[(n1 - k + i) % PT_cap];
+    long long n2 = __atomic_load_n(&PT_tot, __ATOMIC_ACQUIRE), lost = n2 - n1 - 64;   /* slots rewritten since the first load */
+    if (lost > 0) { if (lost >= k) return 0; memmove(dst, dst + lost, (size_t)(k - lost) * sizeof *dst); k -= lost; }
+    return k;
+}
+const prof_tick_t* prof_last(void) { if (PT_ring) return PT && PT_tot > 0 ? &PT[(PT_tot - 1) % PT_cap] : NULL; return PT && PT_n > 0 ? &PT[PT_n - 1] : NULL; }
+void prof_rewind(void) { PT_n = PB_n = PF_n = 0; PT_tot = 0; }
 void prof_batch(const prof_batch_t* b) { if (PB && PB_n < PB_cap) PB[PB_n++] = *b; }
 void prof_frame(const prof_frame_t* f) { if (PF && PF_n < PF_cap) PF[PF_n++] = *f; }
 static void prof_tick(sim_t* S, double w0, double w1) {
     dc_prof_rec r; dc_prof_take(&r);
-    if (!PT || PT_n >= PT_cap) return;
-    prof_tick_t* p = &PT[PT_n++]; memset(p, 0, sizeof *p);
+    if (!PT || (!PT_ring && PT_n >= PT_cap)) return;
+    prof_tick_t* p = PT_ring ? &PT[PT_tot % PT_cap] : &PT[PT_n++]; memset(p, 0, sizeof *p);
     p->tw = w0; p->simt = S->sim_time; p->tick_us = w1 - w0;
     if (S->pf_step1 > 0) {
         p->poll_us = S->pf_poll1 - S->pf_poll0; p->input_us = S->pf_step0 - w0 - p->poll_us; p->step_us = S->pf_step1 - S->pf_step0;
@@ -210,23 +228,34 @@ static void prof_tick(sim_t* S, double w0, double w1) {
     for (int i = 0; i < 4; i++) p->fz[i] = (float)t->w[i].fz;
     p->surf_mask = 0; for (int i = 0; i < 4; i++) if (S->snap.surf[i] >= 0 && S->snap.surf[i] < 31) p->surf_mask |= 1 << S->snap.surf[i];   /* bit per SURF_* id under any wheel */
     p->px = (float)S->snap.parts[0].pos[0]; p->py = (float)S->snap.parts[0].pos[1];
+    {   /* cause tags for the spike list: kerb/rough surface under a wheel, wheel-load jump, fast steering */
+        static float fz0[4], sw0; static int have;
+        const double dt = S->tick_dt; float djump = 0;
+        for (int i = 0; i < 4; i++) { float d = fabsf(p->fz[i] - fz0[i]); if (d > djump) djump = d; fz0[i] = p->fz[i]; }
+        if (p->surf_mask & (1 << SURF_KERB | 1 << SURF_SAUSAGE | 1 << SURF_ROUGH | 1 << SURF_PAVE | 1 << SURF_GRAVEL | 1 << SURF_WALL)) p->tags |= PT_TAG_KERB;
+        if (have && djump / dt > 2.0e5) p->tags |= PT_TAG_LOAD;              /* > 200 kN/s on a wheel (e.g. 200 N in one ms) */
+        if (have && fabsf(p->sw_deg - sw0) / dt > 360) p->tags |= PT_TAG_STEER; /* > 360 deg/s at the rim */
+        sw0 = p->sw_deg; have = 1;
+    }
+    if (PT_ring) __atomic_store_n(&PT_tot, PT_tot + 1, __ATOMIC_RELEASE);
+}
+void prof_write_ticks_csv(FILE* f, const prof_tick_t* T, int n) {
+    static const char* SN[DCP_S_N] = {"begin", "phaseA", "loads", "assemble", "factor", "ksolve", "boxrows", "schur", "pgs", "subspace", "backsub", "resolve_chk", "commit", "integrate", "post", "step_total"};
+    fprintf(f, "tw_us,simt,tick_us,poll_us,input_us,step_us,ffb_us,post_us");
+    for (int k = 0; k < DCP_S_N; k++) fprintf(f, ",s_%s", SN[k]);
+    fprintf(f, ",wh0,wh1,wh2,wh3,w_setup,w_rays,w_rim,w_brush,w_mz,w_cull,nsub,solves,resolves,sweeps,sweep_max,capped,nbx_max,pool_runs,pool_wakes,pool_wait_us,pool_wait_max_us,slide,nslide,slip_max_deg,speed,rack_n,column_nm,mz_fl,mz_fr,sw_deg,fz0,fz1,fz2,fz3,px,py,surf_mask,tags\n");
+    for (int i = 0; i < n; i++) { const prof_tick_t* p = &T[i];
+        fprintf(f, "%.1f,%.5f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f", p->tw, p->simt, p->tick_us, p->poll_us, p->input_us, p->step_us, p->ffb_us, p->post_us);
+        for (int k = 0; k < DCP_S_N; k++) fprintf(f, ",%.2f", p->st_us[k]);
+        for (int k = 0; k < 4; k++) fprintf(f, ",%.2f", p->wh_us[k]);
+        for (int k = 0; k < DCP_W_TOTAL; k++) fprintf(f, ",%.2f", p->whs_us[k]);
+        fprintf(f, ",%d,%d,%d,%d,%d,%d,%d,%d,%d,%.2f,%.2f,%.3f,%d,%.2f,%.2f,%.3f,%.5f,%.4f,%.4f,%.4f,%.0f,%.0f,%.0f,%.0f,%.2f,%.2f,%d,%d\n", p->nsub, p->solves, p->resolves, p->sweeps, p->sweep_max, p->capped, p->nbx_max,
+                p->pool_runs, p->pool_wakes, p->pool_wait_us, p->pool_wait_max_us, p->slide, p->nslide, p->slip_max_deg, p->speed, p->rack_n, p->column_nm, p->mz_fl, p->mz_fr, p->sw_deg, p->fz[0], p->fz[1], p->fz[2], p->fz[3], p->px, p->py, p->surf_mask, p->tags); }
 }
 void prof_dump(const char* prefix) {
     char path[512]; FILE* f;
-    static const char* SN[DCP_S_N] = {"begin", "phaseA", "loads", "assemble", "factor", "ksolve", "boxrows", "schur", "pgs", "subspace", "backsub", "resolve_chk", "commit", "integrate", "post", "step_total"};
     snprintf(path, sizeof path, "%s_ticks.csv", prefix);
-    if ((f = fopen(path, "w"))) {
-        fprintf(f, "tw_us,simt,tick_us,poll_us,input_us,step_us,ffb_us,post_us");
-        for (int k = 0; k < DCP_S_N; k++) fprintf(f, ",s_%s", SN[k]);
-        fprintf(f, ",wh0,wh1,wh2,wh3,w_setup,w_rays,w_rim,w_brush,w_mz,w_cull,nsub,solves,resolves,sweeps,sweep_max,capped,nbx_max,pool_runs,pool_wakes,pool_wait_us,pool_wait_max_us,slide,nslide,slip_max_deg,speed,rack_n,column_nm,mz_fl,mz_fr,sw_deg,fz0,fz1,fz2,fz3,px,py,surf_mask\n");
-        for (int i = 0; i < PT_n; i++) { const prof_tick_t* p = &PT[i];
-            fprintf(f, "%.1f,%.5f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f", p->tw, p->simt, p->tick_us, p->poll_us, p->input_us, p->step_us, p->ffb_us, p->post_us);
-            for (int k = 0; k < DCP_S_N; k++) fprintf(f, ",%.2f", p->st_us[k]);
-            for (int k = 0; k < 4; k++) fprintf(f, ",%.2f", p->wh_us[k]);
-            for (int k = 0; k < DCP_W_TOTAL; k++) fprintf(f, ",%.2f", p->whs_us[k]);
-            fprintf(f, ",%d,%d,%d,%d,%d,%d,%d,%d,%d,%.2f,%.2f,%.3f,%d,%.2f,%.2f,%.3f,%.5f,%.4f,%.4f,%.4f,%.0f,%.0f,%.0f,%.0f,%.2f,%.2f,%d\n", p->nsub, p->solves, p->resolves, p->sweeps, p->sweep_max, p->capped, p->nbx_max,
-                    p->pool_runs, p->pool_wakes, p->pool_wait_us, p->pool_wait_max_us, p->slide, p->nslide, p->slip_max_deg, p->speed, p->rack_n, p->column_nm, p->mz_fl, p->mz_fr, p->sw_deg, p->fz[0], p->fz[1], p->fz[2], p->fz[3], p->px, p->py, p->surf_mask); }
-        fclose(f); }
+    if ((f = fopen(path, "w"))) { prof_write_ticks_csv(f, PT, PT_n); fclose(f); }
     snprintf(path, sizeof path, "%s_batches.csv", prefix);
     if ((f = fopen(path, "w"))) { fprintf(f, "tw_us,sleep_req_us,sleep_us,lockwait_max_us,batch_us,backlog_ms,ticks,dropped,broke\n");
         for (int i = 0; i < PB_n; i++) { const prof_batch_t* b = &PB[i]; fprintf(f, "%.1f,%.1f,%.1f,%.1f,%.1f,%.3f,%d,%d,%d\n", b->tw, b->sleep_req_us, b->sleep_us, b->lockwait_max_us, b->batch_us, b->backlog_ms, b->ticks, b->dropped, b->broke); }

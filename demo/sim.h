@@ -7,6 +7,7 @@
 #include "input.h"
 #include "audio.h"
 #include "cfg.h"
+#include <stdio.h>
 #define SIM_MAXSEG 64
 typedef struct {            /* render thread -> physics */
     int kb_left, kb_right, kb_up, kb_down, kb_clutch, kb_hand;
@@ -45,6 +46,7 @@ typedef struct sim_s {
     double us_acc; long long steps_acc;
     double tick_dt;                       /* host tick (physics.tick_hz; 1 kHz when unset, 240 Hz in demo.ini) */
     double tick_step_us; int tick_n, threads;
+    int offload_patch;               /* backend in use for the patch stage (DC_OFFLOAD_*) */
     double shift_left_s;                  /* shift timer remainder below 1 ms (non-ms ticks) */
     double perf_t, perf_wall, perf_step, perf_worst; long long perf_sub, perf_ticks; int perf_log;
     sim_snap snap;
@@ -75,11 +77,15 @@ void sim_driver_engage(sim_t* S, int on);   /* engage (1) / release (0) the plug
    prof_init (no allocation while running), dumped as CSV by prof_dump. Each ring has a single writer thread. */
 typedef struct { double tw, simt, tick_us, poll_us, input_us, step_us, ffb_us, post_us; float st_us[DCP_S_N], wh_us[4], whs_us[DCP_W_TOTAL];   /* per-wheel total; per-lap sum over wheels */
                  int nsub, solves, resolves, sweeps, sweep_max, capped, nbx_max, pool_runs, pool_wakes, nslide;
-                 float pool_wait_us, pool_wait_max_us, slide, slip_max_deg, speed, rack_n, column_nm, mz_fl, mz_fr, sw_deg, fz[4], px, py; int surf_mask; } prof_tick_t;
+                 float pool_wait_us, pool_wait_max_us, slide, slip_max_deg, speed, rack_n, column_nm, mz_fl, mz_fr, sw_deg, fz[4], px, py; int surf_mask, tags; } prof_tick_t;
+enum { PT_TAG_KERB = 1, PT_TAG_LOAD = 2, PT_TAG_STEER = 4 };
 typedef struct { double tw; float sleep_req_us, sleep_us, lockwait_max_us, batch_us, backlog_ms; int ticks, dropped, broke; } prof_batch_t;
 typedef struct { double tw; float frame_us, lock_us, draw_us; double sim_time; int new_ticks; } prof_frame_t;
 double prof_now_us(void);
 void prof_init(int cap_ticks);
+void prof_init_ring(int cap_ticks);       /* perf overlay: a wrapping tick ring (allocated once) */
+long long prof_ring_copy(prof_tick_t* dst, int max);   /* newest <= max ticks, oldest first (any thread) */
+void prof_write_ticks_csv(FILE* f, const prof_tick_t* p, int n);
 const prof_tick_t* prof_last(void);       /* newest tick record (NULL if none); prof_rewind() empties the rings (measurement tools) */
 void prof_rewind(void);
 void prof_batch(const prof_batch_t* b);
