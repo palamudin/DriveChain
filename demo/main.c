@@ -1,5 +1,5 @@
 /* main.c - DriveChain raylib 3D test drive.
-   Physics on its own thread (physics.tick_hz ticks x physics.substeps core substeps; demo.ini: 240 Hz x 4), rendering at whatever the GPU does (vsync optional),
+   Physics on its own thread (physics.tick_hz ticks x physics.substeps core substeps; demo.ini: 960 Hz x 4), rendering at whatever the GPU does (vsync optional),
    SDL2 wheel/pedals/H-shifter + constant-force FFB, procedural audio, debug overlays, headless screenshot mode. */
 #include "raylib.h"
 #include "rlgl.h"
@@ -558,7 +558,7 @@ static void* phys_thread(void* arg) {
     void* wt = CreateWaitableTimerExW(NULL, NULL, 0x2 /* CREATE_WAITABLE_TIMER_HIGH_RESOLUTION */, 0x1F0003);
     if (!wt) wt = CreateWaitableTimerExW(NULL, NULL, 0, 0x1F0003);
 #endif
-    double t0 = wall(), sim = 0; const double dt = SIM.tick_dt;   /* physics.tick_hz (240 Hz in demo.ini) */
+    double t0 = wall(), sim = 0; const double dt = SIM.tick_dt;   /* physics.tick_hz (960 Hz in demo.ini) */
     while (RUN) {
         /* fixed-step catch-up, bounded by wall time (not tick count): one batch never holds the CPU for more than
            ~8 ms, the render thread gets MTX between any two ticks (mutexes are not fair, notably on Windows), and a

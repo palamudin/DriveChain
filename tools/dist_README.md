@@ -6,13 +6,13 @@ Physics runs on its own thread, separate from rendering. Input and force feedbac
 ## Speed and quality settings (`[physics]` in demo.ini)
 | setting | default | what it does |
 |---|---|---|
-| `tick_hz` | 240 | How often per second the physics thread reads your inputs and updates force feedback and sound. |
-| `substeps` | 4 | How many mechanics steps run inside each tick. 1 / 2 / 4 / 8 = 240 / 480 / 960 / 1920 steps per second. More steps are more accurate but cost more CPU. |
+| `tick_hz` | 960 | How often per second the physics thread reads your inputs and updates force feedback and sound. |
+| `substeps` | 4 | How many mechanics steps run inside each tick. The mechanics rate is `tick_hz` x `substeps`: 960 x 4 = 3840 steps per second. More steps are more accurate but cost more CPU. |
 | `threads` | 4 | How many CPU cores share each step (1-4). The driving is exactly the same for any value; more threads just finish sooner. Use 1 or 2 on a 2-core PC. |
 | `perf_log` | 0 | Set to 1 to print the physics cost to the console once per simulated second. |
 
-Rough guide: 2 substeps (480 Hz) is the lowest setting that still matches the 1920 Hz results within tolerance in our handling tests. Use it on a slow PC. 4 (960 Hz) is the default, and 8 (1920 Hz) is the reference. If the on-screen `x RT` figure drops below about 1.5, lower `substeps` or raise `threads`.
-Change a setting without editing the file: `drivechain_demo.exe --set physics.substeps=2 --set physics.threads=2`.
+Rough guide: 960 x 4 is the default and needs a fast CPU. It is new, so you may see an occasional hitch. On a weaker PC step down: `tick_hz = 480` (1920 steps per second), then `tick_hz = 240` (960, the old default), then `substeps = 2` (480, the lowest that still matches the handling in our tests). If the on-screen `x RT` figure drops below about 1.5, or the car stutters, step down one level.
+Change a setting without editing the file: `drivechain_demo.exe --set physics.tick_hz=240 --set physics.threads=2`.
 
 > PRIVATE BUILD: `assets/miata_mesh` and `cars/miata_ac.ini` come from a third-party mod and are only for your own testing.
 > Do not redistribute this zip.

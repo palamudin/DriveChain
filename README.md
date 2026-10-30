@@ -9,15 +9,17 @@ DriveChain has a C core with a Unity frontend (P/Invoke) and a raylib test drive
 - **Library:** the mechanics rate is `substep_hz`; the default stays 2000. Host calls to `dc_step(car, dt)` run as many substeps as `dt` covers.
   `dc_set_threads(car, n)` (1-4, default 1) spreads each step over n cores, and results are bit-identical for any n. With n > 1 the road callback must be thread-safe.
 - **Test drive (demo.ini `[physics]`):**
-  - `tick_hz = 240`: inputs, FFB and audio update once per tick.
+  - `tick_hz = 960` (demo default): inputs, FFB and audio update once per tick. On a weaker PC use 480 or 240.
   - `model = fast` (demo default): the same coupled solve with a per-tick friction-solver sweep budget, a low-rank
     re-solve when a tyre leaves the friction circle, and exact closed forms in the tyre contact. It passes the
     fidelity suite (`make fastcheck`) and keeps the worst tick near 1.2 ms. `model = reference` (or
     `--set physics.model=reference`) selects the full reference numerics, unchanged bit for bit. Details: docs/PERF.md.
-  - `substeps = 4`: mechanics steps per tick; 1 / 2 / 4 / 8 = 240 / 480 / 960 / 1920 Hz.
+  - `substeps = 4`: mechanics steps per tick. Mechanics rate = tick_hz x substeps: the default 960 x 4 = 3840 Hz.
+    This default is new and costs about 4x the CPU of the old 240 x 4; occasional slow ticks are being profiled.
+    Lighter settings: 480 x 4 (1920 Hz), 240 x 4 (960 Hz, the old default), 240 x 2 (480 Hz).
   - `threads = 4`.
   - `perf_log = 1` prints the cost per simulated second.
-  - Lower `substeps` is cheaper. 480 Hz is the lowest rate that matches the 1920 Hz handling results for the reference car.
+  - Lower `tick_hz` or `substeps` is cheaper. 480 Hz mechanics is the lowest rate that matches the 1920 Hz handling results for the reference car.
 - Costs and convergence tables: docs/PERFORMANCE.md.
 
 ## What is modelled
