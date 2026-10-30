@@ -20,6 +20,12 @@ DriveChain has a C core with a Unity frontend (P/Invoke) and a raylib test drive
   - `threads = 4`.
   - `perf_log = 1` prints the cost per simulated second.
   - Lower `tick_hz` or `substeps` is cheaper. 480 Hz mechanics is the lowest rate that matches the 1920 Hz handling results for the reference car.
+- **Offload lane (demo.ini `[offload]`, fast model only):** `patch = auto` (demo default) traces the tyre-patch rays as
+  float32 lookups in a per-wheel patch table and picks the fastest backend on the live batches: each wheel tries the
+  candidates for its first 384 calls, then keeps the one with the lowest mean. Every backend gives the same bits, so the
+  pick never changes a result. `cpu`, `cpu_simd` (AVX2 when the CPU has it) and `gpu` (OpenCL, loaded at run time; the
+  closest CPU backend if none) force one; `ref` keeps the double rays. The F7 overlay shows the pick and the live
+  cost per backend. Design and measurements: docs/BRICKS.md (offload lane).
 - Costs and convergence tables: docs/PERFORMANCE.md.
 
 ## What is modelled
