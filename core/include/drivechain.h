@@ -393,6 +393,8 @@ typedef struct {
     double cal_us[3]; int cal_match[3];   /* auto calibration: us per self-test batch and bit-match, per backend (-1 = not run) */
     char device[96];                   /* OpenCL device name when the gpu backend is up */
     long long mem_bytes;               /* the stage's working tables and batch buffers (host side) */
+    int auto_sel;                      /* 0 fixed backend, 1 auto (backend = the live pick), 2 auto still probing */
+    double live_us[3];                 /* auto: live mean us per batch per backend on wheel 0 (-1 = not probed) */
 } dc_offload_stats;
 DC_API int    dc_set_offload(dc_car* c, int stage, int backend);
 DC_API void   dc_get_offload(const dc_car* c, int stage, dc_offload_stats* out);

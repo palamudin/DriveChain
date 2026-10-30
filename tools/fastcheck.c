@@ -391,6 +391,9 @@ int main(int argc, char** argv) {
                 printf("  %-17s lane patch: %s%s (w%d) calls %lld rays %lld handed back %lld (%.2f%%) | %.2f us/call mean, max %.0f us%s%s\n", MN[m], dc_offload_name(os.backend),
                        os.gpu_ok ? " [gpu up]" : "", os.simd_width, os.calls, os.rays, os.fallback, 100.0 * os.fallback / (os.rays ? os.rays : 1),
                        1e6 * os.seconds / (os.calls ? os.calls : 1), 1e6 * os.max_s, os.gpu_ok ? " device " : "", os.device);
+            if (os.auto_sel)
+                printf("  %-17s lane auto: %s; self-test us/batch cpu %.1f simd %.1f gpu %.1f; live us/batch (wheel 0) cpu %.2f simd %.2f gpu %.2f\n", MN[m],
+                       os.auto_sel == 2 ? (os.calls ? "still probing" : "idle (no lane calls: flat ground)") : "picked on live batches", os.cal_us[0], os.cal_us[1], os.cal_us[2], os.live_us[0], os.live_us[1], os.live_us[2]);
         }
         dc_destroy(B.S.car);
 #ifdef DC_PROF

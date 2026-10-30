@@ -542,9 +542,9 @@ static void po_lane(char* b, int nb, double* mem_kb) {
     dc_offload_stats os; memset(&os, 0, sizeof os); os.backend = DC_OFFLOAD_REF; dc_get_offload(SIM.car, DC_STAGE_PATCH, &os);
     *mem_kb = os.mem_bytes / 1024.0;
     if (os.backend == DC_OFFLOAD_REF) { snprintf(b, nb, "patch: ref (double rays)"); return; }
-    snprintf(b, nb, "patch: %s%s w%d  %.2f us/call (max %.0f)  hand-backs %.2f%%  cal us cpu %.1f simd %.1f gpu %.1f%s%s", dc_offload_name(os.backend),
+    snprintf(b, nb, "patch: %s%s%s w%d  %.2f us/call (max %.0f)  hand-backs %.2f%%  live us cpu %.1f simd %.1f gpu %.1f%s%s", dc_offload_name(os.backend), os.auto_sel == 1 ? " (auto)" : os.auto_sel == 2 ? (os.calls ? " (auto, probing)" : " (auto, idle)") : "",
              os.backend == DC_OFFLOAD_GPU && !os.gpu_ok ? "(n/a)" : "", os.simd_width, 1e6 * os.seconds / (os.calls ? os.calls : 1), 1e6 * os.max_s,
-             100.0 * os.fallback / (os.rays ? os.rays : 1), os.cal_us[0], os.cal_us[1], os.cal_us[2], os.gpu_ok ? "  " : "", os.device);
+             100.0 * os.fallback / (os.rays ? os.rays : 1), os.auto_sel ? os.live_us[0] : os.cal_us[0], os.auto_sel ? os.live_us[1] : os.cal_us[1], os.auto_sel ? os.live_us[2] : os.cal_us[2], os.gpu_ok ? "  " : "", os.device);
 }
 static void draw_perf(int sw_, int sh_, double fps) {
     po_update(0);

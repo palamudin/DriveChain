@@ -256,7 +256,15 @@ struct dc_lane {
     clw gw[4]; int gpu_ok;
     struct { long long calls, rays, fb; double s, mx; } st[DC_LANE_NSTAGE][4];   /* per stage, per wheel (one writer each) */
     double cal_us[3]; int cal_match[3];
+    /* auto: the self-test batch only screens the backends (bit match, gross cost); the pick is made on the live
+       batches. Each wheel cycles the candidates in blocks of AUTO_BLK calls for AUTO_N calls, then keeps the one
+       with the lowest mean. Every candidate reproduces the cpu result bit for bit, so switching never changes a
+       result and the run stays deterministic. */
+    int autom[DC_LANE_NSTAGE], ncand[DC_LANE_NSTAGE], cand[DC_LANE_NSTAGE][3];
+    struct { int b; long long n[3]; double s[3]; } au[DC_LANE_NSTAGE][4];
 };
+#define AUTO_BLK 32
+#define AUTO_N (AUTO_BLK * 12)
 const char* dc_lane_backend_name(int b) {
     return b == DC_OFFLOAD_REF ? "ref" : b == DC_OFFLOAD_CPU ? "cpu" : b == DC_OFFLOAD_SIMD ? "cpu_simd" : b == DC_OFFLOAD_GPU ? "gpu" : "auto";
 }
@@ -338,15 +346,35 @@ int dc_lane_set(dc_lane* L, int stage, int b) {
         int best = DC_OFFLOAD_CPU;
         for (int k = 1; k < 3; k++) if (L->cal_us[k] > 0 && L->cal_match[k] && L->cal_us[k] < L->cal_us[best]) best = k;
         b = best;
-    } else if (b == DC_OFFLOAD_GPU && !gpu_up(L)) b = DC_OFFLOAD_SIMD;   /* no OpenCL runtime/device: closest cpu backend */
+        /* live candidates: bit-matching backends within 3x of the best self-test cost (a far slower backend,
+           e.g. a gpu whose launch latency dwarfs the batch, is not probed: it would spike the first ticks) */
+        L->ncand[stage] = 0;
+        for (int k = 0; k < 3; k++) if (L->cal_us[k] > 0 && (k == DC_OFFLOAD_CPU || L->cal_match[k]) && L->cal_us[k] <= 3 * L->cal_us[best]) L->cand[stage][L->ncand[stage]++] = k;
+        L->autom[stage] = L->ncand[stage] > 1;
+        memset(L->au[stage], 0, sizeof L->au[stage]); for (int w = 0; w < 4; w++) L->au[stage][w].b = -1;
+    } else { L->autom[stage] = 0; if (b == DC_OFFLOAD_GPU && !gpu_up(L)) b = DC_OFFLOAD_SIMD; }   /* no OpenCL runtime/device: closest cpu backend */
     if (b < DC_OFFLOAD_REF || b > DC_OFFLOAD_GPU) b = DC_OFFLOAD_REF;
     L->bk[stage] = b; return b;
 }
 int dc_lane_get(const dc_lane* L, int stage) { return L ? L->bk[stage] : DC_OFFLOAD_REF; }
 void dc_lane_patch(dc_lane* L, int w, const dc_ptab* T, dc_rayb* R) {
+    int b = L->bk[DC_LANE_PATCH];
+    const int sg = DC_LANE_PATCH;
+    if (L->autom[sg]) {
+        if (L->au[sg][w].b >= 0) b = L->au[sg][w].b;
+        else b = L->cand[sg][(L->st[sg][w].calls / AUTO_BLK) % L->ncand[sg]];
+    }
     double t0 = dc_wall();
-    run_patch(L, L->bk[DC_LANE_PATCH], w, T, R);
+    run_patch(L, b, w, T, R);
     double dt = dc_wall() - t0;
+    if (L->autom[sg] && L->au[sg][w].b < 0) {
+        L->au[sg][w].n[b]++; L->au[sg][w].s[b] += dt;
+        if (L->st[sg][w].calls + 1 >= AUTO_N) {
+            int bb = -1; double bm = 1e30;
+            for (int k = 0; k < 3; k++) if (L->au[sg][w].n[k] > 0 && L->au[sg][w].s[k] / L->au[sg][w].n[k] < bm) { bm = L->au[sg][w].s[k] / L->au[sg][w].n[k]; bb = k; }
+            L->au[sg][w].b = bb;
+        }
+    }
     int fb = 0; for (int r = 0; r < R->n; r++) fb += R->st[r] < 0;
     L->st[DC_LANE_PATCH][w].calls++; L->st[DC_LANE_PATCH][w].rays += R->n; L->st[DC_LANE_PATCH][w].fb += fb;
     L->st[DC_LANE_PATCH][w].s += dt; if (dt > L->st[DC_LANE_PATCH][w].mx) L->st[DC_LANE_PATCH][w].mx = dt;
@@ -354,7 +382,11 @@ void dc_lane_patch(dc_lane* L, int w, const dc_ptab* T, dc_rayb* R) {
 void dc_lane_stats(const dc_lane* L, int stage, dc_offload_stats* o) {
     memset(o, 0, sizeof *o);
     if (!L) { o->backend = DC_OFFLOAD_REF; return; }
-    o->backend = L->bk[stage]; o->simd_width = L->simdw;
+    o->backend = L->bk[stage]; o->simd_width = L->simdw; o->auto_sel = L->autom[stage] ? 1 : 0;
+    if (L->autom[stage]) {   /* report the live pick (wheel 0; -1 while still probing) */
+        o->backend = L->au[stage][0].b >= 0 ? L->au[stage][0].b : L->bk[stage]; if (L->au[stage][0].b < 0) o->auto_sel = 2;
+        for (int k = 0; k < 3; k++) o->live_us[k] = L->au[stage][0].n[k] ? 1e6 * L->au[stage][0].s[k] / L->au[stage][0].n[k] : -1;
+    } else for (int k = 0; k < 3; k++) o->live_us[k] = -1;
     for (int w = 0; w < 4; w++) {
         o->calls += L->st[stage][w].calls; o->rays += L->st[stage][w].rays; o->fallback += L->st[stage][w].fb;
         o->seconds += L->st[stage][w].s; if (L->st[stage][w].mx > o->max_s) o->max_s = L->st[stage][w].mx;
