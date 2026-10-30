@@ -140,6 +140,15 @@ fastcheck: build/fastcheck
 	mkdir -p results/fastcheck && ./build/fastcheck "$(or $(DC_CAR),cars/mx5_na.ini)" results/fastcheck | tee results/fastcheck/fastcheck.txt
 .PHONY: fastcheck
 
+# input record / replay determinism (demo/sim.c F9 recordings): record once, replay on every lane backend
+RT_SRC = tools/replaytest.c demo/sim.c demo/roadbake.c demo/track.c demo/meshtrack.c demo/audio.c demo/input.c demo/cfg.c
+build/replaytest: $(RT_SRC) demo/*.h core/src/*.c core/src/*.h core/include/*.h
+	@mkdir -p build
+	$(CC) -O2 -std=gnu11 -Wall -Wno-misleading-indentation -Wno-unused-parameter -DDEMO_NO_SDL -DDC_BUILD -Icore/include -Icore/src -o $@ $(RT_SRC) core/src/*.c -lm -lpthread -ldl
+replaytest: build/replaytest
+	./build/replaytest "$(or $(DC_CAR),cars/mx5_na.ini)"
+.PHONY: replaytest
+
 # closed-loop response harnesses (docs/BRICKS.md): max steady skidpad speed, closed-loop slalom across model versions
 CL_SRC = demo/sim.c demo/roadbake.c demo/track.c demo/meshtrack.c demo/audio.c demo/input.c demo/cfg.c
 build/skidmax build/slalomcl: build/%: tools/%.c $(CL_SRC) demo/*.h core/src/*.c core/src/*.h core/include/*.h
