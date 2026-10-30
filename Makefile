@@ -128,6 +128,15 @@ drvtest: build/drvhost
 	python3 tools/dcdrive.py selftest --out results/driver
 .PHONY: drvhost drvtest
 
+# fast-model fidelity + timing harness (docs/PERF.md). Built with DC_PROF: the solver-floor ensemble and stage costs need it.
+FC_SRC = tools/fastcheck.c demo/sim.c demo/track.c demo/meshtrack.c demo/audio.c demo/input.c demo/cfg.c
+build/fastcheck: $(FC_SRC) demo/*.h core/src/*.c core/src/*.h core/include/*.h
+	@mkdir -p build
+	$(CC) -O2 -std=gnu11 -Wall -Wno-misleading-indentation -Wno-unused-parameter -DDEMO_NO_SDL -DDC_PROF -DDC_BUILD -Icore/include -Icore/src -o $@ $(FC_SRC) core/src/*.c -lm -lpthread
+fastcheck: build/fastcheck
+	mkdir -p results/fastcheck && ./build/fastcheck "$(or $(DC_CAR),cars/mx5_na.ini)" results/fastcheck | tee results/fastcheck/fastcheck.txt
+.PHONY: fastcheck
+
 # step-cost regression under drive torque (sweep-cap count is machine independent; the wall budget is per box)
 build/perf_tests: tests/perf_tests.c demo/drvproto.c demo/net.c demo/sim.c demo/track.c demo/meshtrack.c demo/audio.c demo/input.c demo/cfg.c demo/*.h build/libdrivechain.a
 	$(CC) -O2 -std=gnu11 -Wall -Wno-misleading-indentation -Wno-unused-parameter -DDEMO_NO_SDL -Icore/include -o $@ tests/perf_tests.c demo/drvproto.c demo/net.c demo/sim.c demo/track.c demo/meshtrack.c demo/audio.c demo/input.c demo/cfg.c build/libdrivechain.a -lm -lpthread
