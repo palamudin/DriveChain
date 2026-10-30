@@ -177,3 +177,77 @@ the lanes (±2 m) with speed held (±1 km/h) for 2 s.
 Fast matches reference to the printed precision in both directions; the traces are not bit-identical. The limit is
 understeer (steering wheel 125° → 250° over the last 3 km/h). This driver holds a grip line, so it does not measure
 power-on drift.
+
+## Offload lane (tyre-patch rays) and road bake
+
+The lane is fast-model only; the reference model and `patch = ref` keep the double ray march. The road bake is a demo
+road option for either model; fastcheck applies both only to its fast rig, so it still compares against an
+untouched reference.
+
+**Offload lane (`[offload] patch`).** Each wheel keeps a patch table: the road heights and grip codes under its contact
+patch, filled in double and stored as float32. The ray march over that table runs on one of three backends: `cpu`
+(scalar), `cpu_simd` (AVX2, 8 rays per instruction) or `gpu` (OpenCL, loaded at run time). Every backend runs the same
+float32 operations in the same order, so all three give the same bits. A ray that leaves the table or runs past the
+cell guard is handed back to the double path ("handed back" in the stats; 0.00 % on every manoeuvre).
+The per-ray state, the patch forces and every solver accumulator stay double.
+
+`patch = auto` (the demo default) picks a backend from the live batches, not from a synthetic self-test. The
+self-test favoured `cpu` by about 10 %; on real batches `cpu_simd` is about 2× faster. Each wheel runs the candidates
+(bit-identical backends within 3× of the best self-test cost) in blocks of 32 calls for its first 384 calls, then
+keeps the lowest mean. The F7 overlay shows the pick, the live cost per backend, and "(auto, idle)" while no wheel
+has made a lane call (flat ground). The library's fallback default stays `ref`.
+
+| 960 × 4, wheel 0 | cpu µs/batch | cpu_simd µs/batch | gpu (pocl on CPU) µs/call |
+|---|---|---|---|
+| cobbles t1 / t4 | 5.39 / 5.58 | 2.60 / 2.84 | 73.7 (max 11 ms) |
+| bump_pothole t1 / t4 | 5.67 / 5.84 | 2.56 / 2.70 | — |
+
+On this box there is no real GPU, so `gpu` runs on pocl's CPU device and is never picked; it still passes fastcheck.
+
+**Error against double rays (cobbles, 43 M rays):** float32 table, 33 contact flips, max contact-height error
+9.4e-5 m; pooled rack bands −0.41 / +0.01 / −0.03 / −0.02 dB, rms rack −0.01 %, PASS. A 16-bit table (heights on a
+2^-16 m grid, grip on 2^-14; `DC_LANE_Q16=1`, measurement only) gives 3286 flips and a max error of 3.2e-3 m on
+cobbles, with band 0 −0.60 dB and yaw rms −1.35 %. That is outside the error budget, so the lane stays float32.
+A long closed-loop lap on a mesh track with float32 rays passes the lap check against double rays (lap time and
+rack bands).
+
+**Zero-snap.** When a wheel is airborne its free tread shear deflections (ex, ey, phi) relax towards zero; once one
+is below 1e-9 (m or rad, far below the brush's deflection resolution) it is set to exactly 0 instead of decaying
+forever towards denormals. On by default in the fast model. It
+fires on 20–27 % of the airborne decays on cobbles and 0.5 % on bump_pothole; fastcheck passes with it on.
+
+**Road bake (`[track] bake = 0 | 32 | 16`, default 0).** At load, the road inside a band around the centreline
+(half width + kerb + 1 m) is sampled on the road's own lattice (1.6 m resolve, 64 × 64 node tiles) and stored as
+offsets: float32 from a base aligned to 2^-10 m (`32`), or uint16 with a per-tile power-of-two step (`16`). Grip is a
+u8 index into an exact palette. Every exact zero in the source decodes to exactly 0 (the bake refuses to finish
+otherwise). Only height queries that land exactly on a lattice node use the table; everything else calls the live
+road. One bake is shared per process and rebuilt on a map switch (F6).
+
+| proving ground | memory | prewarm | max / rms height error | exact zeros kept |
+|---|---|---|---|---|
+| bake = 32 | 313 MB | 8.0 s | 1.5e-8 / 1.7e-9 m | 32495 of 32495 |
+| bake = 16 | 188 MB | 7.5–7.9 s | 3.8e-6 / 7.3e-7 m | 32495 of 32495 |
+
+The grip palette is 64 MB of each. With `bake = 16` the full fastcheck passes (8 of 8, cobbles pooled), and a
+closed-loop mesh-track lap passes the lap check (lap time and rack bands).
+
+**What the bake buys.** Same box, 960 × 4, fast model with `patch = auto`, bake off vs `bake = 16`, t1: cobbles
+mean 628 → 620 µs, worst 969 → 836 µs, `w_cull` 27 → 23 µs, `w_rays` 112 → 108 µs; bump_pothole mean 525 → 521 µs.
+That is a 1–2 % gain for 188 MB and an 8 s load, so the bake stays off (proposal only, not a default change).
+
+## Before / after (960 × 4, intrinsic tick, min of 3 runs, µs)
+
+"Before" is the build at the start of this pass; "after" is HEAD with `patch = auto` and `bake = 16`.
+mean / p99 / worst:
+
+| manoeuvre | model | t1 before | t1 after | t4 before | t4 after |
+|---|---|---|---|---|---|
+| slalom | fast | 603 / 675 / 961 | 503 / 567 / 897 | 501 / 568 / 896 | 504 / 595 / 918 |
+| step_steer | fast | 608 / 707 / 951 | 513 / 600 / 853 | 529 / 626 / 905 | 493 / 582 / 789 |
+| cobbles | fast | 774 / 854 / 980 | 623 / 689 / 831 | 564 / 625 / 870 | 523 / 594 / 762 |
+| bump_pothole | fast | 653 / 713 / 982 | 522 / 590 / 908 | 546 / 611 / 833 | 486 / 552 / 858 |
+| cobbles | reference | 1016 / 1168 / 1417 | 934 / 1062 / 1227 | 645 / 790 / 1171 | 623 / 757 / 1278 |
+
+Per stage, fast, t1 (mean µs, before → after): cobbles `w_rays` 185 → 110 (plus `w_cull` 24), factor 144 → 111,
+schur 162 → 110, ksolve 22 → 18, backsub 23 → 18; slalom `w_rays` 50 → 17 (plus `w_cull` 38). PGS and assemble
+are unchanged. At t4 the solver stages are split across threads and the slalom totals are within noise.
