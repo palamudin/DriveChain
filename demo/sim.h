@@ -58,6 +58,9 @@ typedef struct sim_s {
     double drv_takeover_stick, drv_takeover_wheel, drv_takeover_pedal;
     /* external control hook (JSON-lines protocol, demo/drvproto.c): phase 0 before input mapping, 1 after the step */
     void (*ext_hook)(struct sim_s* S, int phase); void* ext_ctx; int ext_clients;
+#ifdef DC_PROF
+    double pf_poll0, pf_poll1, pf_step0, pf_step1, pf_ffb1;   /* tick-phase stamps (us) */
+#endif
 } sim_t;
 int  sim_apply_setup(dc_car_params* P, const char* setup, char* err, int errlen);   /* car.setup: default (propBR + propD where applicable) | legacy */
 int  sim_init(sim_t* S, cfg_t* cfg, track_t* trk, audio_t* audio, char* err, int errlen);
@@ -67,4 +70,18 @@ void sim_reset_at(sim_t* S, double x, double y, double yaw, double speed);
 void sim_shutdown(sim_t* S);
 int  sim_rebuild_car(sim_t* S);            /* after editing S->P: recreate the car at the current pose and speed */
 void sim_driver_engage(sim_t* S, int on);   /* engage (1) / release (0) the plug-in driver */
+#ifdef DC_PROF
+/* profiling builds only (-DDC_PROF): per-tick / per-physics-batch / per-frame records in rings preallocated by
+   prof_init (no allocation while running), dumped as CSV by prof_dump. Each ring has a single writer thread. */
+typedef struct { double tw, simt, tick_us, poll_us, input_us, step_us, ffb_us, post_us; float st_us[DCP_S_N], wh_us[4], whs_us[DCP_W_TOTAL];   /* per-wheel total; per-lap sum over wheels */
+                 int nsub, solves, resolves, sweeps, sweep_max, capped, nbx_max, pool_runs, pool_wakes, nslide;
+                 float pool_wait_us, pool_wait_max_us, slide, slip_max_deg, speed, rack_n, column_nm, mz_fl, mz_fr, sw_deg; } prof_tick_t;
+typedef struct { double tw; float sleep_req_us, sleep_us, lockwait_max_us, batch_us, backlog_ms; int ticks, dropped, broke; } prof_batch_t;
+typedef struct { double tw; float frame_us, lock_us, draw_us; double sim_time; int new_ticks; } prof_frame_t;
+double prof_now_us(void);
+void prof_init(int cap_ticks);
+void prof_batch(const prof_batch_t* b);
+void prof_frame(const prof_frame_t* f);
+void prof_dump(const char* prefix);        /* <prefix>_ticks.csv, _batches.csv, _frames.csv */
+#endif
 #endif

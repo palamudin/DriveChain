@@ -550,16 +550,41 @@ static void* phys_thread(void* arg) {
            backlog beyond 50 ms is dropped, so an over-budget step degrades to slow motion instead of starving the
            frame loop (the old loop could run 50 slow ticks back to back and freeze the picture). */
         double now = wall() - t0, wend = wall() + 0.008;
+#ifdef DC_PROF
+        prof_batch_t pb = {0}; pb.tw = prof_now_us(); pb.backlog_ms = (float)((now - sim) * 1e3);
+#endif
         while (sim < now && RUN) {
             while (__atomic_load_n(&RENDER_WAIT, __ATOMIC_ACQUIRE) && RUN) sched_yield();
+#ifdef DC_PROF
+            double lw0 = prof_now_us();
+#endif
             pthread_mutex_lock(&MTX);
+#ifdef DC_PROF
+            { float lw = (float)(prof_now_us() - lw0); if (lw > pb.lockwait_max_us) pb.lockwait_max_us = lw; } pb.ticks++;
+#endif
             sim_tick(&SIM, dt);
             pthread_mutex_unlock(&MTX);
             sim += dt;
-            if (wall() > wend) break;
+            if (wall() > wend) {
+#ifdef DC_PROF
+                pb.broke = 1;
+#endif
+                break;
+            }
         }
+#ifdef DC_PROF
+        pb.batch_us = (float)(prof_now_us() - pb.tw);
+        if (now - sim > 0.05) pb.dropped = 1;
+#endif
         if (now - sim > 0.05) sim = now;   /* behind: drop time instead of spiralling */
-        struct timespec ts = {0, 300000}; nanosleep(&ts, NULL);
+        struct timespec ts = {0, 300000};
+#ifdef DC_PROF
+        double sl0 = prof_now_us();
+#endif
+        nanosleep(&ts, NULL);
+#ifdef DC_PROF
+        pb.sleep_req_us = 300; pb.sleep_us = (float)(prof_now_us() - sl0); prof_batch(&pb);
+#endif
     }
     return NULL;
 }
@@ -777,12 +802,25 @@ int main(int argc, char** argv) {
     float* wavbuf = NULL; int wavn = 0, wavcap = 0;
     if (wav && headless) { wavcap = (int)((max_time + 1) * 44100); wavbuf = (float*)malloc(sizeof(float) * 2 * wavcap); }
     double last = GetTime();
+#ifdef DC_PROF
+    /* profiling run: DC_PROF_OUT=<prefix> enables the rings, DC_PROF_TIME=<s wall> ends an interactive run */
+    const char* pf_out = getenv("DC_PROF_OUT"); double pf_end = getenv("DC_PROF_TIME") ? atof(getenv("DC_PROF_TIME")) : 0;
+    if (pf_out) prof_init(400000);
+    double pf_t0 = prof_now_us(), pf_last = pf_t0, pf_simt = 0;
+#endif
     while (!WindowShouldClose()) {
         double now = GetTime(), dt = now - last; last = now;
+#ifdef DC_PROF
+        prof_frame_t pfr = {0}; pfr.tw = prof_now_us(); pfr.frame_us = (float)(pfr.tw - pf_last); pf_last = pfr.tw;
+        if (pf_end > 0 && (pfr.tw - pf_t0) * 1e-6 > pf_end) break;
+#endif
         /* ---- keyboard -> physics control ---- */
         __atomic_store_n(&RENDER_WAIT, 1, __ATOMIC_RELEASE);
         pthread_mutex_lock(&MTX);
         __atomic_store_n(&RENDER_WAIT, 0, __ATOMIC_RELEASE);
+#ifdef DC_PROF
+        pfr.lock_us = (float)(prof_now_us() - pfr.tw);
+#endif
         sim_ctl* C = &SIM.ctl;
         C->kb_left = IsKeyDown(KEY_LEFT) || IsKeyDown(KEY_A); C->kb_right = IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D);
         C->kb_up = IsKeyDown(KEY_UP) || IsKeyDown(KEY_W); C->kb_down = IsKeyDown(KEY_DOWN) || IsKeyDown(KEY_S);
@@ -804,6 +842,9 @@ int main(int argc, char** argv) {
             dt = shot_dt;
         }
         VIEW = SIM.snap;
+#ifdef DC_PROF
+        pfr.sim_time = VIEW.sim_time; pfr.new_ticks = (int)((VIEW.sim_time - pf_simt) / SIM.tick_dt + 0.5); pf_simt = VIEW.sim_time;
+#endif
         if (getenv("DEMO_TRACE") && headless && ((int)(VIEW.sim_time * 60 + 0.5)) % 60 == 0) { double d_, s_; track_height(&TRK, VIEW.parts[0].pos[0], VIEW.parts[0].pos[1], NULL, NULL, &d_, &s_);
             printf("[trace] t %.1f s %.0f d %+.1f v %.1f gear %d rpm %.0f ay %+.2f sw %+.0f\n", VIEW.sim_time, s_, d_, VIEW.t.speed * 3.6, VIEW.t.gear, VIEW.t.engine_rpm, VIEW.t.ay / 9.81, VIEW.t.sw_angle * 57.3); }
         pthread_mutex_unlock(&MTX);
@@ -860,10 +901,16 @@ int main(int argc, char** argv) {
                    VIEW.t.sw_angle * 180 / M_PI, surf_name(VIEW.surf[0]), surf_name(VIEW.surf[1]), surf_name(VIEW.surf[2]), surf_name(VIEW.surf[3]));
             take->done = 1;
         }
+#ifdef DC_PROF
+        pfr.draw_us = (float)(prof_now_us() - pfr.tw); prof_frame(&pfr);
+#endif
         if (headless) { int all = 1; for (int i = 0; i < nsh; i++) if (!SH[i].done) all = 0; if (all || VIEW.sim_time >= max_time) break; }
     }
     RUN = 0;
     if (g_threaded) pthread_join(th, NULL);
+#ifdef DC_PROF
+    if (pf_out) prof_dump(pf_out);
+#endif
     if (wavbuf) { audio_write_wav(wav, wavbuf, wavn, 44100); printf("[audio] wrote %s (%.1f s)\n", wav, wavn / 44100.0); free(wavbuf); }
     if (audio_on) { UnloadAudioStream(st); CloseAudioDevice(); }
     CloseWindow();

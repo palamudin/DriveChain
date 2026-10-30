@@ -2,6 +2,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <time.h>
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -171,10 +172,71 @@ static void autopilot(sim_t* S, const dc_telemetry* t, const dc_xform* ch, dc_in
     } else S->auto_off_ms = 0;
 }
 
+#ifdef DC_PROF
+static prof_tick_t* PT; static prof_batch_t* PB; static prof_frame_t* PF; static int PT_cap, PB_cap, PF_cap, PT_n, PB_n, PF_n;
+double prof_now_us(void) { return now_us(); }
+void prof_init(int cap) {
+    PT_cap = cap; PB_cap = cap; PF_cap = cap;
+    PT = (prof_tick_t*)calloc(PT_cap, sizeof *PT); PB = (prof_batch_t*)calloc(PB_cap, sizeof *PB); PF = (prof_frame_t*)calloc(PF_cap, sizeof *PF);
+    dc_prof_rec r; dc_prof_take(&r);   /* drop anything before the run */
+}
+void prof_batch(const prof_batch_t* b) { if (PB && PB_n < PB_cap) PB[PB_n++] = *b; }
+void prof_frame(const prof_frame_t* f) { if (PF && PF_n < PF_cap) PF[PF_n++] = *f; }
+static void prof_tick(sim_t* S, double w0, double w1) {
+    dc_prof_rec r; dc_prof_take(&r);
+    if (!PT || PT_n >= PT_cap) return;
+    prof_tick_t* p = &PT[PT_n++]; memset(p, 0, sizeof *p);
+    p->tw = w0; p->simt = S->sim_time; p->tick_us = w1 - w0;
+    if (S->pf_step1 > 0) {
+        p->poll_us = S->pf_poll1 - S->pf_poll0; p->input_us = S->pf_step0 - w0 - p->poll_us; p->step_us = S->pf_step1 - S->pf_step0;
+        p->ffb_us = S->pf_ffb1 - S->pf_step1; p->post_us = w1 - S->pf_ffb1;
+    }
+    S->pf_step1 = 0;
+    for (int k = 0; k < DCP_S_N; k++) p->st_us[k] = (float)(r.st[k] * 1e6);
+    for (int i = 0; i < 4; i++) { p->wh_us[i] = (float)(r.wh[i][DCP_W_TOTAL] * 1e6); for (int k = 0; k < DCP_W_TOTAL; k++) p->whs_us[k] += (float)(r.wh[i][k] * 1e6); }
+    p->nsub = (int)r.substeps; p->solves = (int)r.solves; p->resolves = (int)r.resolves; p->sweeps = (int)r.pgs_sweeps;
+    p->sweep_max = (int)r.pgs_sweep_max; p->capped = (int)r.pgs_capped; p->nbx_max = (int)r.nbx_max;
+    p->pool_runs = (int)r.pool_runs; p->pool_wakes = (int)r.pool_wakes;
+    p->pool_wait_us = (float)(r.pool_wait_s * 1e6); p->pool_wait_max_us = (float)(r.pool_wait_max_s * 1e6);
+    const dc_telemetry* t = &S->snap.t; float sl = 0, sm = 0; int ns = 0;
+    for (int i = 0; i < 4; i++) { sl += (float)t->w[i].sliding; if (t->w[i].sliding > 0.5) ns++; float a = (float)(fabs(t->w[i].slip_angle) * 57.2958); if (a > sm) sm = a; }
+    p->slide = sl; p->nslide = ns; p->slip_max_deg = sm; p->speed = (float)fabs(t->speed);
+    p->rack_n = (float)t->rack_force; p->column_nm = (float)t->column_torque; p->mz_fl = (float)t->w[0].mz; p->mz_fr = (float)t->w[1].mz; p->sw_deg = (float)(t->sw_angle * 57.2958);
+}
+void prof_dump(const char* prefix) {
+    char path[512]; FILE* f;
+    static const char* SN[DCP_S_N] = {"begin", "phaseA", "loads", "assemble", "factor", "ksolve", "boxrows", "schur", "pgs", "subspace", "backsub", "resolve_chk", "commit", "integrate", "post", "step_total"};
+    snprintf(path, sizeof path, "%s_ticks.csv", prefix);
+    if ((f = fopen(path, "w"))) {
+        fprintf(f, "tw_us,simt,tick_us,poll_us,input_us,step_us,ffb_us,post_us");
+        for (int k = 0; k < DCP_S_N; k++) fprintf(f, ",s_%s", SN[k]);
+        fprintf(f, ",wh0,wh1,wh2,wh3,w_setup,w_rays,w_rim,w_brush,w_mz,nsub,solves,resolves,sweeps,sweep_max,capped,nbx_max,pool_runs,pool_wakes,pool_wait_us,pool_wait_max_us,slide,nslide,slip_max_deg,speed,rack_n,column_nm,mz_fl,mz_fr,sw_deg\n");
+        for (int i = 0; i < PT_n; i++) { const prof_tick_t* p = &PT[i];
+            fprintf(f, "%.1f,%.5f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f", p->tw, p->simt, p->tick_us, p->poll_us, p->input_us, p->step_us, p->ffb_us, p->post_us);
+            for (int k = 0; k < DCP_S_N; k++) fprintf(f, ",%.2f", p->st_us[k]);
+            for (int k = 0; k < 4; k++) fprintf(f, ",%.2f", p->wh_us[k]);
+            for (int k = 0; k < DCP_W_TOTAL; k++) fprintf(f, ",%.2f", p->whs_us[k]);
+            fprintf(f, ",%d,%d,%d,%d,%d,%d,%d,%d,%d,%.2f,%.2f,%.3f,%d,%.2f,%.2f,%.3f,%.5f,%.4f,%.4f,%.4f\n", p->nsub, p->solves, p->resolves, p->sweeps, p->sweep_max, p->capped, p->nbx_max,
+                    p->pool_runs, p->pool_wakes, p->pool_wait_us, p->pool_wait_max_us, p->slide, p->nslide, p->slip_max_deg, p->speed, p->rack_n, p->column_nm, p->mz_fl, p->mz_fr, p->sw_deg); }
+        fclose(f); }
+    snprintf(path, sizeof path, "%s_batches.csv", prefix);
+    if ((f = fopen(path, "w"))) { fprintf(f, "tw_us,sleep_req_us,sleep_us,lockwait_max_us,batch_us,backlog_ms,ticks,dropped,broke\n");
+        for (int i = 0; i < PB_n; i++) { const prof_batch_t* b = &PB[i]; fprintf(f, "%.1f,%.1f,%.1f,%.1f,%.1f,%.3f,%d,%d,%d\n", b->tw, b->sleep_req_us, b->sleep_us, b->lockwait_max_us, b->batch_us, b->backlog_ms, b->ticks, b->dropped, b->broke); }
+        fclose(f); }
+    snprintf(path, sizeof path, "%s_frames.csv", prefix);
+    if ((f = fopen(path, "w"))) { fprintf(f, "tw_us,frame_us,lock_us,draw_us,sim_time,new_ticks\n");
+        for (int i = 0; i < PF_n; i++) { const prof_frame_t* q = &PF[i]; fprintf(f, "%.1f,%.1f,%.1f,%.1f,%.6f,%d\n", q->tw, q->frame_us, q->lock_us, q->draw_us, q->sim_time, q->new_ticks); }
+        fclose(f); }
+    fprintf(stderr, "[prof] %d ticks, %d batches, %d frames -> %s_*.csv\n", PT_n, PB_n, PF_n, prefix);
+}
+#endif
 static void sim_tick_body(sim_t* S, double dt);
 void sim_tick(sim_t* S, double dt) {
     double w0 = now_us();
     sim_tick_body(S, dt);
+#ifdef DC_PROF
+    prof_tick(S, w0, now_us());
+#endif
     if (!S->perf_log) return;
     double w = now_us() - w0;
     S->perf_wall += w; S->perf_ticks++; if (w > S->perf_worst) S->perf_worst = w;
@@ -223,7 +285,13 @@ static void sim_tick_body(sim_t* S, double dt) {
     if (C->pause) { S->snap.paused = 1; return; }
     S->snap.paused = 0;
 
+#ifdef DC_PROF
+    S->pf_poll0 = now_us();
+#endif
     input_poll(&S->dev);
+#ifdef DC_PROF
+    S->pf_poll1 = now_us();
+#endif
     dc_telemetry t; dc_get_telemetry(S->car, &t);
     dc_xform parts[DC_PART_COUNT]; dc_get_parts(S->car, parts, DC_PART_COUNT);
     dc_input in; memset(&in, 0, sizeof in);
@@ -308,6 +376,9 @@ static void sim_tick_body(sim_t* S, double dt) {
     double t0 = now_us();
     int n = dc_step(S->car, dt);
     S->tick_step_us = now_us() - t0; S->tick_n = n;
+#ifdef DC_PROF
+    S->pf_step0 = t0; S->pf_step1 = t0 + S->tick_step_us;
+#endif
     S->us_acc += S->tick_step_us; S->steps_acc += n;
     S->sim_time += dt;
     dc_get_telemetry(S->car, &t);
@@ -317,6 +388,9 @@ static void sim_tick_body(sim_t* S, double dt) {
         double sl = 0; for (int i = 0; i < 4; i++) sl += t.w[i].sliding * fmin(t.w[i].fz / 3000, 1.5);
         input_rumble(&S->dev, 0.15 * fabs(t.column_torque) / 5, 0.2 * sl);
     }
+#ifdef DC_PROF
+    S->pf_ffb1 = now_us();
+#endif
     /* ---- surfaces + audio frame ---- */
     int surf[4];
     audio_frame af; memset(&af, 0, sizeof af);

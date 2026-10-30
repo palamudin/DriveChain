@@ -11,6 +11,16 @@
 static const v3 AX[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
 
 mb_world* mb_create(void) { mb_world* W = (mb_world*)calloc(1, sizeof(mb_world)); if (W) { W->shake = 1; W->pgs_iters = 400; W->pgs_vtol = 1e-8; W->pgs_etol = 1e-8; W->pgs_ssm = 2; } return W; }
+#ifdef DC_PROF
+/* measurement-only knobs (DC_PROF builds): DC_PROF_PGS_COLD=1 starts every PGS from zero instead of the previous
+   solve's impulses (warm-start evaluation); DC_PROF_PGS_ITERS=n overrides the sweep cap. Read once per process. */
+static int prof_pgs_cold = -1, prof_pgs_iters = 0;
+static void prof_knobs(void) {
+    if (prof_pgs_cold >= 0) return;
+    const char* e = getenv("DC_PROF_PGS_COLD"); prof_pgs_cold = e ? atoi(e) : 0;
+    e = getenv("DC_PROF_PGS_ITERS"); prof_pgs_iters = e ? atoi(e) : 0;
+}
+#endif
 void mb_destroy(mb_world* W) {
     if (!W) return;
     free(W->nbr); free(W->nbr_blk); free(W->blkpos); free(W->blk); free(W->L); free(W->D); free(W->Dinv);
@@ -810,7 +820,9 @@ void mb_solve(mb_world* W) {
             mb_joint* J = &W->Jt[W->box_j[s]]; int r = W->box_r[s];
             if (J->nsrc > 0) W->hb[s] = J->lam[r];   /* warm start; the first sweep applies the load-dependent bound */
             else W->hb[s] = J->lam[r] < J->lo[r] ? J->lo[r] : (J->lam[r] > J->hi[r] ? J->hi[r] : J->lam[r]);
+            DCP(prof_knobs(); if (prof_pgs_cold) W->hb[s] = 0;)
         }
+        DCP(if (prof_pgs_iters > 0) W->pgs_iters = prof_pgs_iters;)
         /* projected Gauss-Seidel on the small dense Schur complement (exact box LCP at convergence). Load-dependent
            bounds are re-evaluated from the coupled normal reactions at every sweep (fixed point of the same LCP). */
         double res = 0; int it;

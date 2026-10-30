@@ -34,6 +34,62 @@
 #define TM_EPS_RING 0.0004     /* m: cell ramp-in width of the footprint threshold (TARMAC) */
 #define TM_NC (DC_TM_NR * DC_TM_NL)
 
+#ifdef DC_PROF
+/* profiling builds only: Mz footprint-shear measurement knobs (env, read once).
+   DC_PROF_MZ_MODE=1 exact Newton solve instead of the 48-step bisection;
+   DC_PROF_MZ_TAB=<file> replaces Mz by Ft*uy*half*tau(f) from a monotone-cubic (PCHIP) table of the normalized trail;
+   DC_PROF_MZ_LOG=<file> logs (wheel, f, Ft, uy, half, Mz) of every evaluation at exit. */
+#include <stdio.h>
+#include <stdlib.h>
+static struct { int mode, nt; double tf[256], tv[256], td[256]; FILE* log; } tm_pk = { -1 };
+#define TM_LOGN 400000
+static float (*tm_log)[6]; static int tm_logn[4];
+static void tm_prof_dump(void) {
+    if (!tm_pk.log || !tm_log) return;
+    for (int w = 0; w < 4; w++) for (int k = 0; k < tm_logn[w]; k++) {
+        float* r = tm_log[w * TM_LOGN + k];
+        fprintf(tm_pk.log, "%d,%.6g,%.6g,%.6g,%.6g,%.6g\n", w, r[0], r[1], r[2], r[3], r[4]);
+    }
+    fclose(tm_pk.log);
+}
+static void tm_prof_knobs(void) {
+    int mode = getenv("DC_PROF_MZ_MODE") ? atoi(getenv("DC_PROF_MZ_MODE")) : 0;
+    const char* tf = getenv("DC_PROF_MZ_TAB");
+    if (tf) {
+        FILE* f = fopen(tf, "r"); int n = 0;
+        if (f) { while (n < 256 && fscanf(f, "%lf %lf", &tm_pk.tf[n], &tm_pk.tv[n]) == 2) n++; fclose(f); }
+        tm_pk.nt = n;
+        /* Fritsch-Carlson monotone slopes */
+        double dlt[256];
+        for (int k = 0; k + 1 < n; k++) dlt[k] = (tm_pk.tv[k + 1] - tm_pk.tv[k]) / (tm_pk.tf[k + 1] - tm_pk.tf[k]);
+        for (int k = 0; k < n; k++) {
+            if (k == 0) tm_pk.td[k] = dlt[0]; else if (k == n - 1) tm_pk.td[k] = dlt[n - 2];
+            else if (dlt[k - 1] * dlt[k] <= 0) tm_pk.td[k] = 0;
+            else { double h0 = tm_pk.tf[k] - tm_pk.tf[k - 1], h1 = tm_pk.tf[k + 1] - tm_pk.tf[k];
+                   double w1 = 2 * h1 + h0, w2 = h1 + 2 * h0; tm_pk.td[k] = (w1 + w2) / (w1 / dlt[k - 1] + w2 / dlt[k]); }
+        }
+    }
+    const char* lf = getenv("DC_PROF_MZ_LOG");
+    if (lf) { tm_log = calloc((size_t)4 * TM_LOGN, sizeof *tm_log); tm_pk.log = fopen(lf, "w"); atexit(tm_prof_dump); }
+    tm_pk.mode = mode;
+}
+static void tm_prof_mz(int w, double f, double Ft, double uy, double half, double* Mz) {
+    if (tm_pk.nt >= 2) {
+        int n = tm_pk.nt, k = 0;
+        if (f <= tm_pk.tf[0]) f = tm_pk.tf[0];
+        if (f >= tm_pk.tf[n - 1]) f = tm_pk.tf[n - 1];
+        while (k < n - 2 && f > tm_pk.tf[k + 1]) k++;
+        double hh = tm_pk.tf[k + 1] - tm_pk.tf[k], u = (f - tm_pk.tf[k]) / hh;
+        double h00 = (1 + 2 * u) * (1 - u) * (1 - u), h10 = u * (1 - u) * (1 - u), h01 = u * u * (3 - 2 * u), h11 = u * u * (u - 1);
+        double tau = h00 * tm_pk.tv[k] + h10 * hh * tm_pk.td[k] + h01 * tm_pk.tv[k + 1] + h11 * hh * tm_pk.td[k + 1];
+        *Mz = Ft * uy * half * tau;
+    }
+    if (tm_log && w >= 0 && w < 4 && tm_logn[w] < TM_LOGN) {
+        float* r = tm_log[w * TM_LOGN + tm_logn[w]++];
+        r[0] = (float)f; r[1] = (float)Ft; r[2] = (float)uy; r[3] = (float)half; r[4] = (float)*Mz;
+    }
+}
+#endif
 static double tm_rhyne(const dc_tm_tab* B, double p_pa) {
     double pk = p_pa > 0 ? p_pa / 1000.0 : 0;
     return (0.00028 * pk * sqrt(B->tread * 1000.0 * 2 * B->R0 * 1000.0) + 3.45) * 9.81 * 1000.0;
@@ -454,6 +510,7 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
        equals the brush resultant |F| (the carcass deflection sets the force, the footprint sets where it acts).
        Mz = Σ (x τ_y - y τ_x) about Pc. Linear range: parabolic pressure -> trail a/3; full slide -> trail 0. */
     double Mz = 0, Mtmax = 0, Ip = 0;
+    DCP_WLAP(i, DCP_W_BRUSH, tp);
     {
         double qsum = 0;
         for (int k = 0; k < nc; k++) qsum += C[k].q * C[k].area;
@@ -482,6 +539,20 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
             double shi = 0;
             for (int k = 0; k < m; k++) { double sk = mk[k] / (xi[k] * ak[k]); if (sk > shi) shi = sk; }
             double s = shi;
+#ifdef DC_PROF
+            if (tm_pk.mode < 0) tm_prof_knobs();
+            if (tm_pk.mode == 1 && Ft < cap * (1 - 1e-9)) {
+                /* exact: F(s) = sum min(s c_k, m_k) is concave piecewise linear; Newton from below is finite and monotone */
+                double sn = 0; s = 0;
+                for (int it = 0; it < 64; it++) {
+                    double sl = 0, sat = 0;
+                    for (int k = 0; k < m; k++) { double ck = xi[k] * ak[k]; if (s * ck < mk[k]) sl += ck; else sat += mk[k]; }
+                    sn = sl > 0 ? (Ft - sat) / sl : s;
+                    if (!(sn > s)) break;
+                    s = sn;
+                }
+            } else
+#endif
             if (Ft < cap * (1 - 1e-9)) {
                 double lo = 0, hi = shi;
                 for (int it = 0; it < 48; it++) {
@@ -494,9 +565,13 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
             double F = 0;
             for (int k = 0; k < m; k++) { double tk = fmin(s * xi[k] * ak[k], mk[k]); F += tk; Mz += tk * (xk[k] * uy - yk[k] * ux); }
             if (F > 0) Mz *= Ft / F;   /* bisection residual */
+#ifdef DC_PROF
+            tm_prof_mz(i, Ft / cap, Ft, uy, half, &Mz);
+#endif
         }
     }
     t->Mz_brush = Mz;
+    DCP_WLAP(i, DCP_W_MZ, tp);
     if (fabs(t->Fy) > 1e-6) t->tp = -Mz / t->Fy;
     /* tread twist (parking / turn-slip moment, addition): torsional brush stiffness of the footprint, tread in series
        with an equal carcass share (as the translational split at fref); relaxes over the half length when rolling;

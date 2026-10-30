@@ -481,7 +481,7 @@ static void drift_stats(const double* T, const double* B, int n, double t0, doub
 #define DREC 80000
 static double DT_[DREC], DB_[DREC], DDL_[DREC], DSW_[DREC], DAF_[DREC], DFU_[DREC], DCU_[DREC], DSR_[DREC], DSA_[DREC], DTH_[DREC], DV_[DREC], DRAD_[DREC], DRPM_[DREC], DLSD_[DREC], DREQ_[DREC], DBF_[DREC];
 static int run_drift(rig_t* R, const drift_cfg_t* C, const char* csv, drift_res_t* O) {
-    sim_t* S = &R->S; const double dt = 0.001;
+    sim_t* S = &R->S; const double dt = getenv("DT_HOST") ? S->tick_dt : 0.001;   /* DT_HOST=1: the demo host tick (physics.tick_hz) */
     double cx = 300, cy = 150, sgn_ = 1;       /* +1 = CCW (left-hand drift, beta < 0) */
     memset(O, 0, sizeof *O); O->tr_ok = 0; O->tr_time = -1;
     sim_reset_at(S, cx, cy - C->R, 0, C->v0 * 0.9); S->gear = C->gear;
@@ -682,6 +682,10 @@ int main(int argc, char** argv) {
     track_build(&TRK, 1.0, TRACK_PROVING);
     static rig_t R;
     if (!strcmp(what, "fishcheck")) return fishcheck(car, out);
+#ifdef DC_PROF
+    if (getenv("DC_PROF_OUT")) prof_init(400000);
+    if (!strcmp(what, "drift")) { int fl = drift(car, out, getenv("TAG") ? getenv("TAG") : "run"); if (getenv("DC_PROF_OUT")) prof_dump(getenv("DC_PROF_OUT")); return getenv("DRIFT_STRICT") ? (fl ? 1 : 0) : 0; }
+#endif
     if (!strcmp(what, "drift")) { int fl = drift(car, out, getenv("TAG") ? getenv("TAG") : "run"); return getenv("DRIFT_STRICT") ? (fl ? 1 : 0) : 0; }
     if (!strcmp(what, "counter")) { counter(car, out, getenv("TAG") ? getenv("TAG") : "run"); return 0; }
     if (!strcmp(what, "fishtail") || !strcmp(what, "all")) {
