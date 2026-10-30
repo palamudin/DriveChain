@@ -15,6 +15,12 @@ All changes are exact or bounded reformulations of the same physics: one coupled
 | TARMAC brush ring threshold | iterated | exact Newton on the ring threshold |
 | TARMAC brush stick scale | iterated | closed form |
 | Contact PGS (projected Gauss-Seidel) | up to 400 sweeps per solve, every solve | per-tick sweep budget (default 160) shared by the tick's solves: each solve may use max(8, budget left / substeps left), clipped to 400; unused sweeps carry over; exact limit-cycle exit kept |
+| Second solve when a tyre leaves the friction circle | full refactor + Schur of the changed box rows | Sherman-Morrison-Woodbury low-rank update of the existing factor for the changed rows (exact up to round-off); the updated operator is also used by the post-stabilisation solve of the same substep |
+| PGS row dot products | sequential sum | 4 partial sums (same terms, different round-off order) |
+
+Both models also cache, per PGS solve, the eigen-decomposition and elimination factor of each isotropic friction
+group's diagonal block (the block is constant during a solve, so the sweep recomputed the same numbers). The
+operations are identical, so the reference stays bit for bit the same.
 
 The PGS budget is the only change that is not exact. The reference itself stops at 400 sweeps without converging on
 slalom, bumps and setts, and those capped solves were the 6-10 ms ticks. Bounding the iterations of an iterative
@@ -74,30 +80,40 @@ The budget of 160 leaves margin on that metric.
   natively and under Wine on the same box, with 1 and 4 physics threads. Render contention is separated by comparing
   the step cost (physics only) with the tick wall time and the frame times.
 
-Intrinsic tick, mx5_na, 4 threads (µs, mean / p99 / max):
+Intrinsic tick, mx5_na, 4 threads pinned to 4 cores, `FC_REP=3` (µs, mean / p99 / max). "Before" is the fast model
+with the PGS budget and tyre closed forms only; "after" adds the Woodbury re-solve, the block cache and the 4-sum dots.
+The reference column is after (the block cache also speeds up the reference, bit-identically).
 
-| Manoeuvre | Reference | Fast |
-|---|---|---|
-| Slalom | 710 / 834 / 7296 | 611 / 723 / 1347 |
-| Skidpad | 791 / 1153 / 9538 | 652 / 777 / 1424 |
-| Lift-off | 747 / 1076 / 9316 | 621 / 862 / 1349 |
-| Step steer | 754 / 1146 / 9069 | 618 / 1010 / 1393 |
-| Drift | 976 / 1356 / 3372 | 911 / 1292 / 1774 |
-| Braking | 796 / 3128 / 8516 | 645 / 1088 / 1333 |
-| Cobbles | 758 / 937 / 1452 | 682 / 840 / 1415 |
-| Bump | 697 / 948 / 9775 | 620 / 868 / 1547 |
+| Manoeuvre | Reference | Fast before | Fast after |
+|---|---|---|---|
+| Slalom | 965 / 1093 / 3899 | 728 / 846 / 1418 | 676 / 783 / 1057 |
+| Skidpad | 1020 / 1316 / 5052 | 740 / 912 / 1468 | 694 / 799 / 1043 |
+| Lift-off | 994 / 1241 / 4903 | 766 / 1012 / 1445 | 677 / 794 / 1002 |
+| Step steer | 1012 / 1376 / 5088 | 770 / 1186 / 1514 | 689 / 814 / 1038 |
+| Drift | 1151 / 1474 / 2362 | 974 / 1398 / 1828 | 796 / 1023 / 1165 |
+| Braking | 1017 / 2276 / 5334 | 723 / 1130 / 1473 | 673 / 887 / 1054 |
+| Cobbles | 1139 / 1301 / 1557 | 915 / 1070 / 1476 | 893 / 989 / 1123 |
+| Bump | 1021 / 1210 / 5237 | 760 / 1015 / 1503 | 726 / 837 / 1111 |
 
-At the worst fast tick (drift), the multibody factorisation and Schur complement take about half the tick and PGS
-about a quarter. The tyre patch (phase A) is about 5 %.
+PGS at the worst fast tick fell from 650-780 µs to 75-330 µs. The worst fast tick (drift, about 1.17 ms) is now
+spread over several stages: PGS about 0.33 ms, Schur complement about 0.19 ms, factorisation about 0.15 ms, contact and
+tyre (phase A) about 0.13 ms, assembly about 0.12 ms. The TARMAC brush force itself is about 5 µs per tick for all
+four wheels.
 
 ## Not done, and why
 
-- **Pre-baked tyre tables** (a blind sweep of the tyre over the road surface, cached by hash). Once the exact
-  closed forms were in, the tyre patch costs about 5 % of the worst tick. The remaining cost is the coupled
-  multibody solve, which a tyre table cannot remove, so tables were not needed for the 2 ms target and their
-  fidelity risk (transient brush state, C1 interpolation across stick/slide) was not taken on.
-- **Factor reuse for the second solve while sliding** (a low-rank Woodbury update instead of a refactor when a tyre
-  leaves the friction circle). This would cut drift's factor/Schur cost (about 1.5× slalom). It remains a candidate.
+- **Pre-baked tyre tables** (a blind sweep of the tyre over the road surface, Hermite-interpolated, cached by hash;
+  also a single-precision structure-of-arrays tyre path). Measured: the brush force costs about 5 µs per tick for all
+  four wheels, so a table or SIMD path could save at most that. Not built; the fidelity risk (transient brush state,
+  interpolation across stick/slide) was not worth 5 µs. No bake step exists.
+- **Aligning-moment table and multi-rate bristle loop.** The aligning-moment solve is about 20 µs per tick; a
+  multi-rate bristle loop would add work at this step size. Not built.
+- **Saturation predictor** (guessing which tyres leave the friction circle so the first solve already uses the right
+  rows). It mispredicted often enough during transitions that the second solve was still needed; removed.
+- **Incremental PGS** (keeping the row residuals up to date by column updates instead of row dot products). With
+  about 30 box rows that all change every sweep, the updates cost as much as the dots. No gain; removed.
+- **Friction-bound update every m sweeps** (Anitescu-Tasora style fixed-point on the bounds). m = 2 passes but doubles
+  the drift rack error (21 to 45 N) for about 40 µs; m = 4 fails drift on rack force (about 210 N). Not adopted.
 
 ## References
 
@@ -120,3 +136,9 @@ about a quarter. The tyre patch (phase A) is about 5 %.
   frictional contact problems*, WSCG 2010.
 - D. Baraff, *Linear-time dynamics using Lagrange multipliers*, SIGGRAPH 1996 (sparse factorisation of
   constrained multibody systems). R. Featherstone, *Rigid Body Dynamics Algorithms*, Springer 2008.
+- W. W. Hager, *Updating the inverse of a matrix*, SIAM Review 31(2), 1989, doi:10.1137/1031049 (Sherman-Morrison-
+  Woodbury low-rank update).
+- J. C. Simo, T. J. R. Hughes, *Computational Inelasticity*, Springer 1998 (return mapping onto a convex admissible
+  set, consistent tangent).
+- M. Anitescu, A. Tasora, *An iterative approach for cone complementarity problems for nonsmooth dynamics*,
+  Computational Optimization and Applications 47, 2010, doi:10.1007/s10589-008-9223-4.
