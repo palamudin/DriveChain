@@ -15,6 +15,7 @@ mb_world* mb_create(void) { mb_world* W = (mb_world*)calloc(1, sizeof(mb_world))
 /* measurement-only knobs (DC_PROF builds): DC_PROF_PGS_COLD=1 starts every PGS from zero instead of the previous
    solve's impulses (warm-start evaluation); DC_PROF_PGS_ITERS=n overrides the sweep cap. Read once per process. */
 static int prof_pgs_cold = -1, prof_pgs_iters = 0;
+int dc_prof_pgs_cap = 0;   /* set by measurement tools between runs (fastcheck FC_CAP_B); > 0 overrides the sweep cap */
 static void prof_knobs(void) {
     if (prof_pgs_cold >= 0) return;
     const char* e = getenv("DC_PROF_PGS_COLD"); prof_pgs_cold = e ? atoi(e) : 0;
@@ -792,7 +793,7 @@ void mb_solve(mb_world* W) {
             W->box_j[nbx] = j; W->box_r[nbx] = r; nbx++;
         }
     }
-    W->nbox = nbx; W->pgs_it = 0;
+    W->nbox = nbx; W->pgs_it = 0; W->pgs_used = 0;
     DCP_LAP(DCP_S_BOXROWS, tp); DCP_MAX(nbx_max, nbx); DCP_CNT(nbx_sum, nbx);
     if (nbx > 0 && !W->schur_dense) schur_sparse(W, nbx);
     else if (nbx > 0) {
@@ -822,10 +823,17 @@ void mb_solve(mb_world* W) {
             else W->hb[s] = J->lam[r] < J->lo[r] ? J->lo[r] : (J->lam[r] > J->hi[r] ? J->hi[r] : J->lam[r]);
             DCP(prof_knobs(); if (prof_pgs_cold) W->hb[s] = 0;)
         }
-        DCP(if (prof_pgs_iters > 0) W->pgs_iters = prof_pgs_iters;)
+        DCP(if (prof_pgs_iters > 0) W->pgs_iters = prof_pgs_iters; if (dc_prof_pgs_cap > 0) W->pgs_iters = dc_prof_pgs_cap;)
         /* projected Gauss-Seidel on the small dense Schur complement (exact box LCP at convergence). Load-dependent
            bounds are re-evaluated from the coupled normal reactions at every sweep (fixed point of the same LCP). */
-        double res = 0; int it;
+        double res = 0; int it, done = -1;
+        /* fast model: exact limit-cycle exit. The iterate (hb) is the whole state of this loop: every sweep, bound and
+           subspace step is a deterministic function of hb and of the sweep parity (subspace every pgs_ssm sweeps). Once
+           hb repeats bitwise at a lag L that is a multiple of that period, the sequence is periodic, no stopping test can
+           fire any more and the solve would run to the cap; the capped result is the iterate with the same phase, so we
+           stop at the first sweep in phase with the cap. Bit-identical to running the sweeps out (reference behaviour). */
+        int cyc_m = W->pgs_ssm > 0 ? W->pgs_ssm : 1, cyc_R = 2 * cyc_m, cyc_on = W->fast && cyc_R <= 8;
+        if (cyc_on) memcpy(W->pgs_hist[0], W->hb, sizeof(double) * nbx);
         for (it = 0; it < W->pgs_iters; it++) {
             res = 0;
             for (int s = 0; s < nbx; s++) {
@@ -896,9 +904,16 @@ void mb_solve(mb_world* W) {
                 pgs_subspace(W, nbx);
                 DCP_LAP(DCP_S_SUBSPACE, tp); DCP_CNT(subspace_calls, 1);
             }
+            if (cyc_on) {   /* state index t = it + 1 */
+                int t = it + 1, hit = 0; double* old2 = W->pgs_hist[t % cyc_R];
+                if (t >= cyc_m && !memcmp(W->pgs_hist[(t - cyc_m) % cyc_R], W->hb, sizeof(double) * nbx) && (W->pgs_iters - t) % cyc_m == 0) hit = 1;
+                else if (t >= cyc_R && !memcmp(old2, W->hb, sizeof(double) * nbx) && (W->pgs_iters - t) % cyc_R == 0) hit = 1;
+                if (hit) { done = t; it = W->pgs_iters; W->pgs_cycle_exits++; break; }
+                memcpy(old2, W->hb, sizeof(double) * nbx);
+            }
         }
-        W->pgs_res = res; W->pgs_it = it; if (it >= W->pgs_iters) W->pgs_ncapped++;
-        DCP_LAP(DCP_S_PGS, tp); DCP(long long sw_ = it < W->pgs_iters ? it + 1 : it;) DCP_CNT(pgs_sweeps, sw_); DCP_MAX(pgs_sweep_max, sw_);
+        W->pgs_res = res; W->pgs_it = it; W->pgs_used = done >= 0 ? done : (it < W->pgs_iters ? it + 1 : it); if (it >= W->pgs_iters) W->pgs_ncapped++;
+        DCP_LAP(DCP_S_PGS, tp); DCP(long long sw_ = done >= 0 ? done : (it < W->pgs_iters ? it + 1 : it);) DCP_CNT(pgs_sweeps, sw_); DCP_MAX(pgs_sweep_max, sw_);
         DCP(if (it >= W->pgs_iters) dc_prof_g.pgs_capped++;)
         memcpy(W->x, W->r, sizeof(double) * N);
         for (int s = 0; s < nbx; s++) {

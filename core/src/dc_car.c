@@ -944,7 +944,9 @@ DC_API int dc_step(dc_car* c, double dt) {
     int n = 0;
     double t0 = (c->dbg & DC_DBG_PROFILE) ? dc_wall() : 0;
     DCP_T(tp);
-    while (c->acc_dt >= c->h - 1e-12 && n < 200) { dc_substep(c); c->acc_dt -= c->h; n++; }
+    { int ne = 0; double a = c->acc_dt; while (a >= c->h - 1e-12 && ne < 200) { a -= c->h; ne++; } c->sub_n = ne; }
+    while (c->acc_dt >= c->h - 1e-12 && n < 200) { c->sub_idx = n; dc_substep(c); c->acc_dt -= c->h; n++; }
+    c->sub_idx = 0; c->sub_n = 0;
     DCP_ADD(DCP_S_STEP_TOTAL, tp); DCP_CNT(substeps, n);
     if (c->dbg & DC_DBG_PROFILE) { c->prof.step_s += dc_wall() - t0; c->prof.substeps += n; }
     return n;

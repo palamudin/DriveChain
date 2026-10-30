@@ -116,7 +116,13 @@ typedef struct {
     int shake;                        /* 1: projection also corrects velocity (SHAKE/RATTLE-like, energy-consistent) */
     void (*phi_cb)(void* user);       /* called after the position update, before projection: refresh CUSTOM rows' phi */
     void* cb_user;
-    int pgs_iters;                    /* box-LCP Gauss-Seidel iteration cap (default 400) */
+    int pgs_iters;                    /* box-LCP Gauss-Seidel iteration cap (default 400; fast model 32) */
+    int fast;                         /* DC_MODEL_FAST numerics (bounded-cost paths, same equations) */
+    int pgs_cap0;                     /* fast: the reference sweep cap (pgs_iters is set per solve from the tick budget) */
+    int tick_budget, budget_floor, budget_left;   /* fast: PGS sweeps per dc_step tick, shared by its solves (see dc_mbcar_step) */
+    int pgs_used;                     /* sweeps run by the last solve */
+    double pgs_hist[8][MB_MAXBOX];    /* fast: last PGS iterates, exact limit-cycle detection (see mb_solve) */
+    long long pgs_cycle_exits;        /* fast: solves finished by the limit-cycle shortcut (diagnostic) */
     /* stats */
     double pgs_res; int fact_fail; int pgs_it;
     int pgs_ncapped;                  /* solves that ended at the pgs_iters cap (cumulative, diagnostic) */

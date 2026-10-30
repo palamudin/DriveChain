@@ -168,6 +168,14 @@ double dc_valve_energy(const dc_valve* v, const double P[3], double r) {
 }
 
 static void phi_refresh(void* user);
+/* fast model: PGS sweeps per tick (all solves of one dc_step call) and the minimum any one solve gets. Worst-case PGS
+   cost per tick ~ budget x 5 us (nbx ~ 28); chosen in docs/PERF.md from the solver-floor fidelity runs */
+#ifndef DC_FAST_TICK_SWEEPS
+#define DC_FAST_TICK_SWEEPS 160
+#endif
+#ifndef DC_FAST_SWEEP_FLOOR
+#define DC_FAST_SWEEP_FLOOR 8
+#endif
 
 dc_mbcar* dc_mbcar_create(dc_car* c) {
     const dc_car_params* P = &c->P; const dc_mb_params* M = &P->mb;
@@ -177,6 +185,13 @@ dc_mbcar* dc_mbcar_create(dc_car* c) {
     m->W = mb_create();
     if (!m->W) { free(m); return NULL; }
     mb_world* W = m->W;
+    if (P->model == DC_MODEL_FAST) {   /* bounded PGS: the solves of one tick share a sweep budget (fair share of what is left,
+                                          carried over), each solve also stops at the reference cap and exits exact limit cycles */
+        W->fast = 1; W->pgs_cap0 = W->pgs_iters; W->tick_budget = DC_FAST_TICK_SWEEPS; W->budget_floor = DC_FAST_SWEEP_FLOOR;
+#ifdef DC_PROF
+        if (getenv("DC_FAST_BUDGET")) W->tick_budget = atoi(getenv("DC_FAST_BUDGET"));   /* measurement builds only */
+#endif
+    }
     v3 off = V3(P->sprung_cg[0], P->sprung_cg[1], P->sprung_cg[2]);
     double msum = 0; v3 mom = V3(0, 0, 0);
     #define ACC(b) do { msum += W->B[b].m; mom = vadd(mom, vscl(W->B[b].x, W->B[b].m)); } while (0)
@@ -802,8 +817,15 @@ void dc_mbcar_step(dc_car* c) {
     for (int i = 0; i < 4; i++) E_start += m->tc[i].pe + dc_tyre_shear_store(c, i, &m->tc[i]);   /* radial (phase A) + committed shear/twist */
     double dgd[4] = {0, 0, 0, 0};
     DCP_LAP(DCP_S_LOADS, tp);
+    if (W->fast && W->tick_budget > 0 && c->sub_idx == 0) W->budget_left = W->tick_budget;
     for (int pass = 0; pass < 2; pass++) {
+        if (W->fast && W->tick_budget > 0) {   /* fair share of the tick's remaining sweeps over the substeps still to run */
+            int rem = c->sub_n - c->sub_idx; if (rem < 1) rem = 1;
+            int cap = W->budget_left / rem; if (cap < W->budget_floor) cap = W->budget_floor; if (cap > W->pgs_cap0) cap = W->pgs_cap0;
+            W->pgs_iters = cap;
+        }
         mb_solve(W);
+        if (W->fast && W->tick_budget > 0) W->budget_left -= W->pgs_used;
         DCP_RESET(tp);
         int redo = 0;
         for (int i = 0; i < 4; i++) {

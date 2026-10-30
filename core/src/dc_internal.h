@@ -87,6 +87,7 @@ struct dc_car {
     dc_tyre_state ty[4];
     dc_pose pose[4];
     double t; long long tick; double h; double acc_dt;
+    int sub_idx, sub_n;              /* substep index within the current dc_step call and the count it will run (fast-model sweep budget) */
     double dissipated;
     double body_set[DC_MAX_BODYPTS], body_w, body_pe; int body_audit; /* permanent crush of each body contact point, m (elastic-plastic body contact) */
     /* per-step outputs */
