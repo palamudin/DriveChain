@@ -80,6 +80,8 @@ typedef struct { double tw; float sleep_req_us, sleep_us, lockwait_max_us, batch
 typedef struct { double tw; float frame_us, lock_us, draw_us; double sim_time; int new_ticks; } prof_frame_t;
 double prof_now_us(void);
 void prof_init(int cap_ticks);
+const prof_tick_t* prof_last(void);       /* newest tick record (NULL if none); prof_rewind() empties the rings (measurement tools) */
+void prof_rewind(void);
 void prof_batch(const prof_batch_t* b);
 void prof_frame(const prof_frame_t* f);
 void prof_dump(const char* prefix);        /* <prefix>_ticks.csv, _batches.csv, _frames.csv */

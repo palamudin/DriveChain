@@ -59,6 +59,7 @@ int sim_init(sim_t* S, cfg_t* cfg, track_t* trk, audio_t* audio, char* err, int 
       S->perf_log = cfg_int(cfg, "physics.perf_log", 0); }
     int as = cfg_int(cfg, "car.assist", -1); if (as >= 0) S->P.assist = as;
     int so = cfg_int(cfg, "car.solver", -1); if (so >= 0) S->P.solver = so;   /* --set car.solver=0 -> legacy core */
+    { const char* pm = cfg_str(cfg, "physics.model", NULL); if (pm) S->P.model = !strcmp(pm, "fast") ? DC_MODEL_FAST : DC_MODEL_REFERENCE; }   /* reference = full numerics (default) */
     if (!sim_apply_setup(&S->P, cfg_str(cfg, "car.setup", "legacy"), err, errlen)) return 0;   /* after car.solver: propBR needs the MB core */
     if (!make_car(S)) { snprintf(err, errlen, "dc_create failed"); return 0; }
     S->rotation_rad = cfg_num(cfg, "input.rotation_deg", 2 * S->P.steer_lock_deg) * M_PI / 180;
@@ -180,6 +181,8 @@ void prof_init(int cap) {
     PT = (prof_tick_t*)calloc(PT_cap, sizeof *PT); PB = (prof_batch_t*)calloc(PB_cap, sizeof *PB); PF = (prof_frame_t*)calloc(PF_cap, sizeof *PF);
     dc_prof_rec r; dc_prof_take(&r);   /* drop anything before the run */
 }
+const prof_tick_t* prof_last(void) { return PT && PT_n > 0 ? &PT[PT_n - 1] : NULL; }
+void prof_rewind(void) { PT_n = PB_n = PF_n = 0; }
 void prof_batch(const prof_batch_t* b) { if (PB && PB_n < PB_cap) PB[PB_n++] = *b; }
 void prof_frame(const prof_frame_t* f) { if (PF && PF_n < PF_cap) PF[PF_n++] = *f; }
 static void prof_tick(sim_t* S, double w0, double w1) {
