@@ -2,7 +2,7 @@
 
 The demo ticks the car at 240 Hz with 4 substeps. The target is a **physics tick that never takes more than 2 ms**
 (p100), with mean and p99 well below, while the car behaves the same as the reference model.
-`physics.model = reference` stays selectable and is unchanged bit for bit (checked against the previous commit with
+The demo runs `physics.model = fast` by default (demo.ini). `physics.model = reference` stays selectable and is unchanged bit for bit (checked against the previous commit with
 `FC_REFDUMP`, below). The legacy solver (`solver = 0`) is untouched.
 
 ## What the fast model changes
@@ -70,6 +70,19 @@ straight braking, cobbles, and a bump/pothole. A proving-ground lap is checked w
 
 Budgets under 128 sweeps fail drift on peak rack force (limit 60 N; a cap of 32 per solve gives more than 60 N).
 The budget of 160 leaves margin on that metric.
+
+## In the demo (real time)
+
+Measured on a shared 8-vCPU virtual machine with software OpenGL, 40 s autopilot runs, native Linux and Wine:
+- Fast, 1 physics thread: step mean 1.0-1.2 ms, p99 1.7-2.0 ms. Most ticks over 2 ms are the physics thread being
+  descheduled (one stage that normally takes 25-300 µs takes 5-16 ms), not solver work. The intrinsic worst tick is
+  1.17 ms.
+- Fast, 4 physics threads: in real time the worker pool's wake-up waits reach 13-35 ms, and p99 is 1.4-1.7 ms
+  natively but 6-7 ms under Wine. On this machine 1 thread has the better tail. The demo default stays 4 threads;
+  1 thread is a proposal.
+- The renderer no longer waits on a physics tick. The physics thread publishes a copy of the render state after every
+  tick, and the renderer posts its controls through a lock held only for that copy. The renderer's lock wait went from
+  p99 1.0-1.7 ms (max 11 ms) to p99 1 µs (max 8 µs).
 
 ## Timing method
 

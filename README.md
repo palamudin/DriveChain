@@ -10,6 +10,10 @@ DriveChain has a C core with a Unity frontend (P/Invoke) and a raylib test drive
   `dc_set_threads(car, n)` (1-4, default 1) spreads each step over n cores, and results are bit-identical for any n. With n > 1 the road callback must be thread-safe.
 - **Test drive (demo.ini `[physics]`):**
   - `tick_hz = 240`: inputs, FFB and audio update once per tick.
+  - `model = fast` (demo default): the same coupled solve with a per-tick friction-solver sweep budget, a low-rank
+    re-solve when a tyre leaves the friction circle, and exact closed forms in the tyre contact. It passes the
+    fidelity suite (`make fastcheck`) and keeps the worst tick near 1.2 ms. `model = reference` (or
+    `--set physics.model=reference`) selects the full reference numerics, unchanged bit for bit. Details: docs/PERF.md.
   - `substeps = 4`: mechanics steps per tick; 1 / 2 / 4 / 8 = 240 / 480 / 960 / 1920 Hz.
   - `threads = 4`.
   - `perf_log = 1` prints the cost per simulated second.
