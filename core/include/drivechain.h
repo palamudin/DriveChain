@@ -204,7 +204,8 @@ typedef struct {
                               cannot wrap features finer than this anyway; default 25 mm) */
     double gravity;
     int solver;            /* DC_SOLVER_REDUCED (0, legacy reduced-coordinate core) or DC_SOLVER_MULTIBODY (1) */
-    int mb_pad;
+    int model;             /* DC_MODEL_REFERENCE (0, full model) or DC_MODEL_FAST (1): same physics, bounded-cost numerics
+                              (bounded PGS, exact Newton Mz/ring solves, planar-road contact fast path); see docs/PERF.md */
     dc_mb_params mb;       /* multibody-only parameters (masses of the individual parts, column, valve, bushings) */
 } dc_car_params;
 
@@ -362,6 +363,7 @@ DC_API void   dc_driver_command(dc_driver* d, const dc_driver_cmd* c);
 DC_API void   dc_driver_update(dc_driver* d, const dc_car* car, double dt, dc_input* io);
 DC_API void   dc_driver_get_state(const dc_driver* d, dc_driver_state* s);
 enum { DC_SOLVER_REDUCED = 0, DC_SOLVER_MULTIBODY = 1 };
+enum { DC_MODEL_REFERENCE = 0, DC_MODEL_FAST = 1 };
 enum { DC_DBG_NO_DAMPING = 1, DC_DBG_NO_FRICTION = 2, DC_DBG_NO_AERO = 4, DC_DBG_FREEZE_STEER = 8, DC_DBG_ENGINE_OFF = 16, DC_DBG_NO_PROJECTION = 32, DC_DBG_PROFILE = 64 /* time the step sections (dc_get_profile); off = no timer calls */ };
 typedef struct { double contact_s, step_s; long long substeps; } dc_profile;   /* contact_s: tyre/road contact preparation (phase A, all wheels) */
 DC_API void   dc_get_profile(const dc_car* c, dc_profile* p, int reset);

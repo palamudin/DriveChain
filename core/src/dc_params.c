@@ -122,7 +122,7 @@ typedef struct { const char* key; int type; size_t off; int n; } fld;
 #define TI(k, f) {k, T_I, offsetof(dc_axle_params, tyre) + offsetof(dc_tyre_params, f), 1}
 
 static const fld car_f[] = {
-    CF("mass", mass, 1), CF("sprung_inertia", sprung_inertia, 3), CF("gravity", gravity, 1), CF("substep_hz", substep_hz, 1), CF("road_resolve", road_resolve, 1),
+    CF("mass", mass, 1), CF("sprung_inertia", sprung_inertia, 3), CF("gravity", gravity, 1), CF("substep_hz", substep_hz, 1), CF("road_resolve", road_resolve, 1), CI("model", model),
     CF("steer_ratio", steer_ratio, 1), CF("steer_lock_deg", steer_lock_deg, 1), CF("rack_mass", rack_mass, 1),
     CF("sw_inertia", sw_inertia, 1), CF("column_inertia", column_inertia, 1), CF("torsion_k", torsion_k, 1),
     CF("torsion_c", torsion_c, 1), CF("rack_friction", rack_friction, 1), CF("column_friction", column_friction, 1),

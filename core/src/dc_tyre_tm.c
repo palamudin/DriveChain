@@ -33,6 +33,7 @@
 #define TM_FLANGE 0.0175       /* ETRTO J-flange height (TARMAC FLANGE) */
 #define TM_EPS_RING 0.0004     /* m: cell ramp-in width of the footprint threshold (TARMAC) */
 #define TM_NC (DC_TM_NR * DC_TM_NL)
+#define TM_PLANE_TOL 1e-9      /* m: fast model treats the footprint's road nodes as one plane when they fit it this closely */
 
 #ifdef DC_PROF
 /* profiling builds only: Mz footprint-shear measurement knobs (env, read once).
@@ -135,6 +136,25 @@ static double tm_ring(const tm_cell* C, int nc, double dmax, double target) {
     double lo = 0, hi = dmax + TM_EPS_RING;
     for (int it = 0; it < 34; it++) { double mid = 0.5 * (lo + hi); if (tm_area_at(C, nc, mid) > target) lo = mid; else hi = mid; }
     return 0.5 * (lo + hi);
+}
+
+/* fast model: the same threshold, solved exactly. A(tau) is piecewise linear and non-increasing, so a safeguarded
+   Newton step on the bracket lands on the root as soon as it is on the right linear piece (2-4 passes instead of 34). */
+static double tm_ring_exact(const tm_cell* C, int nc, double dmax, double target) {
+    if (!(tm_area_at(C, nc, 0) > target)) return 0;
+    double lo = 0, hi = dmax + TM_EPS_RING, tau = 0;
+    for (int it = 0; it < 64; it++) {
+        double A = 0, dA = 0;
+        for (int k = 0; k < nc; k++) {
+            double x = (C[k].pen - tau) / TM_EPS_RING + 0.5;
+            if (x >= 1) A += C[k].area; else if (x > 0) { A += C[k].area * x; dA += C[k].area / TM_EPS_RING; }
+        }
+        if (A > target) lo = tau; else hi = tau;
+        if (fabs(A - target) <= 1e-14 * target || hi - lo < 1e-13) break;
+        double tn = dA > 0 ? tau + (A - target) / dA : 0.5 * (lo + hi);
+        tau = (tn > lo && tn < hi) ? tn : 0.5 * (lo + hi);
+    }
+    return tau;
 }
 
 /* flat-road footprint of an upright wheel at deflection delta (reference patch, tests) */
@@ -299,6 +319,8 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
     DCP_WLAP(i, DCP_W_SETUP, tp);
     /* exact cull bound: highest grid node under the wheel's lower half */
     double hmax = -1e30;
+    const int fast = c->P.model == DC_MODEL_FAST;
+    int planar = 0, pi0 = 0, pj0 = 0; double pa = 0, pbx = 0, pby = 0, pg = 0;
     {
         double bx0 = 1e30, bx1 = -1e30, by0 = 1e30, by1 = -1e30, gd;
         double ext = R0 + fabs(bx) + 0.02, wy = 0.5 * B->tread + fabs(by) + 0.02;
@@ -307,8 +329,20 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
             bx0 = fmin(bx0, pb.x); bx1 = fmax(bx1, pb.x); by0 = fmin(by0, pb.y); by1 = fmax(by1, pb.y);
         }
         int i0 = ifloor(bx0 / dw), i1 = ifloor(bx1 / dw) + 1, j0 = ifloor(by0 / dw), j1 = ifloor(by1 / dw) + 1;
+        if (fast) {   /* fast model: is every node the footprint can touch on one plane (and one grip)? then bilinear = plane, exactly */
+            double g0, g1, g2;
+            pa = grid_node(&GR, c, i0, j0, &g0); pbx = grid_node(&GR, c, i0 + 1, j0, &g1) - pa; pby = grid_node(&GR, c, i0, j0 + 1, &g2) - pa;
+            pg = g0; planar = g1 == g0 && g2 == g0; pi0 = i0; pj0 = j0;
+            for (int ii = i0; ii <= i1; ii++) for (int jj = j0; jj <= j1; jj++) {
+                double hn = grid_node(&GR, c, ii, jj, &gd); if (hn > hmax) hmax = hn;
+                if (planar && (gd != pg || fabs(hn - (pa + pbx * (ii - i0) + pby * (jj - j0))) > TM_PLANE_TOL)) planar = 0;
+            }
+        } else
         for (int ii = i0; ii <= i1; ii++) for (int jj = j0; jj <= j1; jj++) { double hn = grid_node(&GR, c, ii, jj, &gd); if (hn > hmax) hmax = hn; }
     }
+    const double pHx = pbx * GR.idw, pHy = pby * GR.idw;   /* plane slope (planar only) */
+    v3 pn = vnorm(V3(-pHx, -pHy, 1));
+#define PLANE_H(x, y) (pa + pbx * ((x) * GR.idw - pi0) + pby * ((y) * GR.idw - pj0))
     tm_cell C[TM_NC]; int nc = 0;
     double Vsum = 0, dmax = 0; int nfill = 0;
     v3 dir[DC_TM_NR];
@@ -323,7 +357,12 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
             if (zR >= hmax) continue;              /* every road node is below it: no hit with t < R0 */
             double ts = o.z > hmax ? (o.z - hmax) / (-d.z) : 0;
             v3 nh; double gg;
-            double th = tm_ray(&GR, c, o, d, ts, R0, &nh, &gg);
+            double th;
+            if (planar) {   /* f(t) = o.z + t d.z - H(o + t d) is linear on a plane: the cell walk's root, in closed form */
+                double c0 = o.z - PLANE_H(o.x, o.y), c1 = d.z - (pHx * d.x + pHy * d.y), fa = c0 + c1 * ts;
+                th = fa <= 0 ? ts : (c1 < 0 && c0 + c1 * R0 <= 0 ? -c0 / c1 : -1);
+                nh = pn; gg = pg;
+            } else th = tm_ray(&GR, c, o, d, ts, R0, &nh, &gg);
             if (th < 0) continue;
             double pen = R0 - th;
             if (pen <= 0) continue;
@@ -350,7 +389,7 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
     double delta = tm_invert(B, Vsum / nl);
     double Ns = Kz * delta;
     double target = p > 1000 ? Ns / (B->kappa * p) : 1e30;
-    double ring = tm_ring(C, nc, dmax, target);
+    double ring = fast ? tm_ring_exact(C, nc, dmax, target) : tm_ring(C, nc, dmax, target);
     double sw = 0, m1 = 0, m2 = 0, gsum = 0; v3 Pc = V3(0, 0, 0), nsum = V3(0, 0, 0);
     double fs = vdot(fw, cw);
     for (int k = 0; k < nc; k++) {
@@ -385,7 +424,13 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
         const double ds = 2 * Rf / nsr;
         v3 Fs = V3(0, 0, 0), Ms = V3(0, 0, 0); double U = 0;
         hcell HC = {INT32_MIN, INT32_MIN, 0, 0, 0, 0, 0, 0, 0, 0};
-        if (cw.z + Rf * dn.z < hmax)                      /* lowest flange point below the highest node, else no touch */
+        int rim_touch = cw.z + Rf * dn.z < hmax;          /* lowest flange point below the highest node, else no touch */
+        if (rim_touch && planar) {   /* exact on a plane: height above it is linear, its minimum on the flange circle is closed form */
+            v3 gz = V3(-pHx, -pHy, 1); double gf = vdot(gz, fw), gn = vdot(gz, dn), rr = Rf * sqrt(gf * gf + gn * gn);
+            rim_touch = 0;
+            for (int j = 0; j < nl; j++) { v3 o = vmad(cw, a, B->lane[j]); if (o.z - PLANE_H(o.x, o.y) - rr < 0) { rim_touch = 1; break; } }
+        }
+        if (rim_touch)
         for (int j = 0; j < nl; j++) {
             v3 o = vmad(cw, a, B->lane[j]);               /* the rim is rigid: no belt shift / roll */
             double Ar = 0; v3 Gr = V3(0, 0, 0), Mr = V3(0, 0, 0);
@@ -393,7 +438,8 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
                 double x = -Rf + (k + 0.5) * ds, Sr = sqrt(fmax(Rf * Rf - x * x, 0));
                 v3 off = vadd(vscl(fw, x), vscl(dn, Sr)), pb = vadd(o, off);
                 if (pb.z >= hmax) continue;
-                double Hx, Hy, gg, H = grid_hc(&GR, &HC, c, pb.x, pb.y, &Hx, &Hy, &gg);
+                double Hx, Hy, gg, H;
+                if (planar) { H = PLANE_H(pb.x, pb.y); Hx = pHx; Hy = pHy; } else H = grid_hc(&GR, &HC, c, pb.x, pb.y, &Hx, &Hy, &gg);
                 double u = H - pb.z, umax = -2 * Sr * dn.z, ph, dph;
                 if (u <= 0) continue;
                 if (u >= umax) { u = umax; ph = umax < e ? umax * umax / (2 * e) : umax - e / 2; dph = 0; }
@@ -553,7 +599,18 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
                 }
             } else
 #endif
-            if (Ft < cap * (1 - 1e-9)) {
+            if (fast && Ft < cap * (1 - 1e-9)) {
+                /* fast model, exact: F(s) = sum min(s c_k, m_k) is concave piecewise linear and F(0) = 0 < Ft, so Newton
+                   from s = 0 increases monotonically and stops on the root's linear piece (finite, no bisection residual) */
+                double sn = 0; s = 0;
+                for (int it = 0; it < 64; it++) {
+                    double sl = 0, sat = 0;
+                    for (int k = 0; k < m; k++) { double ck = xi[k] * ak[k]; if (s * ck < mk[k]) sl += ck; else sat += mk[k]; }
+                    sn = sl > 0 ? (Ft - sat) / sl : s;
+                    if (!(sn > s)) break;
+                    s = sn;
+                }
+            } else if (Ft < cap * (1 - 1e-9)) {
                 double lo = 0, hi = shi;
                 for (int it = 0; it < 48; it++) {
                     double mid = 0.5 * (lo + hi), F = 0;
@@ -599,6 +656,7 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
     t->Trest = vdot(tau, a);
     t->arm_x = vdot(a, vcross(vsub(Pc, cw), t->xc));
     return;
+#undef PLANE_H
 airborne:
     /* airborne: the free tread's shear deflection relaxes (hysteresis), as in the envelope model */
     t->contact = 0; t->pe = 0;
