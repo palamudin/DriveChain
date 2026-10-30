@@ -20,6 +20,11 @@
 /* windows.h clashes with raylib (CloseWindow, DrawText, Rectangle...): declare just what we need from winmm */
 __declspec(dllimport) unsigned int __stdcall timeBeginPeriod(unsigned int uPeriod);
 __declspec(dllimport) unsigned int __stdcall timeEndPeriod(unsigned int uPeriod);
+/* kernel32 waitable timer (high resolution on Windows 10 1803+; falls back to a normal timer, then to nanosleep) */
+__declspec(dllimport) void* __stdcall CreateWaitableTimerExW(void* sa, const unsigned short* name, unsigned long flags, unsigned long access);
+__declspec(dllimport) int __stdcall SetWaitableTimer(void* h, const long long* due, long period, void* apc, void* arg, int resume);
+__declspec(dllimport) unsigned long __stdcall WaitForSingleObject(void* h, unsigned long ms);
+__declspec(dllimport) int __stdcall CloseHandle(void* h);
 #endif
 
 static char MAP_TITLE[128] = "PROVING GROUND";
@@ -542,6 +547,10 @@ static void* phys_thread(void* arg) {
     (void)arg;
 #ifdef _WIN32
     timeBeginPeriod(1);
+    /* nanosleep(300 us) rounds up to the 1 ms scheduler period on Windows; a high-resolution waitable timer sleeps
+       close to the request, so the batch loop wakes on time for the next 4.17 ms tick */
+    void* wt = CreateWaitableTimerExW(NULL, NULL, 0x2 /* CREATE_WAITABLE_TIMER_HIGH_RESOLUTION */, 0x1F0003);
+    if (!wt) wt = CreateWaitableTimerExW(NULL, NULL, 0, 0x1F0003);
 #endif
     double t0 = wall(), sim = 0; const double dt = SIM.tick_dt;   /* physics.tick_hz (240 Hz in demo.ini) */
     while (RUN) {
@@ -581,11 +590,19 @@ static void* phys_thread(void* arg) {
 #ifdef DC_PROF
         double sl0 = prof_now_us();
 #endif
+#ifdef _WIN32
+        { long long due = -3000;   /* relative, 100 ns units */
+          if (wt && SetWaitableTimer(wt, &due, 0, NULL, NULL, 0)) WaitForSingleObject(wt, 0xFFFFFFFF); else nanosleep(&ts, NULL); }
+#else
         nanosleep(&ts, NULL);
+#endif
 #ifdef DC_PROF
         pb.sleep_req_us = 300; pb.sleep_us = (float)(prof_now_us() - sl0); prof_batch(&pb);
 #endif
     }
+#ifdef _WIN32
+    if (wt) CloseHandle(wt);
+#endif
     return NULL;
 }
 static void audio_cb(void* buf, unsigned int frames) { audio_render(&AUD, (float*)buf, (int)frames); }
