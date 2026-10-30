@@ -394,10 +394,19 @@ typedef struct {
     char device[96];                   /* OpenCL device name when the gpu backend is up */
     long long mem_bytes;               /* the stage's working tables and batch buffers (host side) */
     int auto_sel;                      /* 0 fixed backend, 1 auto (backend = the live pick), 2 auto still probing */
-    double live_us[3];                 /* auto: live mean us per batch per backend on wheel 0 (-1 = not probed) */
+    double live_us[3];                 /* live mean us per batch per backend that actually ran, all wheels, timed
+                                          around the whole call (gpu: pack + upload + launch + readback; -1 = never ran) */
+    long long skips;                   /* wheel patches that were planar: closed form, no batch sent to any backend */
+    long long gpu_calls, gpu_fail;     /* gpu batches done / launches that failed and ran on cpu_simd instead */
+    double gpu_phase_us[3];            /* gpu mean us per batch: [0] pack + upload enqueue, [1] launch + device run
+                                          (clFinish), [2] blocking readback + unpack (-1 = no gpu batch) */
+    int xcheck;                        /* cross-check period (0 off): every n-th non-cpu batch re-run on cpu */
+    long long xc_calls, xc_flips;      /* batches cross-checked / rays whose contact status (hit, miss, fallback) differed */
+    double xc_max_dth, xc_max_dother;  /* worst |delta| of the ray hit parameter / of hit x, y, grip over all checks */
 } dc_offload_stats;
 DC_API int    dc_set_offload(dc_car* c, int stage, int backend);
 DC_API void   dc_get_offload(const dc_car* c, int stage, dc_offload_stats* out);
+DC_API void   dc_set_offload_xcheck(dc_car* c, int every);   /* same-tick cpu cross-check of the lane (0 = off) */
 DC_API int    dc_offload_parse(const char* s);   /* "ref" "auto" "cpu" "cpu_simd" "gpu" -> DC_OFFLOAD_*, unknown -> auto */
 DC_API const char* dc_offload_name(int backend);
 #ifdef DC_PROF

@@ -341,7 +341,7 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
             bx0 = fmin(bx0, pb.x); bx1 = fmax(bx1, pb.x); by0 = fmin(by0, pb.y); by1 = fmax(by1, pb.y);
         }
         int i0 = ifloor(bx0 / dw), i1 = ifloor(bx1 / dw) + 1, j0 = ifloor(by0 / dw), j1 = ifloor(by1 / dw) + 1;
-        if (LW && (i1 - i0 + 1) * (j1 - j0 + 1) > DC_PT_MAXN) LW = NULL;   /* footprint larger than the table: double rays */
+        if (LW && (i1 - i0 + 1) * (j1 - j0 + 1) > DC_PT_MAXN) { dc_lane_note_skip(c->lane, i); LW = NULL; }   /* footprint larger than the table: double rays */
         if (LW) { LW->T.ni = i1 - i0 + 1; LW->T.nj = j1 - j0 + 1; LW->T.idw = (float)GR.idw; LW->T.gax = NULL; lti0 = i0; ltj0 = j0; }
         if (LW) {   /* fast model, lane on: the same bound and plane test, and the nodes into the float32 patch table */
             double g0, g1, g2; const int ni = i1 - i0 + 1;
@@ -398,7 +398,7 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
             Vsum += pen * B->w[k]; \
             if (pen > dmax) dmax = pen; \
             ;
-    if (planar) LW = NULL;
+    if (planar && LW) { dc_lane_note_skip(c->lane, i); LW = NULL; }   /* planar patch: closed-form rays, no batch */
     v3 olane[DC_TM_NL];
     if (LW) { LW->R.n = 0; LW->R.tmax = (float)R0; }
     for (int j = 0; j < nl; j++) {

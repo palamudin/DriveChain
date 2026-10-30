@@ -194,6 +194,7 @@ DC_API int dc_set_offload(dc_car* c, int stage, int backend) {
     return c->lane ? dc_lane_set(c->lane, stage, backend) : DC_OFFLOAD_REF;
 }
 DC_API void dc_get_offload(const dc_car* c, int stage, dc_offload_stats* out) { dc_lane_stats(c ? c->lane : NULL, stage, out); if (c && c->lw) out->mem_bytes = 4 * (long long)sizeof(dc_lanew); }
+DC_API void dc_set_offload_xcheck(dc_car* c, int every) { if (c) dc_lane_set_xcheck(c->lane, every); }
 DC_API int dc_offload_parse(const char* s) {
     if (!s) return DC_OFFLOAD_AUTO;
     if (!strcmp(s, "ref") || !strcmp(s, "off")) return DC_OFFLOAD_REF;

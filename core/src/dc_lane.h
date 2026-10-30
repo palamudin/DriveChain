@@ -33,4 +33,6 @@ int      dc_lane_get(const dc_lane* L, int stage);
 void     dc_lane_patch(dc_lane* L, int w, const dc_ptab* T, dc_rayb* R);
 void     dc_lane_stats(const dc_lane* L, int stage, dc_offload_stats* out);
 const char* dc_lane_backend_name(int backend);
+void     dc_lane_note_skip(dc_lane* L, int w);              /* wheel w's patch was planar: closed form, no batch */
+void     dc_lane_set_xcheck(dc_lane* L, int every);         /* re-run every n-th non-cpu batch on cpu and compare (0 off) */
 #endif

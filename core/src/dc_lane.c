@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <math.h>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -227,7 +228,10 @@ static int cl_open(void) {
     G->ok = 1; return 1;
 }
 /* pack -> one write of the table, one of the rays, one launch, one blocking read -> unpack */
-static int patch_gpu(clw* W, const dc_ptab* T, dc_rayb* R) {
+/* tph (optional): wall seconds of the three phases, accumulated: [0] pack + upload enqueue (table, rays),
+   [1] launch + clFinish (the uploads and the kernel run on the device), [2] blocking readback + unpack */
+static int patch_gpu(clw* W, const dc_ptab* T, dc_rayb* R, double* tph) {
+    double w0 = tph ? dc_wall() : 0, w1 = 0, w2 = 0;
     clstate* G = &CLG; const int n = R->n, nn = T->ni * T->nj;
     float in[7 * DC_RB_MAX], out[5 * DC_RB_MAX];
     memcpy(in, R->u0, 4 * n); memcpy(in + n, R->v0, 4 * n); memcpy(in + 2 * n, R->z0, 4 * n); memcpy(in + 3 * n, R->du, 4 * n);
@@ -236,6 +240,7 @@ static int patch_gpu(clw* W, const dc_ptab* T, dc_rayb* R) {
     e |= G->f.EnqueueWriteBuffer(W->q, W->tab, 0, 0, 4 * nn, T->h, 0, NULL, NULL);
     e |= G->f.EnqueueWriteBuffer(W->q, W->tab, 0, 4 * nn, 4 * nn, T->g, 0, NULL, NULL);
     e |= G->f.EnqueueWriteBuffer(W->q, W->in, 0, 0, 4 * 7 * n, in, 0, NULL, NULL);
+    if (tph) w1 = dc_wall();
     int ni = T->ni, nj = T->nj; float tmax = R->tmax, idw = T->idw;
     e |= G->f.SetKernelArg(W->k, 0, sizeof(cl_mem), &W->tab); e |= G->f.SetKernelArg(W->k, 1, sizeof(cl_mem), &W->in);
     e |= G->f.SetKernelArg(W->k, 2, sizeof(cl_mem), &W->out); e |= G->f.SetKernelArg(W->k, 3, sizeof ni, &ni);
@@ -243,10 +248,12 @@ static int patch_gpu(clw* W, const dc_ptab* T, dc_rayb* R) {
     e |= G->f.SetKernelArg(W->k, 6, sizeof tmax, &tmax); e |= G->f.SetKernelArg(W->k, 7, sizeof idw, &idw);
     size_t gs = (size_t)((n + 63) / 64 * 64), ls = 64;
     e |= G->f.EnqueueNDRangeKernel(W->q, W->k, 1, NULL, &gs, &ls, 0, NULL, NULL);
+    if (tph) { e |= G->f.Finish(W->q); w2 = dc_wall(); }   /* splits device time from the readback (the read below blocks anyway) */
     e |= G->f.EnqueueReadBuffer(W->q, W->out, 1, 0, 4 * 5 * n, out, 0, NULL, NULL);
     if (e) return 0;
     memcpy(R->th, out, 4 * n); memcpy(R->hx, out + n, 4 * n); memcpy(R->hy, out + 2 * n, 4 * n); memcpy(R->gr, out + 3 * n, 4 * n);
     for (int r = 0; r < n; r++) R->st[r] = (int)out[4 * n + r];
+    if (tph) { double w3 = dc_wall(); tph[0] += w1 - w0; tph[1] += w2 - w1; tph[2] += w3 - w2; }
     return 1;
 }
 
@@ -262,6 +269,16 @@ struct dc_lane {
        result and the run stays deterministic. */
     int autom[DC_LANE_NSTAGE], ncand[DC_LANE_NSTAGE], cand[DC_LANE_NSTAGE][3];
     struct { int b; long long n[3]; double s[3]; } au[DC_LANE_NSTAGE][4];
+    /* instrumentation, per wheel (one writer each): live cost per backend actually run, gpu phase split and
+       failed launches, batches skipped because the patch was planar (closed form, no rays marched) */
+    struct { long long n[3]; double s[3]; } lv[4];
+    struct { long long n, fail; double ph[3]; } gt[4];
+    long long skip[4];
+    /* same-tick cross-check: every xc_every-th batch of a non-cpu backend is re-run on the scalar cpu backend
+       from the same inputs and compared (results stay the backend's own); scratch allocated with the lane */
+    int xc_every;
+    struct { long long n, flips; double dth, dsl; } xc[4];
+    dc_rayb xr[4];
 };
 #define AUTO_BLK 32
 #define AUTO_N (AUTO_BLK * 12)
@@ -271,6 +288,7 @@ const char* dc_lane_backend_name(int b) {
 dc_lane* dc_lane_create(void) {
     dc_lane* L = (dc_lane*)calloc(1, sizeof *L); if (!L) return NULL;
     for (int s = 0; s < DC_LANE_NSTAGE; s++) L->bk[s] = DC_OFFLOAD_REF;
+    for (int b = 0; b < 3; b++) L->cal_us[b] = -1;   /* -1 = self-test not run (fixed backends skip it) */
 #ifdef HAVE_V8
     __builtin_cpu_init(); L->simdw = __builtin_cpu_supports("avx2") ? 8 : 4;
 #else
@@ -289,7 +307,10 @@ static int gpu_up(dc_lane* L) {
     return L->gpu_ok;
 }
 static void run_patch(dc_lane* L, int bk, int w, const dc_ptab* T, dc_rayb* R) {
-    if (bk == DC_OFFLOAD_GPU && L->gpu_ok && patch_gpu(&L->gw[w], T, R)) return;
+    if (bk == DC_OFFLOAD_GPU && L->gpu_ok) {
+        if (patch_gpu(&L->gw[w], T, R, L->gt[w].ph)) { L->gt[w].n++; return; }
+        L->gt[w].fail++;   /* launch or transfer error: this batch runs on cpu_simd (same bits) */
+    }
     if (bk == DC_OFFLOAD_SIMD || bk == DC_OFFLOAD_GPU) {
         int n = R->n, np = (n + 7) & ~7;   /* pad to the vector width: padded rays start past tmax (st 0) */
         for (int r = n; r < np; r++) { R->u0[r] = R->v0[r] = R->z0[r] = R->du[r] = R->dv[r] = R->dz[r] = 0; R->ts[r] = R->tmax + 1; }
@@ -334,6 +355,7 @@ static void calibrate(dc_lane* L, int stage) {
         L->cal_us[b] = best * 1e6; L->cal_match[b] = same;
     }
     for (int b = 0; b < 3; b++) { CAL_US[b] = L->cal_us[b]; CAL_MATCH[b] = L->cal_match[b]; }
+    memset(L->gt, 0, sizeof L->gt);   /* self-test launches are not live batches */
     CAL_DONE = 1;
     if (getenv("DC_LANE_VERBOSE")) fprintf(stderr, "[lane] patch calibration us/batch: cpu %.1f simd(w%d) %.1f%s gpu %.1f%s %s\n", CAL_US[0], L->simdw,
         CAL_US[1], CAL_MATCH[1] ? "" : " (MISMATCH)", CAL_US[2], CAL_US[2] > 0 && !CAL_MATCH[2] ? " (MISMATCH)" : "", CLG.name);
@@ -375,6 +397,22 @@ void dc_lane_patch(dc_lane* L, int w, const dc_ptab* T, dc_rayb* R) {
             L->au[sg][w].b = bb;
         }
     }
+    L->lv[w].n[b]++; L->lv[w].s[b] += dt;
+    if (L->xc_every > 0 && b != DC_OFFLOAD_CPU && L->st[sg][w].calls % L->xc_every == 0) {
+        dc_rayb* X = &L->xr[w]; const int n = R->n;
+        X->n = n; X->tmax = R->tmax;
+        memcpy(X->u0, R->u0, 4 * n); memcpy(X->v0, R->v0, 4 * n); memcpy(X->z0, R->z0, 4 * n);
+        memcpy(X->du, R->du, 4 * n); memcpy(X->dv, R->dv, 4 * n); memcpy(X->dz, R->dz, 4 * n); memcpy(X->ts, R->ts, 4 * n);
+        patch_cpu(T, X);
+        long long fl = 0; double dth = 0, dsl = 0;
+        for (int r = 0; r < n; r++) {
+            if (X->st[r] != R->st[r]) { fl++; continue; }
+            if (R->st[r] != 1) continue;
+            dth = fmax(dth, fabs((double)X->th[r] - R->th[r]));
+            dsl = fmax(dsl, fmax(fabs((double)X->hx[r] - R->hx[r]), fmax(fabs((double)X->hy[r] - R->hy[r]), fabs((double)X->gr[r] - R->gr[r]))));
+        }
+        L->xc[w].n++; L->xc[w].flips += fl; L->xc[w].dth = fmax(L->xc[w].dth, dth); L->xc[w].dsl = fmax(L->xc[w].dsl, dsl);
+    }
     int fb = 0; for (int r = 0; r < R->n; r++) fb += R->st[r] < 0;
     L->st[DC_LANE_PATCH][w].calls++; L->st[DC_LANE_PATCH][w].rays += R->n; L->st[DC_LANE_PATCH][w].fb += fb;
     L->st[DC_LANE_PATCH][w].s += dt; if (dt > L->st[DC_LANE_PATCH][w].mx) L->st[DC_LANE_PATCH][w].mx = dt;
@@ -385,8 +423,16 @@ void dc_lane_stats(const dc_lane* L, int stage, dc_offload_stats* o) {
     o->backend = L->bk[stage]; o->simd_width = L->simdw; o->auto_sel = L->autom[stage] ? 1 : 0;
     if (L->autom[stage]) {   /* report the live pick (wheel 0; -1 while still probing) */
         o->backend = L->au[stage][0].b >= 0 ? L->au[stage][0].b : L->bk[stage]; if (L->au[stage][0].b < 0) o->auto_sel = 2;
-        for (int k = 0; k < 3; k++) o->live_us[k] = L->au[stage][0].n[k] ? 1e6 * L->au[stage][0].s[k] / L->au[stage][0].n[k] : -1;
-    } else for (int k = 0; k < 3; k++) o->live_us[k] = -1;
+    }
+    for (int k = 0; k < 3; k++) {   /* live mean over all wheels of what actually ran (auto: probe batches included) */
+        long long n = 0; double sm = 0; for (int w = 0; w < 4; w++) { n += L->lv[w].n[k]; sm += L->lv[w].s[k]; }
+        o->live_us[k] = n ? 1e6 * sm / n : -1;
+    }
+    { long long gn = 0; double ph[3] = {0, 0, 0};
+      for (int w = 0; w < 4; w++) { gn += L->gt[w].n; o->gpu_fail += L->gt[w].fail; for (int k = 0; k < 3; k++) ph[k] += L->gt[w].ph[k]; o->skips += L->skip[w]; }
+      o->gpu_calls = gn; for (int k = 0; k < 3; k++) o->gpu_phase_us[k] = gn ? 1e6 * ph[k] / gn : -1; }
+    o->xcheck = L->xc_every;
+    for (int w = 0; w < 4; w++) { o->xc_calls += L->xc[w].n; o->xc_flips += L->xc[w].flips; o->xc_max_dth = fmax(o->xc_max_dth, L->xc[w].dth); o->xc_max_dother = fmax(o->xc_max_dother, L->xc[w].dsl); }
     for (int w = 0; w < 4; w++) {
         o->calls += L->st[stage][w].calls; o->rays += L->st[stage][w].rays; o->fallback += L->st[stage][w].fb;
         o->seconds += L->st[stage][w].s; if (L->st[stage][w].mx > o->max_s) o->max_s = L->st[stage][w].mx;
@@ -395,3 +441,5 @@ void dc_lane_stats(const dc_lane* L, int stage, dc_offload_stats* o) {
     o->gpu_ok = L->gpu_ok;
     snprintf(o->device, sizeof o->device, "%s", L->gpu_ok ? CLG.name : "");
 }
+void dc_lane_note_skip(dc_lane* L, int w) { if (L) L->skip[w]++; }
+void dc_lane_set_xcheck(dc_lane* L, int every) { if (L) L->xc_every = every > 0 ? every : 0; }
