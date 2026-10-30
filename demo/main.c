@@ -438,6 +438,181 @@ static void draw_car(const sim_snap* V, const dc_car_params* P, int xray) {
     } else draw_placeholder_car(V, P);
 }
 
+/* ---------------- perf overlay (F7) and dump (F8) ----------------
+   Profiling builds (-DDC_PROF, the shipped demo): the physics thread writes one record per tick into a wrapping ring
+   (DC_PROF stage counters, allocated once at start). F7 shows the last 10 s: mean / p99 / max per stage, ticks over
+   budget, the worst spikes with a cause tag, the real-time factor, rates, threads, CPU, GPU, render fps, lane table
+   memory and the backend per stage. The statistics are recomputed twice a second on the render thread; nothing is
+   allocated while running. F8 writes perf_dump_<timestamp>.txt (summary + per-tick CSV of the window) next to the exe. */
+#ifdef _WIN32
+__declspec(dllimport) const unsigned char* __stdcall glGetString(unsigned int name);
+__declspec(dllimport) unsigned long __stdcall GetActiveProcessorCount(unsigned short group);
+#else
+const unsigned char* glGetString(unsigned int name);
+#include <unistd.h>
+#endif
+#if defined(__x86_64__) || defined(__i386__)
+#include <cpuid.h>
+#endif
+static int PERF_ON;
+#ifdef DC_PROF
+#define PO_CAP 16384
+#define PO_ROWS (2 + DCP_S_N - 1 + DCP_W_TOTAL + 1)
+static prof_tick_t PO_T[PO_CAP]; static float PO_X[PO_CAP];
+typedef struct { char name[24]; double mean, p99, max; } po_row;
+typedef struct { double ago, us; int stage, tags; float speed; } po_spike;
+static struct {
+    int n, nrow; double win_s, over_pct, rt, simwall, budget_us, last;
+    po_row row[PO_ROWS]; po_spike spk[6]; int nspk;
+    char cpu[64], gpu[96]; int cores;
+} PO;
+static const char* PO_SN[DCP_S_N] = {"begin", "phaseA (tyres)", "loads", "assemble", "factor", "ksolve", "boxrows", "schur", "pgs", "subspace", "backsub", "resolve_chk", "commit", "integrate", "post", "step_total"};
+static const char* PO_WN[DCP_W_TOTAL] = {"  w_setup", "  w_rays (patch)", "  w_rim", "  w_brush", "  w_mz", "  w_cull"};
+static float po_sel(float* a, int n, int k) {   /* k-th smallest (quickselect, in place) */
+    int l = 0, r = n - 1;
+    while (l < r) {
+        float piv = a[(l + r) / 2]; int i = l, j = r;
+        while (i <= j) { while (a[i] < piv) i++; while (a[j] > piv) j--; if (i <= j) { float t = a[i]; a[i] = a[j]; a[j] = t; i++; j--; } }
+        if (k <= j) r = j; else if (k >= i) l = i; else break;
+    }
+    return a[k];
+}
+static void po_stat(po_row* R, const char* name, int n) {
+    snprintf(R->name, sizeof R->name, "%s", name); double s = 0, mx = 0;
+    for (int i = 0; i < n; i++) { s += PO_X[i]; if (PO_X[i] > mx) mx = PO_X[i]; }
+    R->mean = n ? s / n : 0; R->max = mx; R->p99 = n ? po_sel(PO_X, n, (int)(0.99 * (n - 1))) : 0;
+}
+static void po_sysinfo(void) {
+    if (PO.cpu[0]) return;
+    snprintf(PO.cpu, sizeof PO.cpu, "unknown CPU");
+#if defined(__x86_64__) || defined(__i386__)
+    { unsigned r[12]; if (__get_cpuid(0x80000002, &r[0], &r[1], &r[2], &r[3]) && __get_cpuid(0x80000003, &r[4], &r[5], &r[6], &r[7]) && __get_cpuid(0x80000004, &r[8], &r[9], &r[10], &r[11])) {
+        char b[49]; memcpy(b, r, 48); b[48] = 0; char* p = b; while (*p == ' ') p++; snprintf(PO.cpu, sizeof PO.cpu, "%s", p); } }
+#endif
+#ifdef _WIN32
+    PO.cores = (int)GetActiveProcessorCount(0xFFFF);
+#else
+    PO.cores = (int)sysconf(_SC_NPROCESSORS_ONLN);
+#endif
+    const unsigned char* g = glGetString(0x1F01 /* GL_RENDERER */); snprintf(PO.gpu, sizeof PO.gpu, "%s", g ? (const char*)g : "?");
+}
+static void po_update(int force) {
+    double now = GetTime();
+    if (!force && now - PO.last < 0.5) return;
+    PO.last = now; po_sysinfo();
+    const double tick_hz = 1.0 / SIM.tick_dt; int want = (int)(10 * tick_hz); if (want > PO_CAP - 128) want = PO_CAP - 128;
+    int n = (int)prof_ring_copy(PO_T, want); PO.n = n; PO.budget_us = 1e6 * SIM.tick_dt;
+    if (n < 2) { PO.nrow = 0; PO.nspk = 0; return; }
+    PO.win_s = PO_T[n - 1].simt - PO_T[0].simt;
+    int r = 0, over = 0; double sum_tick = 0;
+    for (int i = 0; i < n; i++) { PO_X[i] = PO_T[i].tick_us; sum_tick += PO_T[i].tick_us; if (PO_T[i].tick_us > PO.budget_us) over++; }
+    po_stat(&PO.row[r++], "host tick", n);
+    for (int i = 0; i < n; i++) PO_X[i] = PO_T[i].st_us[DCP_S_STEP_TOTAL];
+    po_stat(&PO.row[r++], "step (all substeps)", n);
+    for (int k = 0; k < DCP_S_N - 1; k++) {
+        for (int i = 0; i < n; i++) PO_X[i] = PO_T[i].st_us[k];
+        po_stat(&PO.row[r++], PO_SN[k], n);
+        if (k == DCP_S_PHASEA) for (int w = 0; w < DCP_W_TOTAL; w++) { for (int i = 0; i < n; i++) PO_X[i] = PO_T[i].whs_us[w]; po_stat(&PO.row[r++], PO_WN[w], n); }
+    }
+    for (int i = 0; i < n; i++) PO_X[i] = PO_T[i].pool_wait_us;
+    po_stat(&PO.row[r++], "pool wait", n);
+    PO.nrow = r; PO.over_pct = 100.0 * over / n;
+    PO.rt = sum_tick > 0 ? PO.budget_us * n / sum_tick : 0;   /* tick budget / mean tick cost */
+    double ww = (PO_T[n - 1].tw - PO_T[0].tw) * 1e-6; PO.simwall = ww > 0 ? PO.win_s / ww : 0;   /* < 1: dropped time (slow motion) */
+    /* worst spikes: the 6 costliest ticks, at least 50 ms apart */
+    PO.nspk = 0;
+    for (int s = 0; s < 6; s++) {
+        int bi = -1;
+        for (int i = 0; i < n; i++) {
+            int near = 0; for (int q = 0; q < PO.nspk; q++) if (fabs(PO_T[i].simt - (PO_T[n - 1].simt - PO.spk[q].ago)) < 0.05) { near = 1; break; }
+            if (!near && (bi < 0 || PO_T[i].tick_us > PO_T[bi].tick_us)) bi = i;
+        }
+        if (bi < 0) break;
+        po_spike* P = &PO.spk[PO.nspk++]; const prof_tick_t* t = &PO_T[bi];
+        P->ago = PO_T[n - 1].simt - t->simt; P->us = t->tick_us; P->speed = t->speed * 3.6f;
+        int tg = 0; for (int i = bi > 2 ? bi - 2 : 0; i <= bi + 2 && i < n; i++) tg |= PO_T[i].tags;   /* +-2 ticks: the event that triggered it */
+        P->tags = tg; int st = 0; for (int k = 1; k < DCP_S_N - 1; k++) if (t->st_us[k] > t->st_us[st]) st = k; P->stage = st;
+    }
+}
+static void po_tagstr(int tg, char* b, int nb) {
+    snprintf(b, nb, "%s%s%s%s", tg & PT_TAG_KERB ? "kerb " : "", tg & PT_TAG_LOAD ? "load-jump " : "", tg & PT_TAG_STEER ? "fast-steer " : "", tg ? "" : "-");
+    int l = (int)strlen(b); if (l > 1 && b[l - 1] == ' ') b[l - 1] = 0;
+}
+static void po_lane(char* b, int nb, double* mem_kb) {
+    dc_offload_stats os; memset(&os, 0, sizeof os); os.backend = DC_OFFLOAD_REF; dc_get_offload(SIM.car, DC_STAGE_PATCH, &os);
+    *mem_kb = os.mem_bytes / 1024.0;
+    if (os.backend == DC_OFFLOAD_REF) { snprintf(b, nb, "patch: ref (double rays)"); return; }
+    snprintf(b, nb, "patch: %s%s w%d  %.2f us/call (max %.0f)  hand-backs %.2f%%  cal us cpu %.1f simd %.1f gpu %.1f%s%s", dc_offload_name(os.backend),
+             os.backend == DC_OFFLOAD_GPU && !os.gpu_ok ? "(n/a)" : "", os.simd_width, 1e6 * os.seconds / (os.calls ? os.calls : 1), 1e6 * os.max_s,
+             100.0 * os.fallback / (os.rays ? os.rays : 1), os.cal_us[0], os.cal_us[1], os.cal_us[2], os.gpu_ok ? "  " : "", os.device);
+}
+static void draw_perf(int sw_, int sh_, double fps) {
+    po_update(0);
+    char b[512], lane[256]; double mem_kb; po_lane(lane, sizeof lane, &mem_kb);
+    int x = sw_ - 560, y = 10, w = 550, h = 160 + 15 * (PO.nrow + PO.nspk + 2);
+    DrawRectangle(x - 8, y - 4, w + 4, h, (Color){0, 0, 0, 170});
+    Color hc = (Color){255, 220, 120, 255}, tc = RAYWHITE, dc = (Color){180, 220, 255, 255};
+    snprintf(b, sizeof b, "PERF  (F7 hide, F8 dump)  last %.1f s, %d ticks", PO.win_s, PO.n); DrawText(b, x, y, 16, hc); y += 20;
+    snprintf(b, sizeof b, "physics %.0f Hz x %d = %.0f Hz  threads %d  %s/%s  RT x%.2f  sim/wall %.3f", 1 / SIM.tick_dt, (int)(SIM.P.substep_hz * SIM.tick_dt + 0.5), SIM.P.substep_hz,
+             SIM.threads, VIEW.solver == 1 ? "multibody" : "legacy", SIM.P.model == DC_MODEL_FAST ? "fast" : "reference", PO.rt, PO.simwall); DrawText(b, x, y, 13, tc); y += 15;
+    snprintf(b, sizeof b, "over budget (%.0f us): %.2f %% of ticks   render %.0f fps", PO.budget_us, PO.over_pct, fps); DrawText(b, x, y, 13, PO.over_pct > 0.5 ? ORANGE : tc); y += 15;
+    snprintf(b, sizeof b, "CPU %s (%d threads)", PO.cpu, PO.cores); DrawText(b, x, y, 13, dc); y += 15;
+    snprintf(b, sizeof b, "GPU %s", PO.gpu); DrawText(b, x, y, 13, dc); y += 15;
+    snprintf(b, sizeof b, "lane tables %.0f KB   %s", mem_kb, lane); DrawText(b, x, y, 12, dc); y += 15;
+    /* raylib's default font is proportional: one DrawText per column at fixed x */
+    const int cx[5] = {0, 190, 250, 310, 370};
+    const char* hd[5] = {"stage (us per tick)", "mean", "p99", "max", "backend"};
+    for (int c = 0; c < 5; c++) DrawText(hd[c], x + cx[c], y, 13, hc);
+    y += 15;
+    for (int r = 0; r < PO.nrow; r++) {
+        const po_row* R = &PO.row[r]; Color c = R->max > PO.budget_us ? ORANGE : tc;
+        if (R->max <= 0 && r > 1) continue;   /* stages this solver does not run */
+        char bk[24] = "";
+        if (strstr(R->name, "w_rays")) { snprintf(bk, sizeof bk, "%.23s", lane + 7); char* sp = strchr(bk, ' '); if (sp) *sp = 0; }
+        else if (!strstr(R->name, "pool") && !strstr(R->name, "tick")) snprintf(bk, sizeof bk, "cpu double");
+        DrawText(R->name, x + cx[0], y, 13, c);
+        snprintf(b, sizeof b, "%.1f", R->mean); DrawText(b, x + cx[1], y, 13, c);
+        snprintf(b, sizeof b, "%.1f", R->p99); DrawText(b, x + cx[2], y, 13, c);
+        snprintf(b, sizeof b, "%.0f", R->max); DrawText(b, x + cx[3], y, 13, c);
+        DrawText(bk, x + cx[4], y, 13, dc); y += 15;
+    }
+    const int sx[5] = {0, 60, 130, 260, 440};
+    const char* sh[5] = {"s ago", "us", "top stage", "cause", "speed"};
+    DrawText("worst spikes", x, y + 3, 13, hc); y += 18;
+    for (int c = 0; c < 5; c++) DrawText(sh[c], x + sx[c], y, 13, hc);
+    y += 15;
+    for (int s = 0; s < PO.nspk; s++) {
+        char tg[64]; po_tagstr(PO.spk[s].tags, tg, sizeof tg); Color c = PO.spk[s].us > PO.budget_us ? ORANGE : tc;
+        snprintf(b, sizeof b, "%.1f", PO.spk[s].ago); DrawText(b, x + sx[0], y, 13, c);
+        snprintf(b, sizeof b, "%.0f", PO.spk[s].us); DrawText(b, x + sx[1], y, 13, c);
+        DrawText(PO_SN[PO.spk[s].stage], x + sx[2], y, 13, c);
+        DrawText(tg, x + sx[3], y, 13, c);
+        snprintf(b, sizeof b, "%.0f km/h", PO.spk[s].speed); DrawText(b, x + sx[4], y, 13, c); y += 15;
+    }
+}
+static void perf_dump_file(double fps) {
+    po_update(1);
+    time_t tt = time(NULL); struct tm* lt = localtime(&tt); char ts[32], path[600];
+    strftime(ts, sizeof ts, "%Y%m%d_%H%M%S", lt);
+    snprintf(path, sizeof path, "%sperf_dump_%s.txt", GetApplicationDirectory(), ts);
+    FILE* f = fopen(path, "w"); if (!f) { fprintf(stderr, "[perf] cannot write %s\n", path); return; }
+    char lane[256]; double mem_kb; po_lane(lane, sizeof lane, &mem_kb);
+    fprintf(f, "# DriveChain perf dump %s\n# physics %.0f Hz x %d substeps (%.0f Hz), threads %d, model %s\n", ts, 1 / SIM.tick_dt, (int)(SIM.P.substep_hz * SIM.tick_dt + 0.5), SIM.P.substep_hz, SIM.threads,
+            SIM.P.model == DC_MODEL_FAST ? "fast" : "reference");
+    fprintf(f, "# CPU %s (%d threads)\n# GPU %s\n# render %.0f fps\n# lane tables %.0f KB; %s\n", PO.cpu, PO.cores, PO.gpu, fps, mem_kb, lane);
+    fprintf(f, "# window %.2f s, %d ticks; budget %.0f us; over budget %.3f %%; RT x%.3f; sim/wall %.4f\n", PO.win_s, PO.n, PO.budget_us, PO.over_pct, PO.rt, PO.simwall);
+    fprintf(f, "# stage,mean_us,p99_us,max_us\n");
+    for (int r = 0; r < PO.nrow; r++) { const char* nm = PO.row[r].name; while (*nm == ' ') nm++; fprintf(f, "# %s,%.2f,%.2f,%.1f\n", nm, PO.row[r].mean, PO.row[r].p99, PO.row[r].max); }
+    fprintf(f, "# worst spikes: s_ago,us,top_stage,cause,speed_kmh\n");
+    for (int s = 0; s < PO.nspk; s++) { char tg[64]; po_tagstr(PO.spk[s].tags, tg, sizeof tg); fprintf(f, "# %.3f,%.0f,%s,%s,%.1f\n", PO.spk[s].ago, PO.spk[s].us, PO_SN[PO.spk[s].stage], tg, PO.spk[s].speed); }
+    prof_write_ticks_csv(f, PO_T, PO.n);
+    fclose(f); fprintf(stderr, "[perf] wrote %s\n", path);
+}
+#else
+static void draw_perf(int sw_, int sh_, double fps) { DrawText("perf overlay: this build has no DC_PROF counters", sw_ - 420, 10, 14, ORANGE); (void)sh_; (void)fps; }
+static void perf_dump_file(double fps) { (void)fps; }
+#endif
+
 /* ---------------- HUD ---------------- */
 #define HIST 600
 static float H_ffb[HIST], H_sw[HIST], H_ay[HIST]; static int H_n;
@@ -500,7 +675,7 @@ static void draw_hud(const sim_snap* V, const dc_car_params* P, int sw_, int sh_
     }
     DrawText("FFB N m (y) / steer (b)", gx, gy + gh + 2, 10, RAYWHITE);
     draw_title(TextFormat("map: %s  (F6 next)", MAP_TITLE), 10, sh_ - 34, 12, (Color){255, 220, 120, 220});
-    DrawText("keys: 1-9,0 spots  F1 spot list  F6 map  arrows/WASD drive  A/Z or Q/E shift  C cam  F2 x-ray  F3 hud  F4 forces  H assist  P puncture  R reset  O autopilot  G plug-in driver  Space handbrake  LShift clutch",
+    DrawText("keys: 1-9,0 spots  F1 spot list  F6 map  arrows/WASD drive  A/Z or Q/E shift  C cam  F2 x-ray  F3 hud  F4 forces  F7 perf  F8 perf dump  H assist  P puncture  R reset  O autopilot  G plug-in driver  Space handbrake  LShift clutch",
              10, sh_ - 18, 12, (Color){230, 230, 230, 200});
     (void)sw_;
 }
@@ -544,7 +719,7 @@ static void draw_spot_help(int sw_, int sh_, float a) {
         char b[96]; snprintf(b, sizeof b, "%d   %s", i < 9 ? i + 1 : 0, spot_label(i));
         DrawText(b, x + 16, y + 34 + 22 * i, 18, (Color){240, 240, 240, (unsigned char)(255 * a)});
     }
-    DrawText("F1 show/hide   F6 next map   R reset   G plug-in driver", x + 12, y + h - 24, 14, (Color){180, 220, 255, (unsigned char)(255 * a)});
+    DrawText("F1 show/hide  F6 next map  F7 perf  F8 dump  R reset  G driver", x + 12, y + h - 24, 14, (Color){180, 220, 255, (unsigned char)(255 * a)});
 }
 
 /* ---------------- physics thread ---------------- */
@@ -831,8 +1006,9 @@ int main(int argc, char** argv) {
     double last = GetTime();
 #ifdef DC_PROF
     /* profiling run: DC_PROF_OUT=<prefix> enables the rings, DC_PROF_TIME=<s wall> ends an interactive run */
+    if (getenv("DEMO_PERF")) PERF_ON = 1;   /* start with the F7 overlay shown (screenshots, benchmarks) */
     const char* pf_out = getenv("DC_PROF_OUT"); double pf_end = getenv("DC_PROF_TIME") ? atof(getenv("DC_PROF_TIME")) : 0;
-    if (pf_out) prof_init(400000);
+    if (pf_out) prof_init(400000); else prof_init_ring(PO_CAP);   /* the perf overlay's ring (always recording; F7 shows it) */
     double pf_t0 = prof_now_us(), pf_last = pf_t0, pf_simt = 0;
 #endif
     while (!WindowShouldClose()) {
@@ -886,6 +1062,8 @@ int main(int argc, char** argv) {
         if (IsKeyPressed(KEY_F2)) xray = !xray;
         if (IsKeyPressed(KEY_F3)) hud = (hud + 1) % 3;
         if (IsKeyPressed(KEY_F4)) forces = !forces;
+        if (IsKeyPressed(KEY_F7)) PERF_ON = !PERF_ON;
+        if (IsKeyPressed(KEY_F8)) perf_dump_file(GetFPS());
         if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) { Vector2 d = GetMouseDelta(); ORB_Y -= d.x * 0.01; ORB_P = fmin(1.4, fmax(-0.1, ORB_P + d.y * 0.01)); }
         ORB_D = fmax(2, ORB_D - GetMouseWheelMove() * 0.5);
         H_ffb[H_n % HIST] = (float)VIEW.t.column_torque; H_sw[H_n % HIST] = (float)VIEW.t.sw_angle; H_ay[H_n % HIST] = (float)VIEW.t.ay; H_n++;
@@ -925,6 +1103,7 @@ int main(int argc, char** argv) {
             draw_scene(cam, &VIEW, P, xray, forces, cur_cam);
         }
         if (hud) draw_hud(&VIEW, P, sw, sh, GetFPS(), CAMN[cur_cam], hud == 1);
+        if (PERF_ON) draw_perf(sw, sh, GetFPS());
         { double now_ = GetTime(), a = HELP_ON ? (HELP_STICKY ? 1.0 : fmin(1.0, fmax(0.0, (HELP_T0 + 12.0 - now_) / 2.0))) : 0.0;
           if (a > 0 && (!headless || getenv("DEMO_HELP"))) draw_spot_help(sw, sh, (float)a); }
         EndDrawing();
@@ -937,7 +1116,7 @@ int main(int argc, char** argv) {
 #ifdef DC_PROF
         pfr.draw_us = (float)(prof_now_us() - pfr.tw); prof_frame(&pfr);
 #endif
-        if (headless) { int all = 1; for (int i = 0; i < nsh; i++) if (!SH[i].done) all = 0; if (all || VIEW.sim_time >= max_time) break; }
+        if (headless) { int all = 1; for (int i = 0; i < nsh; i++) if (!SH[i].done) all = 0; if (all || VIEW.sim_time >= max_time) { if (getenv("DEMO_PERF_DUMP")) perf_dump_file(GetFPS()); break; } }
     }
     RUN = 0;
     if (g_threaded) pthread_join(th, NULL);

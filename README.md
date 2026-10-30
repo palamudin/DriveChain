@@ -88,7 +88,9 @@ The demo's proving layout includes:
 - crossfall/camber change, ruts and a bumpy corner
 - a banked oval, a skidpad and a slalom
 
-The demo spawns at the start hub on the dynamics pad (signposted; `[start] spot` in demo.ini). Keys 1–9 and 0 teleport to the spots: hub, start, skidpad, pave, undulations, oval, slalom, bumps, ruts, bumpy_corner. The list shows on the HUD for ~10 s at start, and F1 toggles it. Screenshots are in results/shots/ (gitignored, because they render the private mesh).
+The demo spawns at the start hub on the dynamics pad (signposted; `[start] spot` in demo.ini). Keys 1–9 and 0 teleport to the spots: hub, start, skidpad, pave, undulations, oval, slalom, bumps, ruts, bumpy_corner. The list shows on the HUD for ~10 s at start, and F1 toggles it. F2 toggles the x-ray view, F3 cycles the HUD and F4 shows the force arrows. Screenshots are in results/shots/ (gitignored, because they render the private mesh).
+
+**Perf overlay (F7, off by default).** It covers the last 10 s of physics ticks: mean, p99 and max per stage (the tyre phase is split into its wheel sub-stages), the share of ticks over the tick budget, the six worst spikes with their dominant stage and a cause tag (kerb = a rough or kerb surface under a tyre, load-jump = a wheel load changing faster than 200 kN/s, fast-steer = the wheel turning faster than 360°/s), the physics real-time factor (tick budget divided by the mean tick cost, and simulated time divided by wall time), tick rate × substeps, solver threads, the CPU model and thread count, the GPU name, render fps, the offload lane's table memory, and the backend for each stage. **F8** writes `perf_dump_<YYYYmmdd_HHMMSS>.txt` next to the executable: a `#`-commented summary followed by the per-tick CSV of the same window. Recording is always on in the demo build (`-DDC_PROF`, a fixed 16384-tick ring allocated at start). The overlay recomputes its statistics twice a second and allocates nothing while it runs. `DEMO_PERF=1` starts the demo with the overlay shown.
 
 ## Demo car setup (`[car] setup` in demo.ini)
 

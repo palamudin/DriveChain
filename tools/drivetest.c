@@ -683,7 +683,7 @@ int main(int argc, char** argv) {
     static rig_t R;
     if (!strcmp(what, "fishcheck")) return fishcheck(car, out);
 #ifdef DC_PROF
-    if (getenv("DC_PROF_OUT")) prof_init(400000);
+    if (getenv("DC_PROF_OUT")) prof_init(400000); else prof_init_ring(16384);   /* ring as in the demo (overlay cost) */
     if (!strcmp(what, "drift")) { int fl = drift(car, out, getenv("TAG") ? getenv("TAG") : "run"); if (getenv("DC_PROF_OUT")) prof_dump(getenv("DC_PROF_OUT")); return getenv("DRIFT_STRICT") ? (fl ? 1 : 0) : 0; }
 #endif
     if (!strcmp(what, "drift")) { int fl = drift(car, out, getenv("TAG") ? getenv("TAG") : "run"); return getenv("DRIFT_STRICT") ? (fl ? 1 : 0) : 0; }
