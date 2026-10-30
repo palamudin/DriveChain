@@ -369,6 +369,22 @@ DC_API void   dc_get_profile(const dc_car* c, dc_profile* p, int reset);
    bit-identical for any count (fixed per-wheel partition, no cross-thread reductions). With n > 1 the road callback
    is called from helper threads and must be thread-safe (pure function of x, y). Returns the count in use. */
 DC_API int    dc_set_threads(dc_car* c, int n);
+#ifdef DC_PROF
+/* profiling builds only (-DDC_PROF, see core/src/dc_prof.h): per-stage wall time of the multibody substep, per-wheel
+   phase-A parts, solver and worker-pool counters, accumulated since the last dc_prof_take (process-wide). */
+enum { DCP_S_BEGIN, DCP_S_PHASEA, DCP_S_LOADS, DCP_S_ASSEMBLE, DCP_S_FACTOR, DCP_S_KSOLVE, DCP_S_BOXROWS, DCP_S_SCHUR,
+       DCP_S_PGS, DCP_S_SUBSPACE, DCP_S_BACKSUB, DCP_S_RESOLVE_CHK, DCP_S_COMMIT, DCP_S_INTEGRATE, DCP_S_POST,
+       DCP_S_STEP_TOTAL, DCP_S_N };
+enum { DCP_W_SETUP, DCP_W_RAYS, DCP_W_RIM, DCP_W_TOTAL, DCP_W_N = 8 };   /* wh[i][..]: one 64-byte line per wheel; force part = total - the rest */
+typedef struct {
+    double st[DCP_S_N];                /* seconds per stage, summed */
+    double wh[4][DCP_W_N];             /* seconds per wheel phase-A part (TARMAC), summed */
+    long long substeps, solves, resolves, pgs_sweeps, pgs_capped, pgs_sweep_max, subspace_calls, nbx_max, nbx_sum;
+    long long pool_runs, pool_wakes;   /* dispatches; dispatches that had to wake sleeping helpers (condvar) */
+    double pool_wait_s, pool_wait_max_s;   /* calling thread spinning for helpers after its own share */
+} dc_prof_rec;
+DC_API void   dc_prof_take(dc_prof_rec* out);   /* copy and reset */
+#endif
 #ifdef __cplusplus
 }
 #endif

@@ -19,6 +19,7 @@
 #include "dc_tyre.h"
 #include "dc_mbcar.h"
 #include "dc_pool.h"
+#include "dc_prof.h"
 #include <time.h>
 #include <string.h>
 #include <stdlib.h>
@@ -183,6 +184,10 @@ DC_API int dc_set_threads(dc_car* c, int n) {
     return dc_pool_threads(c->pool);
 }
 double dc_wall(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec + 1e-9 * t.tv_nsec; }
+#ifdef DC_PROF
+dc_prof_rec dc_prof_g;
+DC_API void dc_prof_take(dc_prof_rec* out) { *out = dc_prof_g; memset(&dc_prof_g, 0, sizeof dc_prof_g); }
+#endif
 DC_API void dc_get_profile(const dc_car* c, dc_profile* p, int reset) { *p = c->prof; if (reset) memset(&((dc_car*)c)->prof, 0, sizeof c->prof); }
 DC_API int dc_active_solver(const dc_car* c) { return c->mb ? DC_SOLVER_MULTIBODY : DC_SOLVER_REDUCED; }
 
@@ -938,7 +943,9 @@ DC_API int dc_step(dc_car* c, double dt) {
     c->acc_dt += dt;
     int n = 0;
     double t0 = (c->dbg & DC_DBG_PROFILE) ? dc_wall() : 0;
+    DCP_T(tp);
     while (c->acc_dt >= c->h - 1e-12 && n < 200) { dc_substep(c); c->acc_dt -= c->h; n++; }
+    DCP_ADD(DCP_S_STEP_TOTAL, tp); DCP_CNT(substeps, n);
     if (c->dbg & DC_DBG_PROFILE) { c->prof.step_s += dc_wall() - t0; c->prof.substeps += n; }
     return n;
 }

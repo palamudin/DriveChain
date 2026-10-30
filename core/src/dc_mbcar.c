@@ -20,6 +20,7 @@
  * The reduced core (dc_car.c) is untouched and remains selectable (solver = 0).
  */
 #include "dc_mbcar.h"
+#include "dc_prof.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -474,6 +475,7 @@ void dc_mbcar_step(dc_car* c) {
     const dc_car_params* P = &c->P; const dc_mb_params* M = &P->mb;
     const double h = c->h, g = P->gravity;
     int nodamp = c->dbg & DC_DBG_NO_DAMPING;
+    DCP_T(tp);
     mb_begin(W, h);
     mb_body* Ch = &W->B[m->ch];
     const m3 R = Ch->R;
@@ -486,7 +488,9 @@ void dc_mbcar_step(dc_car* c) {
         a_w[i] = mv(&Wb->R, c->K[i].spin_axis_u); cw[i] = Wb->x; vw[i] = Wb->v; wk[i] = W->B[m->kn[i]].w;
         c->ty[i].omega = vdot(Wb->w, a_w[i]);
     }
+    DCP_LAP(DCP_S_BEGIN, tp);
     dc_tyre_phaseA_all(c, cw, a_w, vw, wk, h, m->tc);   /* per wheel, on the worker pool when dc_set_threads > 1 */
+    DCP_RESET(tp);
     /* ---- 2. engine torque (identical logic to the reduced core) */
     double we = vdot(W->B[m->eng].w, xw), wx = vdot(Ch->w, xw);
     double rpm = (we - wx) * 30 / M_PI;
@@ -797,8 +801,10 @@ void dc_mbcar_step(dc_car* c) {
     }
     for (int i = 0; i < 4; i++) E_start += m->tc[i].pe + dc_tyre_shear_store(c, i, &m->tc[i]);   /* radial (phase A) + committed shear/twist */
     double dgd[4] = {0, 0, 0, 0};
+    DCP_LAP(DCP_S_LOADS, tp);
     for (int pass = 0; pass < 2; pass++) {
         mb_solve(W);
+        DCP_RESET(tp);
         int redo = 0;
         for (int i = 0; i < 4; i++) {
             dc_tc* t = &m->tc[i]; if (m->el_tyre[i] < 0) { m->Fx_app[i] = 0; continue; }
@@ -816,8 +822,9 @@ void dc_mbcar_step(dc_car* c) {
                 t->Fy *= s;
             }
         }
+        DCP_LAP(DCP_S_RESOLVE_CHK, tp);
         if (!redo) break;
-        m->resolves++;
+        m->resolves++; DCP_CNT(resolves, 1);
         for (int b = 0; b < W->nb; b++) { W->B[b].v = m->v_save[b]; W->B[b].w = m->w_save[b]; }
     }
     /* tyre state commit (carcass deflections) with the solved slip */
@@ -863,8 +870,10 @@ void dc_mbcar_step(dc_car* c) {
         P0 = vadd(P0, vscl(m->v_save[b], B->m));
         L0 = vadd(L0, vadd(vcross(B->x, vscl(m->v_save[b], B->m)), mv(&B->Iw, m->w_save[b])));
     }
+    DCP_LAP(DCP_S_COMMIT, tp);
     /* ---- 7. integrate + projection */
     mb_integrate(W, !(c->dbg & DC_DBG_NO_PROJECTION));
+    DCP_LAP(DCP_S_INTEGRATE, tp);
     m->lam_diff_prev = Gr != 0 ? W->Jt[m->j_diff].lam[0] : 0;
     /* ---- 8. write-back to the shared car state */
     Ch = &W->B[m->ch];
@@ -984,4 +993,5 @@ void dc_mbcar_step(dc_car* c) {
         for (int q = 0; q < DC_MAX_ROWS; q++) Wt->row_fz[q] = q < t->nrows ? t->N[q] : 0;
     }
     c->t += h; c->tick++;
+    DCP_ADD(DCP_S_POST, tp);
 }

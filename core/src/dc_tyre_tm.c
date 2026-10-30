@@ -28,6 +28,7 @@
  */
 #include "dc_tyre.h"
 #include "dc_rgrid.h"
+#include "dc_prof.h"
 
 #define TM_FLANGE 0.0175       /* ETRTO J-flange height (TARMAC FLANGE) */
 #define TM_EPS_RING 0.0004     /* m: cell ramp-in width of the footprint threshold (TARMAC) */
@@ -220,6 +221,7 @@ static double tm_ray(rgrid* G, const dc_car* c, v3 o, v3 d, double t0, double tm
 }
 
 void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc* t) {
+    DCP_T(tp);
     const dc_tyre_params* T = &c->P.axle[i / 2].tyre;
     const dc_tm_tab* B = &c->tm[i / 2];
     dc_tyre_state* S = &c->ty[i];
@@ -238,6 +240,7 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
     const double by = S->ey, bx = S->ex;
     const double roll = -B->roll * by / B->H, asR = -vdot(a, sL);
     rgrid GR; grid_init_w(&GR, c, i, cw.x, cw.y, dw);
+    DCP_WLAP(i, DCP_W_SETUP, tp);
     /* exact cull bound: highest grid node under the wheel's lower half */
     double hmax = -1e30;
     {
@@ -286,6 +289,7 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
         }
     }
     (void)nfill;
+    DCP_WLAP(i, DCP_W_RAYS, tp);
     if (nc == 0) goto airborne;
     double delta = tm_invert(B, Vsum / nl);
     double Ns = Kz * delta;
@@ -359,6 +363,7 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
             t->pe += U;
         }
     }
+    DCP_WLAP(i, DCP_W_RIM, tp);
     double Nel = fmax(0, Ns + (nodamp ? 0 : B->cz * rate));
     double N = Nel + Frim;
     t->pe += 0.5 * Kz * delta * delta;

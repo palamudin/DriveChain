@@ -5,6 +5,7 @@
    after their last job, then sleep on a condition variable, so a 1-2 kHz step loop pays no wake-up latency while an
    idle host does not burn the cores. */
 #include "dc_pool.h"
+#include "dc_prof.h"
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -73,9 +74,11 @@ void dc_pool_run(dc_pool* p, dc_task_fn fn, void* ctx, int ntasks) {
 #endif
     atomic_store_explicit(&p->done, 0, memory_order_relaxed);
     atomic_fetch_add(&p->gen, 1);   /* seq_cst: pairs with the helper's sleepers++ then gen load (no lost wake-up) */
-    if (atomic_load(&p->sleepers) > 0) { pthread_mutex_lock(&p->mu); pthread_cond_broadcast(&p->cv); pthread_mutex_unlock(&p->mu); }
+    if (atomic_load(&p->sleepers) > 0) { DCP_CNT(pool_wakes, 1); pthread_mutex_lock(&p->mu); pthread_cond_broadcast(&p->cv); pthread_mutex_unlock(&p->mu); }
     for (int k = 0; k < ntasks; k += p->n) fn(ctx, k);
+    DCP_T(tw); DCP_CNT(pool_runs, 1);
     while (atomic_load_explicit(&p->done, memory_order_acquire) < p->n - 1) CPU_PAUSE();
+    DCP(double dw = dc_wall() - tw; dc_prof_g.pool_wait_s += dw; if (dw > dc_prof_g.pool_wait_max_s) dc_prof_g.pool_wait_max_s = dw;)
 }
 void dc_pool_destroy(dc_pool* p) {
     if (!p) return;

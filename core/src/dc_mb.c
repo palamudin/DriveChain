@@ -2,6 +2,7 @@
  * See dc_mb.h for the formulation. Allocation happens only in mb_create / mb_finalize. */
 #include "dc_mb.h"
 #include "dc_pool.h"
+#include "dc_prof.h"
 #include <stdlib.h>
 #include <stdio.h>
 
@@ -759,12 +760,16 @@ extern int mb_trace;
 int mb_trace = 0;
 #endif
 void mb_solve(mb_world* W) {
+    DCP_T(tp); DCP_CNT(solves, 1);
     assemble(W);
+    DCP_LAP(DCP_S_ASSEMBLE, tp);
     factor(W);
+    DCP_LAP(DCP_S_FACTOR, tp);
     int N = W->N;
     /* free solution */
     memcpy(W->x, W->r, sizeof(double) * N);
     ksolve(W, W->x);
+    DCP_LAP(DCP_S_KSOLVE, tp);
     /* box rows */
     int nbx = 0; W->box_dropped = 0;
     for (int j = 0; j < W->nj; j++) {
@@ -778,6 +783,7 @@ void mb_solve(mb_world* W) {
         }
     }
     W->nbox = nbx; W->pgs_it = 0;
+    DCP_LAP(DCP_S_BOXROWS, tp); DCP_MAX(nbx_max, nbx); DCP_CNT(nbx_sum, nbx);
     if (nbx > 0 && !W->schur_dense) schur_sparse(W, nbx);
     else if (nbx > 0) {
         for (int s = 0; s < nbx; s++) {
@@ -798,6 +804,7 @@ void mb_solve(mb_world* W) {
             }
         }
     }
+    DCP_LAP(DCP_S_SCHUR, tp);
     if (nbx > 0) {
         for (int s = 0; s < nbx; s++) {
             mb_joint* J = &W->Jt[W->box_j[s]]; int r = W->box_r[s];
@@ -872,9 +879,15 @@ void mb_solve(mb_world* W) {
                that is negligible (pgs_etol) the remaining sweeps only polish a sliding direction / stuck velocity that
                no longer moves any energy; hard rows (limits, stops, clutch) always need v_res < pgs_vtol. */
             if (res < 1e-12 || vres < W->pgs_vtol || (vhard < W->pgs_vtol && pfric < W->pgs_etol)) break;
-            if (W->pgs_ssm > 0 && it % W->pgs_ssm == W->pgs_ssm - 1) pgs_subspace(W, nbx);
+            if (W->pgs_ssm > 0 && it % W->pgs_ssm == W->pgs_ssm - 1) {
+                DCP_LAP(DCP_S_PGS, tp);
+                pgs_subspace(W, nbx);
+                DCP_LAP(DCP_S_SUBSPACE, tp); DCP_CNT(subspace_calls, 1);
+            }
         }
         W->pgs_res = res; W->pgs_it = it; if (it >= W->pgs_iters) W->pgs_ncapped++;
+        DCP_LAP(DCP_S_PGS, tp); DCP(long long sw_ = it < W->pgs_iters ? it + 1 : it;) DCP_CNT(pgs_sweeps, sw_); DCP_MAX(pgs_sweep_max, sw_);
+        DCP(if (it >= W->pgs_iters) dc_prof_g.pgs_capped++;)
         memcpy(W->x, W->r, sizeof(double) * N);
         for (int s = 0; s < nbx; s++) {
             mb_joint* J = &W->Jt[W->box_j[s]]; int r = W->box_r[s];
@@ -883,6 +896,7 @@ void mb_solve(mb_world* W) {
         }
         ksolve(W, W->x);
     }
+    DCP_ADD(DCP_S_BACKSUB, tp);
     for (int i = 0; i < W->nb; i++) {
         const double* x = W->x + W->off[i];
         W->B[i].v = V3(x[0], x[1], x[2]); W->B[i].w = V3(x[3], x[4], x[5]);
