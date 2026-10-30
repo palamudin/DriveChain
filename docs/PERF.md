@@ -140,6 +140,44 @@ yaw lag by −0.02° (−0.2 ms), peak lateral g by −0.001; rack-force band po
 240 × 8 gives nearly the same drop, so it is the finer mechanics step (less high-frequency rack noise), not the FFB
 rate. Fast and reference models match to the printed digits at 960 × 4; fast costs 60 % of a core, reference 89 %.
 
+## Thread placement (`[physics] affinity`, `priority`)
+
+`affinity = auto` reads the CPU topology (Linux sysfs cache and core ids, Windows GetLogicalProcessorInformationEx)
+inside the process affinity mask and puts the physics thread and the pool helpers on distinct physical cores of one
+L3 domain, largest L3 first (on a dual-CCD part with stacked cache that is the cache CCD), one logical CPU per core,
+skipping the core that holds CPU 0 when the domain has a spare one. If no domain has enough cores it pins nothing.
+`vcache` forces the largest-L3 domain even with SMT siblings; a CPU list pins explicitly. `priority = high` raises the
+threads (Linux needs CAP_SYS_NICE); `mmcss` uses the Windows multimedia scheduler task "Games". Placement is host-side
+only: dumps are bit-identical with any setting.
+
+Measured on the 8-vCPU VM (one L3 domain, so `auto` only spreads the threads over cores 1-4), fast model, 4 threads,
+960 × 4, two repeats each, tick mean / p99 µs, off → auto: slalom 506 → 495 / 555 → 554 and 520 → 514 / 568 → 569;
+cobbles 551 → 571 / 621 → 637 and 592 → 582 / 677 → 643. The changes are inside run-to-run noise, so `auto` is
+harmless here and is the demo default; the gain it targets (keeping the step's working set in one L3 and off busy
+SMT siblings) needs a multi-CCD CPU to show. `priority` stays `normal` by default.
+
+## Tolerance factor reuse (`[physics] factor_reuse`, off)
+
+The fast model refactors the coupled system every solve. With `factor_reuse = on` a solve whose assembled matrix
+differs from the last factorised one by at most `factor_reuse_tol` (largest change in any block relative to that
+block's largest entry) keeps the old factor. Every solve with it (free solution, box back-substitution, low-rank
+re-solve, position projection) is then corrected by two steps of iterative refinement against the true matrix
+(Higham 2002, ch. 12), with the Woodbury low-rank term (Hager 1989) included in the matrix product; if the last
+correction is still above 1e-6 relative, the solve refactors. Off leaves every result bit-identical.
+
+Fidelity at 960 × 4 (`make fastcheck` with `factor_reuse = on`, tol 1e-3): slalom, skidpad, liftoff, step steer,
+drift, braking and bump pass (hit rates 35–85 %, refinement corrections ≤ 1e-6, mean 2–6e-7), but cobbles fails on
+the pooled rack band 0–5 Hz (−0.82 dB against the 0.5 dB limit; rms rack −0.7 %, yaw −2.2 %) with only 4 % hits
+and many refactors after failed refinement. Tighter tolerances pass cobbles (tol 3e-4: 1 % hits, tol 1e-4: none).
+
+Cost (one thread, slalom, fast tick mean µs): off 510, on (tol 1e-3) 695. The factor here is only about six
+triangular solves' worth of work, and each refinement step costs a matrix product plus a solve for every
+right-hand side, so the solves grow from 17 to 57 µs and back-substitution from 18 to 58 µs, while refinement
+failures add a second factorisation. One refinement step with a 1e-2 limit: 611 µs; tol 3e-3 / 1e-2: 629 / 632 µs;
+tol 1e3 (always reuse): 626 µs; tol 1e-12 (never reuses, overhead only): 497 vs 491 µs. Cobbles: 697 → 788 µs.
+It does not pay at this system size, so it stays off and opt-in; it would pay only where the factor is much more
+expensive than a solve (larger systems or more joints per node).
+
 ## Not done, and why
 
 - **Pre-baked tyre tables** (a blind sweep of the tyre over the road surface, Hermite-interpolated, cached by hash;
@@ -161,6 +199,9 @@ rate. Fast and reference models match to the printed digits at 960 × 4; fast co
 
 ## References
 
+- N. J. Higham, *Accuracy and Stability of Numerical Algorithms*, 2nd ed., SIAM 2002, ch. 12 (iterative
+  refinement).
+- W. W. Hager, *Updating the Inverse of a Matrix*, SIAM Review 31(2), 1989 (Sherman-Morrison-Woodbury).
 - M. Gipser, M. Baumann, *FTire on the Driving Simulator*, VI-grade users' conference 2018 (FTire/realtime: reduced
   resolution, smarter contact search, efficient Jacobian update, 1 ms global step). cosin scientific software,
   FTire hard-real-time HiL product notes (cosin.eu).

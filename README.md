@@ -18,6 +18,15 @@ DriveChain has a C core with a Unity frontend (P/Invoke) and a raylib test drive
     This default is new and costs about 4x the CPU of the old 240 x 4; occasional slow ticks are being profiled.
     Lighter settings: 480 x 4 (1920 Hz), 240 x 4 (960 Hz, the old default), 240 x 2 (480 Hz).
   - `threads = 4`.
+  - `affinity = auto` (demo default): pins the physics thread and the pool helpers to distinct physical cores of one
+    L3 domain (CCD), largest L3 first and no SMT siblings; if no domain has enough cores nothing is pinned. `vcache`
+    takes the largest-L3 domain even with SMT siblings, a list such as `2,4,6,8` pins explicitly (physics thread
+    first), `off` leaves placement to the OS. `priority = normal | high | mmcss`. Placement never changes results; the
+    F7 overlay and the F8 dump show the plan and whether each pin and priority call succeeded.
+  - `factor_reuse = off` (default), `factor_reuse_tol = 1e-3`: opt-in fast-model option that keeps the last
+    factorisation while the system matrix changes less than the tolerance and corrects each solve by iterative
+    refinement. It passes the fidelity suite only at tight tolerances and is slower than refactoring on this car
+    (docs/PERF.md), so it stays off. F7 / F8 show its hit rate when on.
   - `perf_log = 1` prints the cost per simulated second.
   - Lower `tick_hz` or `substeps` is cheaper. 480 Hz mechanics is the lowest rate that matches the 1920 Hz handling results for the reference car.
 - **Offload lane (demo.ini `[offload]`, fast model only):** `patch = auto` (demo default) traces the tyre-patch rays as
