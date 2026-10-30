@@ -183,6 +183,8 @@ DC_API int dc_set_threads(dc_car* c, int n) {
     if (c->mb) c->mb->W->pool = c->pool;
     return dc_pool_threads(c->pool);
 }
+DC_API void dc_set_pool_opts(dc_car* c, double spin_us, int affinity) { dc_pool_set_spin(c->pool, spin_us); if (c->pool && affinity >= -1) dc_pool_set_affinity(c->pool, affinity); }
+DC_API void dc_prewake(dc_car* c) { dc_pool_prewake(c->pool); }
 double dc_wall(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec + 1e-9 * t.tv_nsec; }
 #ifdef DC_PROF
 dc_prof_rec dc_prof_g;
@@ -942,6 +944,7 @@ DC_API void dc_substep(dc_car* c) {
 DC_API int dc_step(dc_car* c, double dt) {
     c->acc_dt += dt;
     int n = 0;
+    dc_pool_prewake(c->pool);   /* helpers that went to sleep wake while the first substep's serial part runs */
     double t0 = (c->dbg & DC_DBG_PROFILE) ? dc_wall() : 0;
     DCP_T(tp);
     { int ne = 0; double a = c->acc_dt; while (a >= c->h - 1e-12 && ne < 200) { a -= c->h; ne++; } c->sub_n = ne; }

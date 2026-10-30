@@ -11,4 +11,8 @@ dc_pool* dc_pool_create(int nthreads, double spin_us);  /* NULL if nthreads < 2 
 void     dc_pool_run(dc_pool* p, dc_task_fn fn, void* ctx, int ntasks);
 int      dc_pool_threads(const dc_pool* p);
 void     dc_pool_destroy(dc_pool* p);
+void     dc_pool_prewake(dc_pool* p);                  /* wake sleeping helpers now (they spin again for spin_us): hides the
+                                                          condvar wake-up latency when called shortly before the next run */
+void     dc_pool_set_spin(dc_pool* p, double spin_us);
+int      dc_pool_set_affinity(dc_pool* p, int first_core); /* pin helper i to core first_core + i (-1: unpin); 1 ok */
 #endif

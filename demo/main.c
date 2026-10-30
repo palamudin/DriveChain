@@ -595,6 +595,7 @@ static void* phys_thread(void* arg) {
 #endif
         if (now - sim > 0.05) sim = now;   /* behind: drop time instead of spiralling */
         struct timespec ts = {0, 300000};
+        if (sim + dt - (wall() - t0) < 0.0006) { pthread_mutex_lock(&MTX); dc_prewake(SIM.car); pthread_mutex_unlock(&MTX); }   /* next tick within the sleep: wake the step helpers now */
 #ifdef DC_PROF
         double sl0 = prof_now_us();
 #endif

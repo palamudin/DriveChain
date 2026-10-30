@@ -1,3 +1,6 @@
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE   /* pthread_setaffinity_np, cpu_set_t */
+#endif
 #ifndef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 200112L   /* clock_gettime, pthreads under -std=c11 */
 #endif
@@ -10,6 +13,11 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <time.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sched.h>
+#endif
 #if defined(__SSE__) || defined(_M_X64)
 #include <xmmintrin.h>
 #define HAVE_CSR 1
@@ -26,6 +34,7 @@ struct dc_pool {
     atomic_int done;          /* helpers finished in this run */
     atomic_int sleepers;
     atomic_int quit;
+    atomic_uint poke;         /* bumped by dc_pool_prewake: sleeping helpers return to spinning */
     dc_task_fn fn; void* ctx; int ntasks; unsigned csr;
     struct { dc_pool* p; int id; } arg[POOL_MAX];
 };
@@ -39,7 +48,8 @@ static void* worker(void* a) {
             CPU_PAUSE();
             if ((++it & 255) == 0 && wall() - t0 > p->spin_s) {
                 pthread_mutex_lock(&p->mu); atomic_fetch_add(&p->sleepers, 1);
-                while (atomic_load(&p->gen) == seen && !atomic_load(&p->quit)) pthread_cond_wait(&p->cv, &p->mu);
+                unsigned pk = atomic_load(&p->poke);
+                while (atomic_load(&p->gen) == seen && !atomic_load(&p->quit) && atomic_load(&p->poke) == pk) pthread_cond_wait(&p->cv, &p->mu);
                 atomic_fetch_sub(&p->sleepers, 1); pthread_mutex_unlock(&p->mu);
                 t0 = wall();
             }
@@ -58,7 +68,7 @@ dc_pool* dc_pool_create(int n, double spin_us) {
     dc_pool* p = (dc_pool*)calloc(1, sizeof *p); if (!p) return NULL;
     p->n = n; p->spin_s = (spin_us > 0 ? spin_us : 500) * 1e-6;
     pthread_mutex_init(&p->mu, NULL); pthread_cond_init(&p->cv, NULL);
-    atomic_init(&p->gen, 0); atomic_init(&p->done, 0); atomic_init(&p->sleepers, 0); atomic_init(&p->quit, 0);
+    atomic_init(&p->gen, 0); atomic_init(&p->done, 0); atomic_init(&p->sleepers, 0); atomic_init(&p->quit, 0); atomic_init(&p->poke, 0);
     for (int i = 1; i < n; i++) {
         p->arg[i].p = p; p->arg[i].id = i;
         if (pthread_create(&p->th[i], NULL, worker, &p->arg[i]) != 0) { p->n = i; dc_pool_destroy(p); return NULL; }
@@ -79,6 +89,30 @@ void dc_pool_run(dc_pool* p, dc_task_fn fn, void* ctx, int ntasks) {
     DCP_T(tw); DCP_CNT(pool_runs, 1);
     while (atomic_load_explicit(&p->done, memory_order_acquire) < p->n - 1) CPU_PAUSE();
     DCP(double dw = dc_wall() - tw; dc_prof_g.pool_wait_s += dw; if (dw > dc_prof_g.pool_wait_max_s) dc_prof_g.pool_wait_max_s = dw;)
+}
+void dc_pool_prewake(dc_pool* p) {
+    if (!p || atomic_load(&p->sleepers) == 0) return;
+    DCP_CNT(pool_prewakes, 1);
+    pthread_mutex_lock(&p->mu); atomic_fetch_add(&p->poke, 1); pthread_cond_broadcast(&p->cv); pthread_mutex_unlock(&p->mu);
+}
+void dc_pool_set_spin(dc_pool* p, double spin_us) { if (p && spin_us > 0) p->spin_s = spin_us * 1e-6; }
+int dc_pool_set_affinity(dc_pool* p, int first) {
+    if (!p) return 0; int ok = 1;
+    for (int i = 1; i < p->n; i++) {
+#ifdef _WIN32
+        HANDLE h = pthread_gethandle(p->th[i]);
+        DWORD_PTR m = first < 0 ? (DWORD_PTR)-1 : ((DWORD_PTR)1 << ((first + i) % (8 * (int)sizeof(DWORD_PTR))));
+        if (first < 0) { DWORD_PTR pm, sm; if (GetProcessAffinityMask(GetCurrentProcess(), &pm, &sm)) m = pm; }
+        ok &= SetThreadAffinityMask(h, m) != 0;
+#elif defined(__linux__)
+        cpu_set_t cs; CPU_ZERO(&cs);
+        if (first < 0) { for (int c = 0; c < CPU_SETSIZE; c++) CPU_SET(c, &cs); } else CPU_SET(first + i, &cs);
+        ok &= pthread_setaffinity_np(p->th[i], sizeof cs, &cs) == 0;
+#else
+        (void)first; ok = 0;
+#endif
+    }
+    return ok;
 }
 void dc_pool_destroy(dc_pool* p) {
     if (!p) return;

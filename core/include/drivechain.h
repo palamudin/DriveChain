@@ -375,6 +375,11 @@ DC_API void   dc_get_profile(const dc_car* c, dc_profile* p, int reset);
    bit-identical for any count (fixed per-wheel partition, no cross-thread reductions). With n > 1 the road callback
    is called from helper threads and must be thread-safe (pure function of x, y). Returns the count in use. */
 DC_API int    dc_set_threads(dc_car* c, int n);
+/* worker-pool timing knobs (no effect on results): helpers spin spin_us after a run before sleeping (default 500);
+   affinity >= 0 pins helper i to core affinity + i (opt-in, -1 = unpinned, default). Call after dc_set_threads. */
+DC_API void   dc_set_pool_opts(dc_car* c, double spin_us, int affinity);
+/* wake sleeping helpers ahead of the next dc_step (hosts that sleep between ticks call it ~0.2-0.5 ms before the tick) */
+DC_API void   dc_prewake(dc_car* c);
 #ifdef DC_PROF
 /* profiling builds only (-DDC_PROF, see core/src/dc_prof.h): per-stage wall time of the multibody substep, per-wheel
    phase-A parts, solver and worker-pool counters, accumulated since the last dc_prof_take (process-wide). */
@@ -388,6 +393,7 @@ typedef struct {
     long long substeps, solves, resolves, pgs_sweeps, pgs_capped, pgs_sweep_max, subspace_calls, nbx_max, nbx_sum;
     long long pool_runs, pool_wakes;   /* dispatches; dispatches that had to wake sleeping helpers (condvar) */
     double pool_wait_s, pool_wait_max_s;   /* calling thread spinning for helpers after its own share */
+    long long pool_prewakes;           /* dc_prewake / step-start calls that woke sleeping helpers early */
 } dc_prof_rec;
 DC_API void   dc_prof_take(dc_prof_rec* out);   /* copy and reset */
 #endif
