@@ -5,6 +5,53 @@
 #include "dc_prof.h"
 #include <stdlib.h>
 #include <stdio.h>
+#if defined(__SSE2__) || defined(_M_X64)
+#include <emmintrin.h>
+#define MB_SSE2 1
+#endif
+
+/* small dense block kernels of the factor / solves. Every output element is summed in the scalar loop's order
+   (s = 0, s += a_q b_q for q ascending, then one subtract), two independent outputs per SSE2 register: plain
+   mul + add on IEEE doubles, no FMA, no reassociation, so each result is bit-identical to the scalar loop. */
+/* s[p] = sum_q M[p m + q] x[q] for p < nr (row-major M, rows of length m) */
+static inline void mv_rows(int nr, int m, const double* M, const double* x, double* out, int sub) {
+    int p = 0;
+#ifdef MB_SSE2
+    __m128d xb[6]; for (int q = 0; q < m; q++) xb[q] = _mm_set1_pd(x[q]);
+    for (; p + 1 < nr; p += 2) {
+        const double *r0 = M + p * m, *r1 = r0 + m; __m128d acc = _mm_setzero_pd();
+        for (int q = 0; q < m; q++) acc = _mm_add_pd(acc, _mm_mul_pd(_mm_set_pd(r1[q], r0[q]), xb[q]));
+        if (sub) _mm_storeu_pd(out + p, _mm_sub_pd(_mm_loadu_pd(out + p), acc)); else _mm_storeu_pd(out + p, acc);
+    }
+#endif
+    for (; p < nr; p++) { double a = 0; for (int q = 0; q < m; q++) a += M[p * m + q] * x[q]; if (sub) out[p] -= a; else out[p] = a; }
+}
+/* out[q] -= sum_a M[a m + q] x[a] for q < m, a < na (M transposed against x) */
+static inline void mv_cols_sub(int na, int m, const double* M, const double* x, double* out) {
+    int q = 0;
+#ifdef MB_SSE2
+    for (; q + 1 < m; q += 2) {
+        __m128d acc = _mm_setzero_pd();
+        for (int a = 0; a < na; a++) acc = _mm_add_pd(acc, _mm_mul_pd(_mm_loadu_pd(M + a * m + q), _mm_set1_pd(x[a])));
+        _mm_storeu_pd(out + q, _mm_sub_pd(_mm_loadu_pd(out + q), acc));
+    }
+#endif
+    for (; q < m; q++) { double s = 0; for (int a = 0; a < na; a++) s += M[a * m + q] * x[a]; out[q] -= s; }
+}
+/* C[a nc + b] (op)= sum_q A[a m + q] Bt[q nc + b] for a < na, b < nc (Bt row-major m x nc); sub: C -= ..., else C = ... */
+static inline void mm_rows(int na, int nc, int m, const double* A, const double* Bt, double* C, int sub) {
+    for (int a = 0; a < na; a++) {
+        const double* Ar = A + a * m; double* Cr = C + a * nc; int b = 0;
+#ifdef MB_SSE2
+        for (; b + 1 < nc; b += 2) {
+            __m128d acc = _mm_setzero_pd();
+            for (int q = 0; q < m; q++) acc = _mm_add_pd(acc, _mm_mul_pd(_mm_set1_pd(Ar[q]), _mm_loadu_pd(Bt + q * nc + b)));
+            if (sub) _mm_storeu_pd(Cr + b, _mm_sub_pd(_mm_loadu_pd(Cr + b), acc)); else _mm_storeu_pd(Cr + b, acc);
+        }
+#endif
+        for (; b < nc; b++) { double s = 0; for (int q = 0; q < m; q++) s += Ar[q] * Bt[q * nc + b]; if (sub) Cr[b] -= s; else Cr[b] = s; }
+    }
+}
 
 #define REG 1e-11      /* default joint regularisation (velocity per impulse): ~1e-11 m/s per N s */
 
@@ -407,6 +454,7 @@ static int inv_small(int n, const double* A, double* Ai) {
     return ok;
 }
 
+#define MB_FNBR 16   /* pivots with up to this many later neighbours use the transposed-block update */
 static void factor(mb_world* W) {
     int n = W->n;
     for (int t = 0; t < n; t++) {
@@ -416,10 +464,13 @@ static void factor(mb_world* W) {
         for (int e = W->nbr_start[k]; e < W->nbr_start[k + 1]; e++) {
             int i = W->nbr[e], di = W->dim[i];
             const double* B = W->blk + W->nbr_blk[e]; double* L = W->L + W->nbr_blk[e];
-            for (int a = 0; a < di; a++) for (int b = 0; b < dk; b++) {
-                double s = 0; for (int q = 0; q < dk; q++) s += B[a * dk + q] * Di[q * dk + b];
-                L[a * dk + b] = s;
-            }
+            mm_rows(di, dk, dk, B, Di, L, 0);                 /* L = B D^-1 */
+        }
+        /* B blocks transposed (dk x dj) once per pivot for the update T -= L_i B_j' */
+        double BT[MB_FNBR * 36]; const int nk = W->nbr_start[k + 1] - W->nbr_start[k], tr = nk <= MB_FNBR;
+        if (tr) for (int f = 0; f < nk; f++) {
+            int dj = W->dim[W->nbr[W->nbr_start[k] + f]]; const double* Bj = W->blk + W->nbr_blk[W->nbr_start[k] + f];
+            for (int b = 0; b < dj; b++) for (int q = 0; q < dk; q++) BT[f * 36 + q * dj + b] = Bj[b * dk + q];
         }
         for (int e = W->nbr_start[k]; e < W->nbr_start[k + 1]; e++) {
             int i = W->nbr[e], di = W->dim[i]; const double* Li = W->L + W->nbr_blk[e];
@@ -429,7 +480,8 @@ static void factor(mb_world* W) {
                 double* T;
                 if (i == j) T = W->D + 36 * i;
                 else T = W->blk + blk_of(W, i, j);       /* rows i (later), cols j */
-                for (int a = 0; a < di; a++) for (int b = 0; b < dj; b++) {
+                if (tr) mm_rows(di, dj, dk, Li, BT + (f - W->nbr_start[k]) * 36, T, 1);
+                else for (int a = 0; a < di; a++) for (int b = 0; b < dj; b++) {
                     double s = 0; for (int q = 0; q < dk; q++) s += Li[a * dk + q] * Bj[b * dk + q];
                     T[a * dj + b] -= s;
                 }
@@ -443,19 +495,19 @@ static void ksolve(const mb_world* W, double* x) {
         int k = W->order[t], dk = W->dim[k]; const double* xk = x + W->off[k];
         for (int e = W->nbr_start[k]; e < W->nbr_start[k + 1]; e++) {
             int i = W->nbr[e], di = W->dim[i]; const double* L = W->L + W->nbr_blk[e]; double* xi = x + W->off[i];
-            for (int a = 0; a < di; a++) { double s = 0; for (int q = 0; q < dk; q++) s += L[a * dk + q] * xk[q]; xi[a] -= s; }
+            mv_rows(di, dk, L, xk, xi, 1);
         }
     }
     for (int k = 0; k < n; k++) {
         int dk = W->dim[k]; double* xk = x + W->off[k], tmp[6]; const double* Di = W->Dinv + 36 * k;
-        for (int a = 0; a < dk; a++) { double s = 0; for (int q = 0; q < dk; q++) s += Di[a * dk + q] * xk[q]; tmp[a] = s; }
+        mv_rows(dk, dk, Di, xk, tmp, 0);
         memcpy(xk, tmp, sizeof(double) * dk);
     }
     for (int t = n - 1; t >= 0; t--) {
         int k = W->order[t], dk = W->dim[k]; double* xk = x + W->off[k];
         for (int e = W->nbr_start[k]; e < W->nbr_start[k + 1]; e++) {
             int i = W->nbr[e], di = W->dim[i]; const double* L = W->L + W->nbr_blk[e]; const double* xi = x + W->off[i];
-            for (int q = 0; q < dk; q++) { double s = 0; for (int a = 0; a < di; a++) s += L[a * dk + q] * xi[a]; xk[q] -= s; }
+            mv_cols_sub(di, dk, L, xi, xk);
         }
     }
 }
@@ -760,18 +812,37 @@ static void fwd_reach(const mb_world* W, const int* R, int nR, double* y, double
         int k = R[a], dk = W->dim[k]; const double* yk = y + W->off[k];
         for (int e = W->nbr_start[k]; e < W->nbr_start[k + 1]; e++) {
             int i = W->nbr[e], di = W->dim[i]; const double* L = W->L + W->nbr_blk[e]; double* yi = y + W->off[i];
-            for (int p = 0; p < di; p++) { double s = 0; for (int q = 0; q < dk; q++) s += L[p * dk + q] * yk[q]; yi[p] -= s; }
+            mv_rows(di, dk, L, yk, yi, 1);
         }
     }
     for (int a = 0; a < nR; a++) {
         int k = R[a], dk = W->dim[k]; const double* yk = y + W->off[k]; double* gk = g + W->off[k]; const double* Di = W->Dinv + 36 * k;
-        for (int p = 0; p < dk; p++) { double s = 0; for (int q = 0; q < dk; q++) s += Di[p * dk + q] * yk[q]; gk[p] = s; }
+        mv_rows(dk, dk, Di, yk, gk, 0);
     }
 }
 static double reach_dot(const mb_world* W, const int* R, int nR, const double* g, const double* y) {
     double s = 0;
     for (int a = 0; a < nR; a++) { int k = R[a], o = W->off[k], dk = W->dim[k]; for (int q = 0; q < dk; q++) s += g[o + q] * y[o + q]; }
     return s;
+}
+/* four reach_dot's at once (g against y[0..3]): four independent accumulators, each summed in reach_dot's order, so
+   each result is bit-identical to reach_dot; the single chain was add-latency bound */
+static void reach_dot4(const mb_world* W, const int* R, int nR, const double* g, const double* const* y, double* out) {
+    double s0 = 0, s1 = 0, s2 = 0, s3 = 0; const double *y0 = y[0], *y1 = y[1], *y2 = y[2], *y3 = y[3];
+    for (int a = 0; a < nR; a++) {
+        int k = R[a], o = W->off[k], dk = W->dim[k];
+        for (int q = o; q < o + dk; q++) { double gq = g[q]; s0 += gq * y0[q]; s1 += gq * y1[q]; s2 += gq * y2[q]; s3 += gq * y3[q]; }
+    }
+    out[0] = s0; out[1] = s1; out[2] = s2; out[3] = s3;
+}
+/* out[t] = reach_dot(g, zb column t0 + t) for t < nt */
+static void reach_dots(const mb_world* W, const int* R, int nR, const double* g, int t0, int nt, double* out) {
+    int N = W->N, t = 0;
+    for (; t + 4 <= nt; t += 4) {
+        const double* y[4] = {W->zb + (size_t)(t0 + t) * N, W->zb + (size_t)(t0 + t + 1) * N, W->zb + (size_t)(t0 + t + 2) * N, W->zb + (size_t)(t0 + t + 3) * N};
+        reach_dot4(W, R, nR, g, y, out + t);
+    }
+    for (; t < nt; t++) out[t] = reach_dot(W, R, nR, g, W->zb + (size_t)(t0 + t) * N);
 }
 /* Schur complement of the box rows, W = J_B K^-1 J_B', u_free = J_B x, and the source-row couplings C = E_src K^-1 J_B'
    used by the load-dependent friction bounds, all from sparse forward solves (no back substitution, no full solves) */
@@ -792,7 +863,8 @@ static void schur_dot(void* x, int s) {
     mb_world* W = ((schur_ctx*)x)->W; int N = W->N, nbx = ((schur_ctx*)x)->nbx;
     int jj = W->box_j[s]; const int* R = W->rch + W->rch_start[jj]; int nR = W->rch_start[jj + 1] - W->rch_start[jj];
     const double* g = W->gb + (size_t)s * N;
-    for (int t2 = s; t2 < nbx; t2++) { double w = reach_dot(W, R, nR, g, W->zb + (size_t)t2 * N); W->W[s * MB_MAXBOX + t2] = w; W->W[t2 * MB_MAXBOX + s] = w; }
+    double w[MB_MAXBOX]; reach_dots(W, R, nR, g, s, nbx - s, w);
+    for (int t2 = s; t2 < nbx; t2++) { W->W[s * MB_MAXBOX + t2] = w[t2 - s]; W->W[t2 * MB_MAXBOX + s] = w[t2 - s]; }
 }
 static void schur_vr(void* x, int v) {
     mb_world* W = ((schur_ctx*)x)->W; int N = W->N, nbx = ((schur_ctx*)x)->nbx, sj = W->vr_sj[v];
@@ -801,7 +873,7 @@ static void schur_vr(void* x, int v) {
     y[W->vr_row[v]] = 1;
     fwd_reach(W, R, nR, y, g);
     double* C = W->Cv + (size_t)v * MB_MAXBOX;
-    for (int t2 = 0; t2 < nbx; t2++) C[t2] = reach_dot(W, R, nR, g, W->zb + (size_t)t2 * N);
+    reach_dots(W, R, nR, g, 0, nbx, C);
 }
 static void schur_dotvr(void* x, int k) { int nbx = ((schur_ctx*)x)->nbx; if (k < nbx) schur_dot(x, k); else schur_vr(x, k - nbx); }
 static void schur_sparse(mb_world* W, int nbx) {
