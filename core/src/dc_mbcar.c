@@ -187,8 +187,9 @@ dc_mbcar* dc_mbcar_create(dc_car* c) {
     mb_world* W = m->W;
     if (P->model == DC_MODEL_FAST) {   /* bounded PGS: the solves of one tick share a sweep budget (fair share of what is left,
                                           carried over), each solve also stops at the reference cap and exits exact limit cycles; the friction-circle
-                                          re-solve reuses the pass-0 factor by a Woodbury low-rank update (mb_resolve_lowrank) */
-        W->fast = 1; W->pgs_cap0 = W->pgs_iters; W->tick_budget = DC_FAST_TICK_SWEEPS; W->budget_floor = DC_FAST_SWEEP_FLOOR; m->lowrank = 1;
+                                          re-solve reuses the pass-0 factor by a Woodbury low-rank update (mb_resolve_lowrank); PGS row dots use
+                                          4 partial sums (dot4) */
+        W->fast = 1; W->pgs_cap0 = W->pgs_iters; W->tick_budget = DC_FAST_TICK_SWEEPS; W->budget_floor = DC_FAST_SWEEP_FLOOR; m->lowrank = 1; W->dot4 = 1;
 #ifdef DC_PROF
         if (getenv("DC_FAST_BUDGET")) W->tick_budget = atoi(getenv("DC_FAST_BUDGET"));   /* measurement builds only */
         if (getenv("DC_FAST_LOWRANK")) m->lowrank = atoi(getenv("DC_FAST_LOWRANK"));
