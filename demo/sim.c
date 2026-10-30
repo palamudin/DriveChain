@@ -355,6 +355,8 @@ static void rep_begin(sim_t* S) {
 }
 int sim_replay_load(sim_t* S, const char* path, char* err, int errlen) {
     FILE* f = fopen(path, "rb"); sim_rec_hdr H;
+    if (!f && S->rec_dir[0] && path[0] != '/' && path[0] != '\\' && !(path[0] && path[1] == ':')) {   /* relative: also try next to the exe */
+        char p2[1100]; snprintf(p2, sizeof p2, "%s%s", S->rec_dir, path); f = fopen(p2, "rb"); }
     if (!f) { snprintf(err, errlen, "cannot open %s", path); return 0; }
     if (fread(&H, sizeof H, 1, f) != 1 || memcmp(H.magic, SIM_REC_MAGIC, 8) || H.version != 1 || H.nticks < 0) { fclose(f); snprintf(err, errlen, "%s: not a recording", path); return 0; }
     sim_rec_tick* b = (sim_rec_tick*)malloc(sizeof *b * (size_t)(H.nticks ? H.nticks : 1));

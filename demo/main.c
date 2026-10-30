@@ -970,6 +970,8 @@ int main(int argc, char** argv) {
     if (headless) { cfg_set(&CFG, "input.device", "keyboard"); if (!getenv("DEMO_MANUAL")) cfg_set(&CFG, "autopilot.enabled", "1"); }
     if (!sim_init(&SIM, &CFG, &TRK, &AUD, err, sizeof err)) { fprintf(stderr, "car init failed: %s\n", err); return 1; }
     snprintf(SIM.rec_dir, sizeof SIM.rec_dir, "%s", GetApplicationDirectory());   /* F9 recordings go next to the exe */
+    { const char* rf = cfg_str(&CFG, "replay.file", ""); char e2[300];   /* relative [replay] file: retry next to the exe */
+      if (*rf && !SIM.rep_on) { if (!sim_replay_load(&SIM, rf, e2, sizeof e2)) snprintf(SIM.rec_msg, sizeof SIM.rec_msg, "replay: %.180s", e2); } }
     const dc_car_params* P = dc_params(SIM.car);
     /* plug-in driver control port (JSON lines over TCP, see docs/DRIVER_INTERFACE.md): --drive-port N or driver.port */
     static proto_t PROTO;
