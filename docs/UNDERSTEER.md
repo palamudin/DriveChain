@@ -31,6 +31,15 @@
 | rigid + rack mount (`_propR`), MB | 7.0 | 0.47 | 0.27 |
 | bushed + rack mount (`_propB` + `_propR` keys), MB | 36.7 | 2.45 | 0.99 |
 
+Those rows use the mbcompare default (120 Hz host tick, 2000 Hz mechanics). The bushed car's K depends on the mechanics
+rate: propBR (envelope tyre) gives 2.45 deg/g at 2000 Hz, 2.23 at 1920 Hz and 2.04 at 960 Hz (120 or 240 Hz tick). The
+rigid car moves by 0.01 at most. At demo rates (`MB_TICK_HZ=240`, `car.substep_hz` 960 / 240):
+
+| mx5_na, MB | K at 240 Hz x 4 (960 Hz) | K at 240 Hz x 1 (240 Hz) |
+|---|---|---|
+| `setup = legacy` (rigid, envelope tyre) | 0.33 | 0.32 |
+| `setup = default` (propBR + TARMAC propD) | 1.96 | 1.85 |
+
 - In the bushed car, the gap between K (1.91) and the actual-wheel gradient (0.63) is front compliance steer from the arm
   bushes. The overall SW/wheel ratio rises with load (16.7 at 0.1 g to 18.2 at 0.7 g), whereas the rigid car stays flat
   at about 15.5. The bushes do not simply shift the steering angle by a constant amount: the compliance steer grows with

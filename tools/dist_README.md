@@ -35,8 +35,8 @@ The console window prints the joysticks it found, which one it picked, and wheth
   or start with `drivechain_demo.exe --set car.solver=0`.
 - The car files now carry stock 1990 NA values: wheel rates 12.5 / 10.1 kN/m, passenger-car damping,
   viscous LSD, final drive 4.3, front toe-in 0.15° per side, lower grip than before.
-- What to try: skidpad, slalom, lift-off mid-corner (from about 55 km/h it steps out; at 60 km/h and above it
-  spins unless you catch it), let go of the wheel in a slide (countersteer should appear on its own),
+- What to try: skidpad, slalom, lift-off mid-corner (with `setup = legacy` it steps out from about 55 km/h, and at
+  60 km/h and above it spins unless you catch it), let go of the wheel in a slide (countersteer should appear on its own),
   sustained drift on throttle, and single-wheel bumps (feel the kick in the wheel).
 
 ## Car setup (`setup` in demo.ini `[car]`)
