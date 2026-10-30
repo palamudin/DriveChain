@@ -60,6 +60,7 @@ int sim_init(sim_t* S, cfg_t* cfg, track_t* trk, audio_t* audio, char* err, int 
     int as = cfg_int(cfg, "car.assist", -1); if (as >= 0) S->P.assist = as;
     int so = cfg_int(cfg, "car.solver", -1); if (so >= 0) S->P.solver = so;   /* --set car.solver=0 -> legacy core */
     { const char* pm = cfg_str(cfg, "physics.model", NULL); if (pm) S->P.model = !strcmp(pm, "fast") ? DC_MODEL_FAST : DC_MODEL_REFERENCE; }   /* reference = full numerics (default) */
+    S->P.bricks = cfg_int(cfg, "physics.bricks", 0);   /* tabulated model-reduction bricks (bitmask, 0 = full model) */
     if (!sim_apply_setup(&S->P, cfg_str(cfg, "car.setup", "legacy"), err, errlen)) return 0;   /* after car.solver: propBR needs the MB core */
     if (!make_car(S)) { snprintf(err, errlen, "dc_create failed"); return 0; }
     S->rotation_rad = cfg_num(cfg, "input.rotation_deg", 2 * S->P.steer_lock_deg) * M_PI / 180;

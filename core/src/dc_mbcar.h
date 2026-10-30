@@ -18,6 +18,7 @@ double dc_valve_area(const dc_valve* v, double th);      /* metering edge that c
 int dc_valve_solve(const dc_valve* v, const double P0[3], double th, double rd, double r, double Qp, double h, double P[3], double dPdv[3]);
 double dc_valve_energy(const dc_valve* v, const double P[3], double r);
 
+#define DC_CTAB_N 128                        /* column brick: Hermite nodes over one rim turn */
 typedef struct dc_mbcar {
     mb_world* W;
     int ch;                                  /* chassis body */
@@ -34,6 +35,10 @@ typedef struct dc_mbcar {
     int rack, pin, inp, ish, rim;
     int hsg, j_rmount;                       /* rack housing body (= ch when the mount is rigid) and its mount joint (-1) */
     int j_rack, j_pin, j_inp, j_rim, j_u1, j_u2, j_gear;
+    int brick_col, j_ctab, col_axial;                   /* DC_BRICK_COLUMN: ishaft + cardans replaced by the table row j_ctab (ish = -1) */
+    double ctab_g[DC_CTAB_N + 1], ctab_d[DC_CTAB_N + 1];
+    double ctab_p[DC_CTAB_N + 1], ctab_pd[DC_CTAB_N + 1];  /* intermediate-shaft angle minus rim angle and its derivative (up-pass wrench) */
+    v3 cu1, cu2, eau, ebu, eal, ebl;         /* cardan centres and design cross-pin arms (K frame) */   /* input angle minus rim angle (2 pi periodic) and its derivative at the nodes */
     v3 e_rim, e_is, e_in;                    /* shaft axes in the chassis (K) frame, pointing toward the driver */
     double th_prev_raw, th_acc, pin_prev_raw, pin_acc, inp_prev_raw, inp_acc;
     int has_bar[2], bar[2][2], j_bar[2][2], j_drop[2][2];

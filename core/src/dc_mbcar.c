@@ -53,6 +53,64 @@ static double damper_force(const dc_kin* k, double vcomp, double* slope) {
     *slope = k->c_freb; return -(k->c_reb * k->v_reb + k->c_freb * (v - k->v_reb));
 }
 /* rotation angle of body b relative to the chassis about chassis-frame axis e (body design orientation qd) */
+/* ---- column brick (docs/BRICKS.md): the double-cardan map input angle = f(rim angle), exact closed form from the
+   cross-pin geometry of mb_ujoint, baked at create into a C1 cubic Hermite table with stored derivatives */
+static v3 rot_axis(v3 n, double a, v3 v) {   /* Rodrigues */
+    double ca = cos(a), sa = sin(a);
+    return vadd(vadd(vscl(v, ca), vscl(vcross(n, v), sa)), vscl(n, vdot(n, v) * (1 - ca)));
+}
+/* cross-pin solve: angle psi of shaft b (axis nb, pin eb perpendicular to nb) so that A . Rot(nb, psi) eb = 0, branch nearest psi0 */
+static double pin_solve(v3 A, v3 nb, v3 eb, double psi0) {
+    double p = atan2(-vdot(A, eb), vdot(A, vcross(nb, eb)));
+    while (p - psi0 > M_PI / 2) p -= M_PI;
+    while (p - psi0 < -M_PI / 2) p += M_PI;
+    return p;
+}
+static double cardan2(v3 er, v3 es, v3 ei, double th, double* psi_io) {
+    if (vlen(vcross(er, es)) < 1e-6 || vlen(vcross(es, ei)) < 1e-6) { *psi_io = th; return th; }   /* straight shafts: identity */
+    v3 eau = vnorm(vcross(er, es)), ebu = vnorm(vcross(es, eau));   /* exactly as mb_ujoint(rim, ishaft) */
+    v3 eal = vnorm(vcross(es, ei)), ebl = vnorm(vcross(ei, eal));   /* mb_ujoint(ishaft, input) */
+    double psi = pin_solve(rot_axis(er, th, eau), es, ebu, *psi_io); *psi_io = psi;
+    return pin_solve(rot_axis(es, psi, eal), ei, ebl, th);
+}
+static void ctab_bake(dc_mbcar* m) {
+    const int N = DC_CTAB_N; const double dt = 2 * M_PI / N, e = 1e-5;
+    double psi = 0;
+    for (int k = 0; k <= N; k++) {   /* march from 0 so the branch is continuous; node N = node 0 + 2 pi */
+        double th = k * dt, ps = psi, pp = psi, pm = psi;
+        double f = cardan2(m->e_rim, m->e_is, m->e_in, th, &ps);
+        double fp = cardan2(m->e_rim, m->e_is, m->e_in, th + e, &pp), fm = cardan2(m->e_rim, m->e_is, m->e_in, th - e, &pm);
+        m->ctab_g[k] = f - th; m->ctab_d[k] = (fp - fm) / (2 * e) - 1;
+        m->ctab_p[k] = ps - th; m->ctab_pd[k] = (pp - pm) / (2 * e) - 1;
+        psi = ps;
+    }
+}
+/* periodic C1 cubic Hermite: value and derivative of th + G(th) from nodes G, D (= G') */
+static double herm_p(const double* G, const double* D, double th, double* fd) {
+    const int N = DC_CTAB_N; const double dt = 2 * M_PI / N;
+    double u = th / dt, fl = floor(u); double s = u - fl;
+    int k = (int)(fl - N * floor(fl / N));
+    double g0 = G[k], g1 = G[k + 1], d0 = D[k] * dt, d1 = D[k + 1] * dt;
+    double s2 = s * s, s3 = s2 * s;
+    double g = (2 * s3 - 3 * s2 + 1) * g0 + (s3 - 2 * s2 + s) * d0 + (-2 * s3 + 3 * s2) * g1 + (s3 - s2) * d1;
+    double gd = ((6 * s2 - 6 * s) * g0 + (3 * s2 - 4 * s + 1) * d0 + (-6 * s2 + 6 * s) * g1 + (3 * s2 - 2 * s) * d1) / dt;
+    *fd = 1 + gd; return th + g;
+}
+static double ctab_eval(const dc_mbcar* m, double th, double* fd) { return herm_p(m->ctab_g, m->ctab_d, th, fd); }
+/* up pass: the wrench the massless intermediate shaft hands to the rim and the input shaft per unit row multiplier, exactly as the two
+   cardan rows of the full model would (cross-pin torques + the transverse force pair that balances the shaft's bending moment), so the
+   column and input bearings see the same reactions (they feed the bearing friction). Normalised so the input torque along e_in is 1.
+   K-frame vectors: tr, fr (force on the rim at cu1), ti (input torque; input force = -fr at cu2). Returns f'(th) implied by the pins. */
+static double ctab_wrench(const dc_mbcar* m, double th, v3* tr, v3* fr, v3* ti) {
+    double pd, fd, psi = herm_p(m->ctab_p, m->ctab_pd, th, &pd), ph = herm_p(m->ctab_g, m->ctab_d, th, &fd);
+    v3 cu = vcross(rot_axis(m->e_rim, th, m->eau), rot_axis(m->e_is, psi, m->ebu));
+    v3 cl = vcross(rot_axis(m->e_is, psi, m->eal), rot_axis(m->e_in, ph, m->ebl));
+    double ml = -1 / vdot(cl, m->e_in), mu = ml * vdot(cl, m->e_is) / vdot(cu, m->e_is);
+    *tr = vscl(cu, mu); *ti = vscl(cl, -ml);
+    v3 Mis = vsub(vscl(cl, ml), vscl(cu, mu)), L = vsub(m->cu2, m->cu1);
+    *fr = vscl(vcross(L, Mis), 1 / vdot(L, L));
+    return -vdot(*tr, m->e_rim);
+}
 static double rel_angle(const mb_world* W, int ch, int b, qt qd, v3 e) {
     qt qr = qmul(qcj(W->B[ch].q), qmul(W->B[b].q, qcj(qd)));
     return 2 * atan2(qr.x * e.x + qr.y * e.y + qr.z * e.z, qr.w);
@@ -221,8 +279,38 @@ dc_mbcar* dc_mbcar_create(dc_car* c) {
         m->pin = addb(m, "pinion", 0.4, axis_inertia(m->e_in, M->pinion_inertia, 2e-4), pp, qid()); ACC(m->pin);
         m->inp = addb(m, "input", 0.3, axis_inertia(m->e_in, M->input_inertia, 2e-4), vmad(pp, m->e_in, 0.05), qid()); ACC(m->inp);
         double Lis = vlen(vsub(u1, u2));
-        m->ish = addb(m, "ishaft", 0.8, axis_inertia(m->e_is, M->ishaft_inertia, 0.8 * Lis * Lis / 12), vscl(vadd(u1, u2), 0.5), qid()); ACC(m->ish);
-        m->rim = addb(m, "rim", 3.0, axis_inertia(m->e_rim, M->rim_inertia + P->column_inertia, 0.03), rim, qid()); ACC(m->rim);
+        m->brick_col = (P->bricks & DC_BRICK_COLUMN) != 0; m->ish = -1; m->j_u1 = m->j_u2 = m->j_ctab = -1;
+        double Jlump = 0;
+        if (m->brick_col) {   /* ishaft mass stays in the chassis (not ACC'd); its spin inertia rides on the rim through f'(0)^2 of the upper cardan */
+            m->cu1 = u1; m->cu2 = u2;
+#ifdef DC_PROF
+            m->col_axial = getenv("DC_BRICK_AXIAL") ? atoi(getenv("DC_BRICK_AXIAL")) : 0;
+#endif
+            m->eau = vnorm(vcross(m->e_rim, m->e_is)); m->ebu = vnorm(vcross(m->e_is, m->eau));
+            m->eal = vnorm(vcross(m->e_is, m->e_in)); m->ebl = vnorm(vcross(m->e_in, m->eal));
+            ctab_bake(m);
+            double ps = 0, pp = 0; cardan2(m->e_rim, m->e_is, m->e_in, 1e-6, &pp); (void)ps;
+            double dpsi = pp / 1e-6; Jlump = M->ishaft_inertia * dpsi * dpsi;
+#ifdef DC_PROF
+            if (getenv("DC_BRICK_DEBUG")) {   /* table fidelity vs the closed form: max Hermite error at quarter points of each interval */
+                double emax = 0, edmax = 0, gmax = 0, ps = 0;
+                for (int k = 0; k < 4 * DC_CTAB_N; k++) {
+                    double th = (k + 0.5) * 2 * M_PI / (4 * DC_CTAB_N), a = ps, b = ps, cc = ps, fd;
+                    double f = cardan2(m->e_rim, m->e_is, m->e_in, th, &a), ft = ctab_eval(m, th, &fd); ps = a;
+                    double fdx = (cardan2(m->e_rim, m->e_is, m->e_in, th + 1e-5, &b) - cardan2(m->e_rim, m->e_is, m->e_in, th - 1e-5, &cc)) / 2e-5;
+                    emax = fmax(emax, fabs(ft - f)); edmax = fmax(edmax, fabs(fd - fdx)); gmax = fmax(gmax, fabs(f - th));
+                }
+                double fd0; ctab_eval(m, 0, &fd0);
+                double wmax = 0; for (int k = 0; k < 64; k++) { double th = k * 0.1 - 3.2, fd; v3 a, b, cc; double fw = ctab_wrench(m, th, &a, &b, &cc); ctab_eval(m, th, &fd); wmax = fmax(wmax, fabs(fw - fd)); }
+                fprintf(stderr, "[brick column] up-pass wrench f' vs table f': max diff %.3g\n", wmax);
+                fprintf(stderr, "[brick column] N %d: |f - th| max %.4g rad, f'(0) %.6f, Hermite err max %.3g rad, f' err max %.3g; ishaft psi'(0) %.6f, Jlump %.3g kg m^2; angles rim-is %.2f is-in %.2f deg\n",
+                        DC_CTAB_N, gmax, fd0, emax, edmax, dpsi, Jlump, acos(vdot(m->e_rim, m->e_is)) * 180 / M_PI, acos(vdot(m->e_is, m->e_in)) * 180 / M_PI);
+            }
+#endif
+        } else {
+            m->ish = addb(m, "ishaft", 0.8, axis_inertia(m->e_is, M->ishaft_inertia, 0.8 * Lis * Lis / 12), vscl(vadd(u1, u2), 0.5), qid()); ACC(m->ish);
+        }
+        m->rim = addb(m, "rim", 3.0, axis_inertia(m->e_rim, M->rim_inertia + P->column_inertia + Jlump, 0.03), rim, qid()); ACC(m->rim);
         /* rack housing: rigid part of the chassis unless mb_rack_mount_k > 0, then its own body on a beam joint that is rigid
            except along the rack axis (rubber clamp bushings: lateral housing shift = steering-system compliance) */
         m->hsg = m->ch; m->j_rmount = -1;
@@ -235,8 +323,13 @@ dc_mbcar* dc_mbcar_create(dc_car* c) {
         m->j_pin = mb_revolute(W, "pinion_brg", m->pin, m->hsg, pp, m->e_in);
         m->j_inp = mb_revolute(W, "input_brg", m->inp, m->hsg, pp, m->e_in);
         m->j_rim = mb_revolute(W, "column_brg", m->rim, m->ch, rim, m->e_rim);
-        m->j_u1 = mb_ujoint(W, "ujoint_up", m->rim, m->ish, u1, m->e_rim, m->e_is, 0);
-        m->j_u2 = mb_ujoint(W, "ujoint_lo", m->ish, m->inp, u2, m->e_is, m->e_in, 1);
+        if (m->brick_col) {   /* one implicit interface row: theta_in - f(theta_rim) = 0, Jacobian [-f' e_rim, e_in] (filled each step) */
+            int tb[4] = {m->inp, m->rim, m->ch, m->hsg};
+            m->j_ctab = mb_custom(W, "column_table", 1, 0, m->hsg != m->ch ? 4 : 3, tb); W->Jt[m->j_ctab].proj = 1;
+        } else {
+            m->j_u1 = mb_ujoint(W, "ujoint_up", m->rim, m->ish, u1, m->e_rim, m->e_is, 0);
+            m->j_u2 = mb_ujoint(W, "ujoint_lo", m->ish, m->inp, u2, m->e_is, m->e_in, 1);
+        }
         int gb[3] = {m->rack, m->pin, m->hsg};
         m->j_gear = mb_custom(W, "rack_pinion", 1, 0, 3, gb); W->Jt[m->j_gear].proj = 1;
         int fb[2] = {m->rack, m->hsg}; m->j_rfric = mb_custom(W, "rack_fric", 1, 1, 2, fb);
@@ -486,6 +579,7 @@ static void phi_refresh(void* user) {
     double th, thp, thi, r;
     steer_angles(c, &th, &thp, &thi, &r, 0);
     m->W->Jt[m->j_gear].phi[0] = r - c->r_p * thp;
+    if (m->j_ctab >= 0) { double fd; m->W->Jt[m->j_ctab].phi[0] = thi - ctab_eval(m, th, &fd); }
 }
 
 /* ------------------------------------------------------------------ one substep */
@@ -588,6 +682,25 @@ void dc_mbcar_step(dc_car* c) {
         double o[6]; row_pt(W, m->hsg, xr, yw, -1, o); for (int q = 0; q < 6; q++) J->J[0][2][q] = o[q];
         J->J[0][2][3] += c->r_p * ein.x; J->J[0][2][4] += c->r_p * ein.y; J->J[0][2][5] += c->r_p * ein.z;
         J->phi[0] = r - c->r_p * thp; J->t[0] = 0;
+        if (m->j_ctab >= 0) {   /* column brick: down pass f(theta_rim), up pass f' * lambda on the rim (stored-Jacobian interface impedance) */
+            mb_joint* T = &W->Jt[m->j_ctab]; memset(T->J, 0, sizeof T->J);
+            double fd, f = ctab_eval(m, th, &fd);
+            if (m->col_axial) {   /* simplest up pass (measurement): axial torques only, reacted on chassis / housing */
+                v3 erim = mv(&R, m->e_rim);
+                row_an(ein, 1, T->J[0][0]); row_an(erim, -fd, T->J[0][1]); row_an(erim, fd, T->J[0][2]);
+                if (m->hsg != m->ch) row_an(ein, -1, T->J[0][3]); else { double o[6]; row_an(ein, -1, o); for (int q = 3; q < 6; q++) T->J[0][2][q] += o[q]; }
+            } else {              /* full up pass: self-equilibrated cardan wrench on rim and input only */
+                v3 trK, frK, tiK; ctab_wrench(m, th, &trK, &frK, &tiK);
+                v3 tr = mv(&R, trK), fr = mv(&R, frK), ti = mv(&R, tiK);
+                v3 p1 = vadd(Ch->x, mv(&R, vsub(m->cu1, m->cgc))), p2 = vadd(Ch->x, mv(&R, vsub(m->cu2, m->cgc)));
+                double o[6];
+                mb_row_point(&W->B[m->inp], p2, vscl(fr, -1), o); for (int q = 0; q < 6; q++) T->J[0][0][q] = o[q];
+                T->J[0][0][3] += ti.x; T->J[0][0][4] += ti.y; T->J[0][0][5] += ti.z;
+                mb_row_point(&W->B[m->rim], p1, fr, o); for (int q = 0; q < 6; q++) T->J[0][1][q] = o[q];
+                T->J[0][1][3] += tr.x; T->J[0][1][4] += tr.y; T->J[0][1][5] += tr.z;
+            }
+            T->phi[0] = thi - f; T->t[0] = 0;
+        }
         /* Coulomb friction: rack in its housing, column in its bearings (exact stick/slip box rows) */
         mb_joint* F = &W->Jt[m->j_rfric]; memset(F->J, 0, sizeof F->J);
         F->J[0][0][0] = yw.x; F->J[0][0][1] = yw.y; F->J[0][0][2] = yw.z; row_pt(W, m->hsg, xr, yw, -1, F->J[0][1]);

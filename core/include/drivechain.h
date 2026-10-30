@@ -206,8 +206,12 @@ typedef struct {
     int solver;            /* DC_SOLVER_REDUCED (0, legacy reduced-coordinate core) or DC_SOLVER_MULTIBODY (1) */
     int model;             /* DC_MODEL_REFERENCE (0, full model) or DC_MODEL_FAST (1): same physics, bounded-cost numerics
                               (bounded PGS, exact Newton Mz/ring solves, planar-road contact fast path); see docs/PERF.md */
+    int bricks;            /* MB core: tabulated model-reduction bricks (bitmask, 0 = none = full model; docs/BRICKS.md).
+                              DC_BRICK_COLUMN (1): intermediate shaft + two cardan joints replaced by one implicit table row
+                              (C1 Hermite input-shaft angle vs rim angle, stored derivative as the interface Jacobian) */
     dc_mb_params mb;       /* multibody-only parameters (masses of the individual parts, column, valve, bushings) */
 } dc_car_params;
+enum { DC_BRICK_COLUMN = 1 };
 
 /* ---------------- road ---------------- */
 /* Return road height at (x,y) and the unit normal (nx,ny,nz). *grip = surface friction multiplier.
