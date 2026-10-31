@@ -1,6 +1,6 @@
 config,us_per_substep,realtime_factor_at_hz
-default 3x13 rays flat,109.544,4.6
-1x7 rays flat,78.052,6.4
-3x13 rays rough terrain,154.102,3.2
-TARMAC tyre flat,124.533,4.0
-TARMAC tyre rough terrain,228.871,2.2
+default 3x13 rays flat,103.892,4.8
+1x7 rays flat,72.635,6.9
+3x13 rays rough terrain,159.746,3.1
+TARMAC tyre flat,126.718,3.9
+TARMAC tyre rough terrain,226.691,2.2

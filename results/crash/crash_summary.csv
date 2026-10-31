@@ -22,6 +22,6 @@ check,result,detail
 "drop s1 1.0 m 20 km/h",PASS,"KE gain 3.9 kJ <= mgh 10.8 kJ, max travel 110 mm, peak tyre 17.7 kN"
 "drop s1 1.0 m 50 km/h",PASS,"KE gain 4.9 kJ <= mgh 10.8 kJ, max travel 110 mm, peak tyre 15.2 kN"
 "drop s1 1.0 m 80 km/h",PASS,"KE gain 3.9 kJ <= mgh 10.8 kJ, max travel 110 mm, peak tyre 17.2 kN"
-"drop s1 1.5 m 20 km/h",PASS,"KE gain 6.3 kJ <= mgh 16.2 kJ, max travel 110 mm, peak tyre 20.2 kN"
+"drop s1 1.5 m 20 km/h",PASS,"KE gain 6.3 kJ <= mgh 16.2 kJ, max travel 110 mm, peak tyre 20.3 kN"
 "drop s1 1.5 m 50 km/h",PASS,"KE gain 8.9 kJ <= mgh 16.2 kJ, max travel 110 mm, peak tyre 19.1 kN"
 "drop s1 1.5 m 80 km/h",PASS,"KE gain 8.1 kJ <= mgh 16.2 kJ, max travel 110 mm, peak tyre 20.8 kN"
