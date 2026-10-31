@@ -49,8 +49,8 @@ static void rig_init(rig_t* R, const char* car, const char* model) {
 }
 
 /* ---------------- manoeuvres: inputs as a function of time (+ speed for the hold) ---------------- */
-enum { M_SLALOM, M_SKIDPAD, M_LIFTOFF, M_STEP, M_DRIFT, M_BRAKE, M_COBBLES, M_BUMP, M_N };
-static const char* MN[M_N] = {"slalom", "skidpad_J266", "liftoff", "step_steer", "drift_entry_exit", "braking", "cobbles", "bump_pothole"};
+enum { M_SLALOM, M_SKIDPAD, M_LIFTOFF, M_STEP, M_DRIFT, M_BRAKE, M_COBBLES, M_BUMP, M_BRAKETURN, M_N };
+static const char* MN[M_N] = {"slalom", "skidpad_J266", "liftoff", "step_steer", "drift_entry_exit", "braking", "cobbles", "bump_pothole", "brake_in_turn"};
 typedef struct { double x, y, yaw, v; int gear; double T; } start_t;
 static double POOL_D, POOL_DV;   /* pooled-statistics runs: lateral offset (m) and speed offset (km/h) */
 static start_t man_start(int m) {
@@ -65,6 +65,7 @@ static start_t man_start(int m) {
     case M_BRAKE: s.y = 150; s.v = 100 / 3.6; s.gear = 4; s.T = 6; break;
     case M_COBBLES: track_point(&TRK, 90, POOL_D, &x, &y, &yaw); s.x = x; s.y = y; s.yaw = yaw; s.v = (60 + POOL_DV) / 3.6; s.T = 12; break;   /* granite setts s 100..300 */
     case M_BUMP: track_point(&TRK, TRK.s_str2 + 100, 0, &x, &y, &yaw); s.x = x; s.y = y; s.yaw = yaw; s.v = 60 / 3.6; s.T = 12; break;   /* single-wheel bumps + potholes */
+    case M_BRAKETURN: s.y = 60; s.T = 7.5; break;                     /* steady left turn at 60 km/h, then brake with the steer held */
     }
     return s;
 }
@@ -83,6 +84,11 @@ static double man_input(int m, double t, double* thr, double* brk, double* hb, i
         if (u > 3.5) { sw = -60 / DEG * clampd(1 - (u - 3.5) / 1.0, 0, 1); *thr = 0.25; }   /* exit: lift, unwind */
         break;
     case M_BRAKE: if (u > 0) { *hold = 0; *brk = fmin(u / 0.15, 1) * 0.8; } break;
+    case M_BRAKETURN:   /* 45 deg steering wheel over 1 s, settle 2 s (~0.4 g), then pedal 0.8 in 0.15 s with the wheel held:
+                           combined slip and the inner front locking (the sliding branch of the tyre, docs/BRAKING.md) */
+        if (u > 0) sw = fmin(u, 1) * 45 / DEG;
+        if (u > 3) { *hold = 0; *brk = fmin((u - 3) / 0.15, 1) * 0.8; }
+        break;
     default: break;   /* road features: straight ahead, wheel held centred by the hands, speed hold */
     }
     return sw;
