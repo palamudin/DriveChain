@@ -181,3 +181,11 @@ build/tyre_compare: tests/tyre_compare.c build/libdrivechain.a
 # head-to-head tyre rig: envelope (tyre_model 0) vs TARMAC (tyre_model 1)
 tyrecompare: build/tyre_compare
 	mkdir -p results/tyre_compare && ./build/tyre_compare cars/mx5_na.ini results/tyre_compare
+
+# braking from a turn / slide / yawing straight (per-tick yaw, slip and wheel log; docs/BRAKING.md)
+BT_SRC = tools/braketurn.c demo/sim.c demo/roadbake.c demo/track.c demo/meshtrack.c demo/audio.c demo/input.c demo/cfg.c
+build/braketurn: $(BT_SRC) demo/*.h core/src/*.c core/src/*.h core/include/*.h
+	@mkdir -p build
+	$(CC) -O2 -std=gnu11 -Wall -Wno-misleading-indentation -Wno-unused-parameter -DDEMO_NO_SDL -DDC_BUILD -Icore/include -Icore/src -o $@ $(BT_SRC) core/src/*.c -lm -lpthread
+braketurn: build/braketurn
+.PHONY: braketurn
