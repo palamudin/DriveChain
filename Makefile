@@ -201,10 +201,10 @@ gamepadtest: build/gpturn
 	@set -e; for core in "physics.model=fast" "physics.model=reference" "car.solver=0"; do for s in 0.74 -0.74 1.0; do for ph in brake both gas; do \
 	  CHECK=15 GEAR=2 CFGSET="$$core" ./build/gpturn cars/mx5_na.ini $$s $$ph 1.0 /tmp/gpturn_check.csv 2>/dev/null | sed "s|^|[$$core] |"; done; done; done
 .PHONY: gamepadtest
-# locked-front sliding direction (tyre_tm_slide_dir = 1): full lock, 20 km/h, brake (with / without full throttle) locks the fronts;
+# locked-front sliding direction (demo default setup: tyre_tm_slide_dir = 1): full lock, 20 km/h, brake (with / without full throttle) locks the fronts;
 # their force must oppose the patch slip velocity within 4 deg (kinematic estimate without pitch/heave contact motion; TARMAC radial: 10-13 deg) and the car must not yaw against the held steer
 locktest: build/gpturn
 	@fail=0; for core in "physics.model=fast" "physics.model=reference" "car.solver=0"; do for s in 1.0 -1.0; do for ph in gasbrake brake; do r=0; \
-	  LOCKCHECK=4 V0=20 GEAR=1 T=6.5 PARAM="front:tyre_tm_slide_dir=1;rear:tyre_tm_slide_dir=1" CFGSET="$$core" ./build/gpturn cars/mx5_na.ini $$s $$ph 1.0 /tmp/locktest.csv >/tmp/locktest.txt 2>/dev/null || r=$$?; \
+	  LOCKCHECK=4 V0=20 GEAR=1 T=6.5 CFGSET="$$core" ./build/gpturn cars/mx5_na.ini $$s $$ph 1.0 /tmp/locktest.csv >/tmp/locktest.txt 2>/dev/null || r=$$?; \
 	  sed "s|^|[$$core] |" /tmp/locktest.txt; [ $$r -eq 0 ] || fail=1; done; done; done; exit $$fail
 .PHONY: locktest
