@@ -41,6 +41,7 @@ typedef struct {            /* physics -> render */
     int gear_req, assist, autopilot, paused, device_kind, has_ffb;
     char device[128];
     double raw_axis[8]; int raw_buttons, raw_naxes, hgear;   /* input diagnostics for mapping */
+    double thr_raw, brk_raw;  /* device throttle / brake travel 0..1 before the gamepad trigger curve (F7) */
     int drv_on, drv_takeover, drv_mode, drv_clients; dc_driver_state drv_st;
     int rec_on, rep_on, rep_done, rep_match, rep_i, rep_n, rec_n; char rec_msg[200], rep_path[256], rec_path[256];   /* record / replay status */
 } sim_snap;
@@ -109,7 +110,10 @@ unsigned long long sim_state_hash(sim_t* S);   /* FNV-1a over every body pose an
    prof_init (no allocation while running), dumped as CSV by prof_dump. Each ring has a single writer thread. */
 typedef struct { double tw, simt, tick_us, poll_us, input_us, step_us, ffb_us, post_us; float st_us[DCP_S_N], wh_us[4], whs_us[DCP_W_TOTAL];   /* per-wheel total; per-lap sum over wheels */
                  int nsub, solves, resolves, sweeps, sweep_max, capped, nbx_max, pool_runs, pool_wakes, nslide;
-                 float pool_wait_us, pool_wait_max_us, slide, slip_max_deg, speed, rack_n, column_nm, mz_fl, mz_fr, sw_deg, fz[4], px, py; int surf_mask, tags; } prof_tick_t;
+                 float pool_wait_us, pool_wait_max_us, slide, slip_max_deg, speed, rack_n, column_nm, mz_fl, mz_fr, sw_deg, fz[4], px, py; int surf_mask, tags;
+                 /* input + steering + per-wheel brake state of the tick (what the driver model was given and what it did) */
+                 int dev_kind, steer_mode, hands_sat; float stick, steer_target_deg, hands_nm, hands_tmax, thr_raw, brk_raw, thr, brk, hb, st_deg[2], yaw_dps,
+                 bt[4], om[4], sr[4]; } prof_tick_t;
 enum { PT_TAG_KERB = 1, PT_TAG_LOAD = 2, PT_TAG_STEER = 4 };
 typedef struct { double tw; float sleep_req_us, sleep_us, lockwait_max_us, batch_us, backlog_ms; int ticks, dropped, broke; } prof_batch_t;
 typedef struct { double tw; float frame_us, lock_us, draw_us; double sim_time; int new_ticks; } prof_frame_t;

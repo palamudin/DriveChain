@@ -295,6 +295,16 @@ static void prof_tick(sim_t* S, double w0, double w1) {
     for (int i = 0; i < 4; i++) p->fz[i] = (float)t->w[i].fz;
     p->surf_mask = 0; for (int i = 0; i < 4; i++) if (S->snap.surf[i] >= 0 && S->snap.surf[i] < 31) p->surf_mask |= 1 << S->snap.surf[i];   /* bit per SURF_* id under any wheel */
     p->px = (float)S->snap.parts[0].pos[0]; p->py = (float)S->snap.parts[0].pos[1];
+    {   /* input path: raw device values, the mapped dc_input given to dc_step, hands torque / saturation, road-wheel angles, brakes */
+        const dc_input* in = &S->snap.in;
+        p->dev_kind = S->dev.kind; p->stick = (float)S->dev.steer; p->steer_mode = in->steer_mode;
+        p->steer_target_deg = in->steer_mode == DC_STEER_ANGLE ? (float)(in->steer_target * 57.2958) : 0;
+        p->hands_nm = (float)t->driver_torque; p->hands_tmax = in->steer_mode == DC_STEER_ANGLE ? (float)in->hands_tmax : 0;
+        p->hands_sat = p->hands_tmax > 0 && fabsf(p->hands_nm) >= 0.999f * p->hands_tmax;
+        p->thr_raw = (float)S->dev.throttle_raw; p->brk_raw = (float)S->dev.brake_raw; p->thr = (float)in->throttle; p->brk = (float)in->brake; p->hb = (float)in->handbrake;
+        p->st_deg[0] = (float)(t->w[0].steer * 57.2958); p->st_deg[1] = (float)(t->w[1].steer * 57.2958); p->yaw_dps = (float)(t->yaw_rate * 57.2958);
+        for (int i = 0; i < 4; i++) { p->bt[i] = (float)t->w[i].brake_torque; p->om[i] = (float)t->w[i].omega; p->sr[i] = (float)t->w[i].slip_ratio_ss; }
+    }
     {   /* cause tags for the spike list: kerb/rough surface under a wheel, wheel-load jump, fast steering */
         static float fz0[4], sw0; static int have;
         const double dt = S->tick_dt; float djump = 0;
@@ -310,14 +320,20 @@ void prof_write_ticks_csv(FILE* f, const prof_tick_t* T, int n) {
     static const char* SN[DCP_S_N] = {"begin", "phaseA", "loads", "assemble", "factor", "ksolve", "boxrows", "schur", "pgs", "subspace", "backsub", "resolve_chk", "commit", "integrate", "post", "step_total"};
     fprintf(f, "tw_us,simt,tick_us,poll_us,input_us,step_us,ffb_us,post_us");
     for (int k = 0; k < DCP_S_N; k++) fprintf(f, ",s_%s", SN[k]);
-    fprintf(f, ",wh0,wh1,wh2,wh3,w_setup,w_rays,w_rim,w_brush,w_mz,w_cull,nsub,solves,resolves,sweeps,sweep_max,capped,nbx_max,pool_runs,pool_wakes,pool_wait_us,pool_wait_max_us,slide,nslide,slip_max_deg,speed,rack_n,column_nm,mz_fl,mz_fr,sw_deg,fz0,fz1,fz2,fz3,px,py,surf_mask,tags\n");
+    fprintf(f, ",wh0,wh1,wh2,wh3,w_setup,w_rays,w_rim,w_brush,w_mz,w_cull,nsub,solves,resolves,sweeps,sweep_max,capped,nbx_max,pool_runs,pool_wakes,pool_wait_us,pool_wait_max_us,slide,nslide,slip_max_deg,speed,rack_n,column_nm,mz_fl,mz_fr,sw_deg,fz0,fz1,fz2,fz3,px,py,surf_mask,tags,dev_kind,stick,steer_mode,steer_target_deg,hands_nm,hands_tmax,hands_sat,thr_raw,brk_raw,thr,brk,hb,st0_deg,st1_deg,yaw_dps,bt0,bt1,bt2,bt3,om0,om1,om2,om3,sr0,sr1,sr2,sr3\n");
     for (int i = 0; i < n; i++) { const prof_tick_t* p = &T[i];
         fprintf(f, "%.1f,%.5f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f", p->tw, p->simt, p->tick_us, p->poll_us, p->input_us, p->step_us, p->ffb_us, p->post_us);
         for (int k = 0; k < DCP_S_N; k++) fprintf(f, ",%.2f", p->st_us[k]);
         for (int k = 0; k < 4; k++) fprintf(f, ",%.2f", p->wh_us[k]);
         for (int k = 0; k < DCP_W_TOTAL; k++) fprintf(f, ",%.2f", p->whs_us[k]);
-        fprintf(f, ",%d,%d,%d,%d,%d,%d,%d,%d,%d,%.2f,%.2f,%.3f,%d,%.2f,%.2f,%.3f,%.5f,%.4f,%.4f,%.4f,%.0f,%.0f,%.0f,%.0f,%.2f,%.2f,%d,%d\n", p->nsub, p->solves, p->resolves, p->sweeps, p->sweep_max, p->capped, p->nbx_max,
-                p->pool_runs, p->pool_wakes, p->pool_wait_us, p->pool_wait_max_us, p->slide, p->nslide, p->slip_max_deg, p->speed, p->rack_n, p->column_nm, p->mz_fl, p->mz_fr, p->sw_deg, p->fz[0], p->fz[1], p->fz[2], p->fz[3], p->px, p->py, p->surf_mask, p->tags); }
+        fprintf(f, ",%d,%d,%d,%d,%d,%d,%d,%d,%d,%.2f,%.2f,%.3f,%d,%.2f,%.2f,%.3f,%.5f,%.4f,%.4f,%.4f,%.0f,%.0f,%.0f,%.0f,%.2f,%.2f,%d,%d", p->nsub, p->solves, p->resolves, p->sweeps, p->sweep_max, p->capped, p->nbx_max,
+                p->pool_runs, p->pool_wakes, p->pool_wait_us, p->pool_wait_max_us, p->slide, p->nslide, p->slip_max_deg, p->speed, p->rack_n, p->column_nm, p->mz_fl, p->mz_fr, p->sw_deg, p->fz[0], p->fz[1], p->fz[2], p->fz[3], p->px, p->py, p->surf_mask, p->tags);
+        fprintf(f, ",%d,%.4f,%d,%.2f,%.3f,%.1f,%d,%.4f,%.4f,%.4f,%.4f,%.3f,%.3f,%.3f,%.2f", p->dev_kind, p->stick, p->steer_mode, p->steer_target_deg, p->hands_nm, p->hands_tmax, p->hands_sat,
+                p->thr_raw, p->brk_raw, p->thr, p->brk, p->hb, p->st_deg[0], p->st_deg[1], p->yaw_dps);
+        for (int k = 0; k < 4; k++) fprintf(f, ",%.1f", p->bt[k]);
+        for (int k = 0; k < 4; k++) fprintf(f, ",%.2f", p->om[k]);
+        for (int k = 0; k < 4; k++) fprintf(f, ",%.3f", p->sr[k]);
+        fprintf(f, "\n"); }
 }
 void prof_dump(const char* prefix) {
     char path[512]; FILE* f;
@@ -637,6 +653,7 @@ static void sim_tick_body(sim_t* S, double dt) {
     N->gear_req = S->gear; N->assist = S->P.assist; N->autopilot = S->autopilot; N->solver = S->car ? dc_active_solver(S->car) : 0;
     N->device_kind = S->dev.kind; N->has_ffb = S->dev.has_ffb; snprintf(N->device, sizeof N->device, "%s", S->dev.name);
     for (int a = 0; a < 8; a++) N->raw_axis[a] = S->dev.axis[a];
+    N->thr_raw = S->dev.throttle_raw; N->brk_raw = S->dev.brake_raw;
     N->drv_on = S->drv_on; N->drv_takeover = S->drv_takeover; N->drv_mode = S->drv_cmd.steer_mode; N->drv_clients = S->ext_clients;
     if (S->drv) dc_driver_get_state(S->drv, &N->drv_st);
     N->raw_buttons = S->dev.buttons_raw; N->raw_naxes = S->dev.naxes; N->hgear = S->dev.hgear;
