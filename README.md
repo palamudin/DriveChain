@@ -124,7 +124,11 @@ The demo spawns at the start hub on the dynamics pad (signposted; `[start] spot`
 
 - `setup = default` (shipped): the car file plus two proposal sets, each applied only where it was derived:
   - `propBR` on multibody-core cars (`solver = 1`): compliant arm-pivot bushings (kr 2e6, ka 5e5, kt 300) and an 8 kN/mm rack mount (docs/BUSHINGS.md).
-  - `propD` on 185/60R14 cars: the TARMAC tyre study set (docs/TYRE_DATA.md).
+  - `propD` on 185/60R14 cars: the TARMAC tyre study set (docs/TYRE_DATA.md), including propL: `tyre_tm_slide_dir = 1`,
+    the isotropic sliding direction (a sliding tyre's force opposes its slip velocity, so locked front wheels stop
+    steering instead of turning the nose away from the steer; docs/TYRE_TARMAC.md).
+  - `tyre_slide_dir` in `[car]` overrides it for any car: 1 (shipped) or 0 = the legacy TARMAC radial return
+    (`--set car.tyre_slide_dir=0`).
   - The console prints which sets were applied. `hatch_fwd` (reduced core, 205 tyres) is unchanged.
 - `setup = legacy`, or `--set car.setup=legacy`: the car file as-is, which is the earlier demo setup.
 - An absent key means `legacy`. The headless harnesses (drivetest, drvhost, perf tests) therefore keep their baselines; pass `--set car.setup=default` to them for the demo setup.

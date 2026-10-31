@@ -66,9 +66,9 @@ comparisons.
 | Turn slip | none | Tread-twist (parking) moment: torsional brush of the footprint, relaxing over the half length | required for parking / turn-in steering torque |
 | Damage, thermal, wear, gas temperature | modelled | not ported (constant grip and pressure; pressure comes from the host's own model) | out of scope; host has its own pressure state |
 | Rolling-resistance sign at standstill | `sign(Ω)` | `tanh(Ω Re / 0.5 m/s)` | no chatter at rest |
-| Sliding direction (`tyre_tm_slide_dir = 1`, option, default 0) | radial return of the deflection onto the friction circle | isotropic Coulomb return (same as the envelope model) | a sliding tread's force must oppose its slip velocity (below) |
+| Sliding direction (`tyre_tm_slide_dir = 1`; library default 0, demo default setup 1) | radial return of the deflection onto the friction circle | isotropic Coulomb return (same as the envelope model) | a sliding tread's force must oppose its slip velocity (below) |
 
-### Sliding direction option (`tyre_tm_slide_dir = 1`, not in TARMAC; default 0)
+### Sliding direction (`tyre_tm_slide_dir = 1`, not in TARMAC; demo default since 2026-10-31)
 
 TARMAC caps the brush deflection by scaling it radially onto `|K b| = μN`. The trial deflection keeps its elastic
 ratio `Kx σx sx : Ky σy sy`, so with the carcass stiffer longitudinally the force of a fully sliding tyre leans toward
@@ -88,7 +88,10 @@ The option returns the trial deflection along the Coulomb flow (backward Euler o
 the same `dc_tyre_carcass_return` as the envelope model) in phase A and at commit. Elastic (non-sliding) states are
 untouched: the return acts only when the trial exceeds `μN`, so it changes a tyre at the friction limit and in full slide only.
 `make locktest` checks it (force within 4° of anti-slip on locked fronts, no yaw against the held steer). The demo
-exposes it as `car.tyre_slide_dir` (proposal propL, off until approved).
+exposes it as `car.tyre_slide_dir`. It is part of the demo's default setup (propD + propL, approved 2026-10-31) and
+`demo.ini` ships `tyre_slide_dir = 1`; `0` (or `--set car.tyre_slide_dir=0`) restores the faithful TARMAC radial
+return. The library parameter itself still defaults to 0, so a car file loaded directly (`setup = legacy`, headless
+harnesses without the setup) keeps TARMAC's behaviour unless it sets `tyre_tm_slide_dir = 1`.
 
 ### Mz and pneumatic trail (addition)
 
