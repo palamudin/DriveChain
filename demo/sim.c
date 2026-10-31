@@ -23,7 +23,8 @@ static const char* const SETUP_BR[] = {"mb_bush_kr", "2e6, 2e6", "mb_bush_ka", "
 static const char* const SETUP_D[] = {"tyre_mu_y", "0.955", "tyre_mu_x", "0.926", "tyre_ls_exp_y", "0.90", "tyre_ls_exp_x", "0.92",
                                       "tyre_trail_factor", "1.3", "tyre_model", "1", "tyre_tm_shape", "1", "tyre_tm_damp_mode", "1",
                                       "tyre_tm_load_sens", "0.10", "tyre_tm_slide_floor", "0.70", "tyre_tm_slide_exp", "2",
-                                      "tyre_tm_slide_speed", "8", NULL};
+                                      "tyre_tm_slide_speed", "8",
+                                      "tyre_tm_slide_dir", "1", NULL};   /* propL (approved 2026-10-31): isotropic Coulomb sliding direction */
 int sim_apply_setup(dc_car_params* P, const char* setup, char* err, int errlen) {
     if (!strcmp(setup, "legacy")) { fprintf(stderr, "[car] setup legacy: car file as-is\n"); return 1; }
     if (strcmp(setup, "default")) { snprintf(err, errlen, "car.setup = '%s': use default or legacy", setup); return 0; }
@@ -32,7 +33,7 @@ int sim_apply_setup(dc_car_params* P, const char* setup, char* err, int errlen) 
     for (int i = 0; br && SETUP_BR[i]; i += 2) if (!dc_set_param(P, "car", SETUP_BR[i], SETUP_BR[i + 1])) { snprintf(err, errlen, "setup key %s", SETUP_BR[i]); return 0; }
     for (int a = 0; d && a < 2; a++) for (int i = 0; SETUP_D[i]; i += 2)
         if (!dc_set_param(P, a ? "rear" : "front", SETUP_D[i], SETUP_D[i + 1])) { snprintf(err, errlen, "setup key %s", SETUP_D[i]); return 0; }
-    fprintf(stderr, "[car] setup default: bushings + rack mount (propBR) %s, TARMAC tyre propD %s\n",
+    fprintf(stderr, "[car] setup default: bushings + rack mount (propBR) %s, TARMAC tyre propD + propL sliding direction %s\n",
            br ? "on" : "n/a (legacy core)", d ? "on" : "n/a (not 185/60R14)");
     return 1;
 }
@@ -127,9 +128,9 @@ int sim_init(sim_t* S, cfg_t* cfg, track_t* trk, audio_t* audio, char* err, int 
     { const char* pm = cfg_str(cfg, "physics.model", NULL); if (pm) S->P.model = !strcmp(pm, "fast") ? DC_MODEL_FAST : DC_MODEL_REFERENCE; }   /* reference = full numerics (default) */
     S->P.bricks = cfg_int(cfg, "physics.bricks", 0);   /* tabulated model-reduction bricks (bitmask, 0 = full model) */
     if (!sim_apply_setup(&S->P, cfg_str(cfg, "car.setup", "legacy"), err, errlen)) return 0;   /* after car.solver: propBR needs the MB core */
-    { int sd = cfg_int(cfg, "car.tyre_slide_dir", -1);   /* proposal propL (opt-in): isotropic Coulomb sliding direction of the TARMAC tyre */
+    { int sd = cfg_int(cfg, "car.tyre_slide_dir", -1);   /* TARMAC tyre sliding direction override: 1 = propL (in the default setup), 0 = TARMAC radial return */
       if (sd >= 0) { for (int a = 0; a < 2; a++) S->P.axle[a].tyre.tm_slide_dir = sd;
-                     fprintf(stderr, "[car] tyre_tm_slide_dir = %d (%s)\n", sd, sd ? "propL: sliding force opposes the slip velocity" : "TARMAC radial return"); } }
+                     fprintf(stderr, "[car] tyre_tm_slide_dir = %d (%s)\n", sd, sd ? "propL: sliding force opposes the slip velocity" : "legacy TARMAC radial return"); } }
     if (!make_car(S)) { snprintf(err, errlen, "dc_create failed"); return 0; }
     S->rotation_rad = cfg_num(cfg, "input.rotation_deg", 2 * S->P.steer_lock_deg) * M_PI / 180;
     S->hands_k = cfg_num(cfg, "input.wheel_hands_k", 80); S->hands_d = cfg_num(cfg, "input.wheel_hands_d", 1.2);
