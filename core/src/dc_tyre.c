@@ -118,6 +118,31 @@ static double brush_store(const dc_tc* t, double ex, double ey) {
     return E;
 }
 
+/* Plastic return map of the carcass deflection onto the full-slide boundary |K e| = G (K = diag(Kx, Ky), the carcass
+   stiffnesses as seen by the brush, G = 3 mu N on the slip scale used by brush()). While the tread slides, the shear rate is
+   de/dt = -Vs - (Vr/sigma) e - nu K e: Coulomb sliding runs along the friction force K e (isotropic friction, slip
+   opposite the force), so in steady sliding F = K e is antiparallel to the sliding velocity. Backward Euler with the
+   trial e* = (e - h Vs)/a_i (a_i = 1 + h Vr/sigma_i) gives e_i = e*_i / (1 + nu b_i), b_i = K_i / a_i (h folded into nu).
+   A radial scaling e /= lam is the special case Kx/ax = Ky/ay only; with the carcass twice as stiff in x as in y it tilts
+   the sliding force toward the longitudinal axis (at wheel lock the lateral force came out 2-5x below tan(alpha) Fx).
+   |K e(nu)| is convex and decreasing in nu, so Newton from nu = 0 increases monotonically onto the root; a fixed number
+   of steps keeps it deterministic. Inside the boundary (|K e*| <= G) the deflection is elastic and unchanged. */
+static void carcass_return(double Kx, double Ky, double ax, double ay, double G, double* ex, double* ey) {
+    double cx = Kx * *ex, cy = Ky * *ey;
+    if (!(G > 0)) { *ex = 0; *ey = 0; return; }   /* no friction: the boundary is the origin (nu -> infinity) */
+    if (cx * cx + cy * cy <= G * G) return;
+    double bx = Kx / ax, by = Ky / ay, nu = 0;
+    for (int it = 0; it < 8; it++) {
+        double qx = 1 / (1 + nu * bx), qy = 1 / (1 + nu * by);
+        double fx = cx * qx, fy = cy * qy, m = sqrt(fx * fx + fy * fy);
+        double dm = -(fx * fx * bx * qx + fy * fy * by * qy) / m;   /* d|K e|/d nu */
+        double dn = (m - G) / -dm;
+        if (!(dn > 0)) break;
+        nu += dn;
+    }
+    *ex /= 1 + nu * bx; *ey /= 1 + nu * by;
+}
+
 void dc_tyre_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc* t) {
     const dc_tyre_params* T = &c->P.axle[i / 2].tyre;
     if (T->model == DC_TYRE_TARMAC) { dc_tyre_tm_phaseA(c, i, cw, a, vc, wc, h, t); return; }
@@ -381,6 +406,10 @@ void dc_tyre_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc
     t->ey_new = (S->ey - h * t->Vsy) / (1 + h * t->Vr / t->sig_y);
     t->ex_star = (S->ex - h * Vsx) / (1 + h * t->Vr / t->sig_x);
     t->D = h * t->Re / (1 + h * t->Vr / t->sig_x);
+    /* plastic return onto the full-slide boundary before the force evaluation, so a sliding tyre's force is evaluated at
+       the returned deflection (its direction opposes the sliding velocity), not at the elastic trial */
+    if (t->grip > 0) carcass_return(t->Cxtot / t->sig_x, t->Ctot / t->sig_y, 1 + h * t->Vr / t->sig_x, 1 + h * t->Vr / t->sig_y,
+                                    3 * t->mu_eff * t->Ntot, &t->ex_star, &t->ey_new);
     double sy = t->ey_new / t->sig_y + T->camber_gain * t->camber_l;
     double sx = t->ex_star / t->sig_x;
     double Fx, Fy, Mz, lam;
@@ -428,7 +457,6 @@ void dc_tyre_phaseB(dc_car* c, int i, v3 cw, v3 a, double omega_new, double h, d
     dc_tyre_state* S = &c->ty[i];
     const dc_tyre_params* T = &c->P.axle[i / 2].tyre;
     if (T->model == DC_TYRE_TARMAC) { dc_tyre_tm_phaseB(c, i, cw, a, omega_new, h, t, commit); return; }
-    (void)h;
     if (!t->contact) { t->F = V3(0, 0, 0); t->tau = V3(0, 0, 0); t->Fx = 0; return; }
     double dO = omega_new - S->omega;
     double ex = t->ex_star + t->D * dO;
@@ -445,11 +473,9 @@ void dc_tyre_phaseB(dc_car* c, int i, v3 cw, v3 a, double omega_new, double h, d
     t->tau = vadd(t->tau, vcross(vsub(t->p, cw), vscl(t->xc, Fx)));
     t->tau = vadd(t->tau, vscl(t->n, -t->ey_new * Fx));
     if (commit) {
-        /* clamp carcass deflection to the saturation boundary (excess is sliding) */
-        double sx = ex / t->sig_x, sy = t->ey_new / t->sig_y;
-        double lam = sqrt(pow(t->Cxtot * sx, 2) + pow(t->Ctot * sy, 2)) / (3 * cap + 1e-9);
+        /* return the carcass deflection to the saturation boundary (excess is sliding, along the friction force) */
         double ey = t->ey_new;
-        if (lam > 1) { ex /= lam; ey /= lam; }
+        carcass_return(t->Cxtot / t->sig_x, t->Ctot / t->sig_y, 1 + h * t->Vr / t->sig_x, 1 + h * t->Vr / t->sig_y, 3 * cap, &ex, &ey);
         S->ex = ex; S->ey = ey; S->phi = t->phi_new;
         double scale = 0.35 + 0.65 * fmin(S->pressure / T->pressure_ref, 1.5);
         t->pe += T->carcass_store > 0 ? brush_store(t, ex, ey)
