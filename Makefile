@@ -189,3 +189,15 @@ build/braketurn: $(BT_SRC) demo/*.h core/src/*.c core/src/*.h core/include/*.h
 	$(CC) -O2 -std=gnu11 -Wall -Wno-misleading-indentation -Wno-unused-parameter -DDEMO_NO_SDL -DDC_BUILD -Icore/include -Icore/src -o $@ $(BT_SRC) core/src/*.c -lm -lpthread
 braketurn: build/braketurn
 .PHONY: braketurn
+
+# corner + brake / throttle through the demo's gamepad path (stick held, triggers through the [input] curve)
+build/gpturn: tools/gpturn.c $(BT_SRC) demo/*.h core/src/*.c core/src/*.h core/include/*.h
+	@mkdir -p build
+	$(CC) -O2 -std=gnu11 -Wall -Wno-misleading-indentation -Wno-unused-parameter -DDEMO_NO_SDL -DDC_BUILD -Icore/include -Icore/src -o $@ tools/gpturn.c $(filter-out tools/braketurn.c,$(BT_SRC)) core/src/*.c -lm -lpthread
+gpturn: build/gpturn
+.PHONY: gpturn
+# gamepad hold test: stick held left / right, full trigger brake / throttle+brake / throttle, fast + reference + legacy core
+gamepadtest: build/gpturn
+	@set -e; for core in "physics.model=fast" "physics.model=reference" "car.solver=0"; do for s in 0.74 -0.74 1.0; do for ph in brake both gas; do \
+	  CHECK=15 GEAR=2 CFGSET="$$core" ./build/gpturn cars/mx5_na.ini $$s $$ph 1.0 /tmp/gpturn_check.csv 2>/dev/null | sed "s|^|[$$core] |"; done; done; done
+.PHONY: gamepadtest
