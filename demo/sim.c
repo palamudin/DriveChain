@@ -127,6 +127,9 @@ int sim_init(sim_t* S, cfg_t* cfg, track_t* trk, audio_t* audio, char* err, int 
     { const char* pm = cfg_str(cfg, "physics.model", NULL); if (pm) S->P.model = !strcmp(pm, "fast") ? DC_MODEL_FAST : DC_MODEL_REFERENCE; }   /* reference = full numerics (default) */
     S->P.bricks = cfg_int(cfg, "physics.bricks", 0);   /* tabulated model-reduction bricks (bitmask, 0 = full model) */
     if (!sim_apply_setup(&S->P, cfg_str(cfg, "car.setup", "legacy"), err, errlen)) return 0;   /* after car.solver: propBR needs the MB core */
+    { int sd = cfg_int(cfg, "car.tyre_slide_dir", -1);   /* proposal propL (opt-in): isotropic Coulomb sliding direction of the TARMAC tyre */
+      if (sd >= 0) { for (int a = 0; a < 2; a++) S->P.axle[a].tyre.tm_slide_dir = sd;
+                     fprintf(stderr, "[car] tyre_tm_slide_dir = %d (%s)\n", sd, sd ? "propL: sliding force opposes the slip velocity" : "TARMAC radial return"); } }
     if (!make_car(S)) { snprintf(err, errlen, "dc_create failed"); return 0; }
     S->rotation_rad = cfg_num(cfg, "input.rotation_deg", 2 * S->P.steer_lock_deg) * M_PI / 180;
     S->hands_k = cfg_num(cfg, "input.wheel_hands_k", 80); S->hands_d = cfg_num(cfg, "input.wheel_hands_d", 1.2);
