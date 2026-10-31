@@ -87,6 +87,7 @@ typedef struct sim_s {
     sim_rec_tick* rep_buf; int rep_on, rep_i, rep_n, rep_done, rep_match; sim_rec_hdr rep_h; char rep_path[600];
     unsigned long long rep_hash;
     char rec_msg[200];                    /* last record / replay status line (HUD) */
+    int cam_yaw_mdeg;                     /* render camera yaw (world, millidegrees; written by the render thread, atomic), for the per-tick record */
 #ifdef DC_PROF
     double pf_poll0, pf_poll1, pf_step0, pf_step1, pf_ffb1;   /* tick-phase stamps (us) */
 #endif
@@ -113,7 +114,8 @@ typedef struct { double tw, simt, tick_us, poll_us, input_us, step_us, ffb_us, p
                  float pool_wait_us, pool_wait_max_us, slide, slip_max_deg, speed, rack_n, column_nm, mz_fl, mz_fr, sw_deg, fz[4], px, py; int surf_mask, tags;
                  /* input + steering + per-wheel brake state of the tick (what the driver model was given and what it did) */
                  int dev_kind, steer_mode, hands_sat; float stick, steer_target_deg, hands_nm, hands_tmax, thr_raw, brk_raw, thr, brk, hb, st_deg[2], yaw_dps,
-                 bt[4], om[4], sr[4]; } prof_tick_t;
+                 bt[4], om[4], sr[4];
+                 float heading_deg, vel_dir_deg, beta_deg, cam_yaw_deg; } prof_tick_t;   /* body yaw, velocity direction, body slip angle, camera yaw (world, deg) */
 enum { PT_TAG_KERB = 1, PT_TAG_LOAD = 2, PT_TAG_STEER = 4 };
 typedef struct { double tw; float sleep_req_us, sleep_us, lockwait_max_us, batch_us, backlog_ms; int ticks, dropped, broke; } prof_batch_t;
 typedef struct { double tw; float frame_us, lock_us, draw_us; double sim_time; int new_ticks; } prof_frame_t;

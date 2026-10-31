@@ -59,6 +59,7 @@ static void draw_title(const char* t, int x, int y, int size, Color col) {
     char a[256]; utf8_ascii(t, a, sizeof a); DrawText(a, x, y, size, col);
 }
 static cfg_t CFG; static track_t TRK; static audio_t AUD; static sim_t SIM;
+static double CAM_YAW; static const char* CAM_NAME = "chase";   /* world yaw of the main-view camera (camera -> look target) and its mode, for the F7 line and the per-tick record */
 static pthread_mutex_t MTX = PTHREAD_MUTEX_INITIALIZER;
 static sim_snap VIEW;              /* render copy */
 /* Render handoff without waiting on a physics tick: after every tick the physics thread publishes a copy of
@@ -565,13 +566,20 @@ static void po_lane2(char* b, int nb, char* b2, int nb2, double* mem_kb) {
 static void draw_perf(int sw_, int sh_, double fps) {
     po_update(0);
     char b[640], lane[320], lane2[256]; double mem_kb; po_lane2(lane, sizeof lane, lane2, sizeof lane2, &mem_kb);
-    int x = sw_ - 560, y = 10, w = 550, h = 270 + 15 * (PO.nrow + PO.nspk + 2);
+    int x = sw_ - 560, y = 10, w = 550, h = 285 + 15 * (PO.nrow + PO.nspk + 2);
     DrawRectangle(x - 8, y - 4, w + 4, h, (Color){0, 0, 0, 170});
     Color hc = (Color){255, 220, 120, 255}, tc = RAYWHITE, dc = (Color){180, 220, 255, 255};
     snprintf(b, sizeof b, "PERF  (F7 hide, F8 dump)  last %.1f s, %d ticks", PO.win_s, PO.n); DrawText(b, x, y, 16, hc); y += 20;
     snprintf(b, sizeof b, "physics %.0f Hz x %d = %.0f Hz  threads %d  %s/%s  RT x%.2f  sim/wall %.3f", 1 / SIM.tick_dt, (int)(SIM.P.substep_hz * SIM.tick_dt + 0.5), SIM.P.substep_hz,
              SIM.threads, VIEW.solver == 1 ? "multibody" : "legacy", SIM.P.model == DC_MODEL_FAST ? "fast" : "reference", PO.rt, PO.simwall); DrawText(b, x, y, 13, tc); y += 15;
     snprintf(b, sizeof b, "over budget (%.0f us): %.2f %% of ticks   render %.0f fps", PO.budget_us, PO.over_pct, fps); DrawText(b, x, y, 13, PO.over_pct > 0.5 ? ORANGE : tc); y += 15;
+    {   /* what the screen shows vs what the car does: body heading, velocity direction, body slip, camera yaw (world deg) */
+        const double* q = VIEW.parts[DC_PART_CHASSIS].quat;
+        double hd = atan2(2 * (q[0] * q[3] + q[1] * q[2]), 1 - 2 * (q[2] * q[2] + q[3] * q[3])), be = hypot(VIEW.t.vx, VIEW.t.vy) > 0.3 ? atan2(VIEW.t.vy, VIEW.t.vx) : 0;
+        snprintf(b, sizeof b, "heading %6.1f  vel dir %6.1f  slip %5.1f  cam yaw %6.1f  (cam %s, follow %s)", hd * 57.2958, remainder(hd + be, 2 * M_PI) * 57.2958, be * 57.2958,
+                 CAM_YAW * 57.2958, CAM_NAME, cfg_str(&CFG, "camera.follow", "body"));
+        DrawText(b, x, y, 13, dc); y += 15;
+    }
     snprintf(b, sizeof b, "CPU %s (%d threads)", PO.cpu, PO.cores); DrawText(b, x, y, 13, dc); y += 15;
     sim_affinity_desc(&SIM, b, sizeof b); DrawText(b, x, y, 12, dc); y += 15;
     sim_reuse_desc(&SIM, b, sizeof b); DrawText(b, x, y, 12, dc); y += 15;
@@ -846,6 +854,13 @@ static void audio_cb(void* buf, unsigned int frames) { audio_render(&AUD, (float
 enum { CAM_CHASE, CAM_COCKPIT, CAM_WHEEL, CAM_ORBIT, CAM_TV, CAM_N };
 static const char* CAMN[] = {"chase", "cockpit", "wheel", "orbit", "tv"};
 static double ORB_Y = 0.6, ORB_P = 0.35, ORB_D = 6; static Vector3 CHASE_P; static int CHASE_INIT;
+/* [camera] follow: which direction the chase camera sits behind.
+   body (default, the original behaviour): behind the chassis heading, so the car always points into the screen and its own
+     rotation shows only as the world turning (body slip / spin is hidden except for the position lag, time constant 1/6 s);
+   velocity: behind the direction of travel (body slip shows as the car turned sideways on screen); below ~1-3 m/s it fades to body;
+   blend: body + follow_blend x (velocity - body), follow_blend 0.5 by default. */
+enum { FOLLOW_BODY, FOLLOW_VEL, FOLLOW_BLEND };
+static int cam_follow(void) { const char* s = cfg_str(&CFG, "camera.follow", "body"); return !strcmp(s, "velocity") ? FOLLOW_VEL : !strcmp(s, "blend") ? FOLLOW_BLEND : FOLLOW_BODY; }
 static Camera3D make_cam(int mode, const sim_snap* V, const dc_car_params* P, double fovv, double yaw_off, double dt) {
     Camera3D cam = {0}; cam.fovy = (float)fovv; cam.projection = CAMERA_PERSPECTIVE; cam.up = (Vector3){0, 1, 0};
     xf_t ch = xf_from(&V->parts[DC_PART_CHASSIS]);
@@ -865,6 +880,12 @@ static Camera3D make_cam(int mode, const sim_snap* V, const dc_car_params* P, do
     if (mode == CAM_CHASE) {
         double d = cfg_num(&CFG, "camera.chase_dist", 6.0), h = cfg_num(&CFG, "camera.chase_height", 1.8);
         double yaw = hy + yaw_off;
+        int fm = cam_follow();
+        if (fm != FOLLOW_BODY) {   /* chase direction toward the velocity direction (vehicle-frame velocity -> slip angle beta) */
+            double vx = V->t.vx, vy = V->t.vy, v = hypot(vx, vy), w = fmin(1, fmax(0, (v - 1.0) / 2.0));
+            double k = fm == FOLLOW_VEL ? 1.0 : cfg_num(&CFG, "camera.follow_blend", 0.5);
+            if (v > 0.3) yaw += w * k * atan2(vy, vx);
+        }
         Vector3 want = R3(ch.t[0] - d * cos(yaw), ch.t[1] - d * sin(yaw), ch.t[2] + h);
         if (!CHASE_INIT || dt <= 0) { CHASE_P = want; CHASE_INIT = 1; }
         else { float a = (float)(1 - exp(-dt * 6)); CHASE_P = Vector3Lerp(CHASE_P, want, a); }
@@ -1142,6 +1163,7 @@ int main(int argc, char** argv) {
             for (int p = 0; p < 3; p++) {
                 rlViewport(p * sw / 3, 0, sw / 3, sh);
                 Camera3D cam = make_cam(cur_cam, &VIEW, P, fovv, (1 - p) * side, dt);
+                if (p == 1) { CAM_YAW = atan2(-(cam.target.z - cam.position.z), cam.target.x - cam.position.x); CAM_NAME = CAMN[cur_cam]; __atomic_store_n(&SIM.cam_yaw_mdeg, (int)lrint(CAM_YAW * 57295.8), __ATOMIC_RELAXED); }
                 rlMatrixMode(RL_PROJECTION); rlLoadIdentity();
                 double top = 0.05 * tan(fovv * M_PI / 360), right = top * aspect;
                 rlFrustum(-right, right, -top, top, 0.05, 2000);
@@ -1157,6 +1179,8 @@ int main(int argc, char** argv) {
             rlDisableDepthTest();
         } else {
             Camera3D cam = make_cam(cur_cam, &VIEW, P, fovv, 0, dt);
+            CAM_YAW = atan2(-(cam.target.z - cam.position.z), cam.target.x - cam.position.x); CAM_NAME = CAMN[cur_cam];
+            __atomic_store_n(&SIM.cam_yaw_mdeg, (int)lrint(CAM_YAW * 57295.8), __ATOMIC_RELAXED);
             draw_scene(cam, &VIEW, P, xray, forces, cur_cam);
         }
         if (hud) draw_hud(&VIEW, P, sw, sh, GetFPS(), CAMN[cur_cam], hud == 1);

@@ -309,6 +309,13 @@ static void prof_tick(sim_t* S, double w0, double w1) {
         p->st_deg[0] = (float)(t->w[0].steer * 57.2958); p->st_deg[1] = (float)(t->w[1].steer * 57.2958); p->yaw_dps = (float)(t->yaw_rate * 57.2958);
         for (int i = 0; i < 4; i++) { p->bt[i] = (float)t->w[i].brake_torque; p->om[i] = (float)t->w[i].omega; p->sr[i] = (float)t->w[i].slip_ratio_ss; }
     }
+    {   /* body heading (chassis yaw), velocity direction, body slip angle, and the render camera's yaw (what the screen shows) */
+        const double* q = S->snap.parts[0].quat;
+        double hd = atan2(2 * (q[0] * q[3] + q[1] * q[2]), 1 - 2 * (q[2] * q[2] + q[3] * q[3])), be = hypot(t->vx, t->vy) > 0.3 ? atan2(t->vy, t->vx) : 0;
+        p->heading_deg = (float)(hd * 57.2958); p->beta_deg = (float)(be * 57.2958);
+        p->vel_dir_deg = (float)(remainder(hd + be, 2 * M_PI) * 57.2958);
+        p->cam_yaw_deg = (float)(__atomic_load_n(&S->cam_yaw_mdeg, __ATOMIC_RELAXED) * 1e-3);
+    }
     {   /* cause tags for the spike list: kerb/rough surface under a wheel, wheel-load jump, fast steering */
         static float fz0[4], sw0; static int have;
         const double dt = S->tick_dt; float djump = 0;
@@ -324,7 +331,7 @@ void prof_write_ticks_csv(FILE* f, const prof_tick_t* T, int n) {
     static const char* SN[DCP_S_N] = {"begin", "phaseA", "loads", "assemble", "factor", "ksolve", "boxrows", "schur", "pgs", "subspace", "backsub", "resolve_chk", "commit", "integrate", "post", "step_total"};
     fprintf(f, "tw_us,simt,tick_us,poll_us,input_us,step_us,ffb_us,post_us");
     for (int k = 0; k < DCP_S_N; k++) fprintf(f, ",s_%s", SN[k]);
-    fprintf(f, ",wh0,wh1,wh2,wh3,w_setup,w_rays,w_rim,w_brush,w_mz,w_cull,nsub,solves,resolves,sweeps,sweep_max,capped,nbx_max,pool_runs,pool_wakes,pool_wait_us,pool_wait_max_us,slide,nslide,slip_max_deg,speed,rack_n,column_nm,mz_fl,mz_fr,sw_deg,fz0,fz1,fz2,fz3,px,py,surf_mask,tags,dev_kind,stick,steer_mode,steer_target_deg,hands_nm,hands_tmax,hands_sat,thr_raw,brk_raw,thr,brk,hb,st0_deg,st1_deg,yaw_dps,bt0,bt1,bt2,bt3,om0,om1,om2,om3,sr0,sr1,sr2,sr3\n");
+    fprintf(f, ",wh0,wh1,wh2,wh3,w_setup,w_rays,w_rim,w_brush,w_mz,w_cull,nsub,solves,resolves,sweeps,sweep_max,capped,nbx_max,pool_runs,pool_wakes,pool_wait_us,pool_wait_max_us,slide,nslide,slip_max_deg,speed,rack_n,column_nm,mz_fl,mz_fr,sw_deg,fz0,fz1,fz2,fz3,px,py,surf_mask,tags,dev_kind,stick,steer_mode,steer_target_deg,hands_nm,hands_tmax,hands_sat,thr_raw,brk_raw,thr,brk,hb,st0_deg,st1_deg,yaw_dps,bt0,bt1,bt2,bt3,om0,om1,om2,om3,sr0,sr1,sr2,sr3,heading_deg,vel_dir_deg,beta_deg,cam_yaw_deg\n");
     for (int i = 0; i < n; i++) { const prof_tick_t* p = &T[i];
         fprintf(f, "%.1f,%.5f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f", p->tw, p->simt, p->tick_us, p->poll_us, p->input_us, p->step_us, p->ffb_us, p->post_us);
         for (int k = 0; k < DCP_S_N; k++) fprintf(f, ",%.2f", p->st_us[k]);
@@ -337,6 +344,7 @@ void prof_write_ticks_csv(FILE* f, const prof_tick_t* T, int n) {
         for (int k = 0; k < 4; k++) fprintf(f, ",%.1f", p->bt[k]);
         for (int k = 0; k < 4; k++) fprintf(f, ",%.2f", p->om[k]);
         for (int k = 0; k < 4; k++) fprintf(f, ",%.3f", p->sr[k]);
+        fprintf(f, ",%.2f,%.2f,%.2f,%.2f", p->heading_deg, p->vel_dir_deg, p->beta_deg, p->cam_yaw_deg);
         fprintf(f, "\n"); }
 }
 void prof_dump(const char* prefix) {
