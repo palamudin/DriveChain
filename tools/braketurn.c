@@ -1,6 +1,6 @@
 /* braketurn.c - braking from a turn / slide / yawing straight: per-tick log of the yaw and slip state, per-wheel forces,
    slip, wheel speed and brake torque, for the "car straightens under braking" investigation.
-   Build: make braketurn   Run: ./build/braketurn <car.ini> <scenario> <brake 0..1> <out.csv>
+   Build: make braketurn   Run: ./build/braketurn <car.ini> <scenario> <brake 0..1 | tTRIGGER> <out.csv>
    Scenarios: turn45 / turn70 (steady 60 km/h turn, steering-wheel 45 / 70 deg held, brake at t = 5 s),
    drift (power-oversteer entry, brake at t = 4 s with the countersteer held), yawst (100 km/h, 30 deg steer pulse
    0.3 s at t = 1 s, brake at t = 1.3 s, wheel held centred). Env CFGSET=k=v;.. as in fastcheck (model, setup). */
@@ -33,6 +33,10 @@ int main(int argc, char** argv) {
     double v0 = yawst ? 100 / 3.6 : drift ? 50 / 3.6 : 60 / 3.6, tb = drift ? 4.0 : yawst ? 1.3 : 5.0, T = tb + 3.0;
     sim_reset_at(&S, 100, yawst ? 150 : 60, 0, v0); S.gear = drift ? 2 : yawst ? 4 : 3;
     if (getenv("V0")) { v0 = atof(getenv("V0")) / 3.6; sim_reset_at(&S, 100, 60, 0, v0); if (getenv("GEAR")) S.gear = atoi(getenv("GEAR")); }
+    if (argv[3][0] == 't') {   /* "t0.75": gamepad trigger travel through the [input] brake curve (CFGSET input.brake_gamma=..) */
+        double dz, ga, mx; input_trigger_params(1, &dz, &ga, &mx); B = input_trigger_curve(atof(argv[3] + 1), dz, ga, mx);
+        fprintf(stderr, "trigger %.2f -> pedal %.3f (gamma %.2f max %.2f dz %.2f)\n", atof(argv[3] + 1), B, ga, mx, dz);
+    }
     S.ext_steer = 1; S.ext_pedals = 1; double I = 0.2, dt = S.tick_dt;
     FILE* f = fopen(argv[4], "w");
     fprintf(f, "t,sw_deg,rack_pos_mm,col_nm,drv_nm,st0,st1,brake,v,vx,vy,r_dps,beta_deg,kappa,ax,ay,rack,pgs,capped");
