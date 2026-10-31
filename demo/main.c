@@ -565,7 +565,7 @@ static void po_lane2(char* b, int nb, char* b2, int nb2, double* mem_kb) {
 static void draw_perf(int sw_, int sh_, double fps) {
     po_update(0);
     char b[640], lane[320], lane2[256]; double mem_kb; po_lane2(lane, sizeof lane, lane2, sizeof lane2, &mem_kb);
-    int x = sw_ - 560, y = 10, w = 550, h = 205 + 15 * (PO.nrow + PO.nspk + 2);
+    int x = sw_ - 560, y = 10, w = 550, h = 270 + 15 * (PO.nrow + PO.nspk + 2);
     DrawRectangle(x - 8, y - 4, w + 4, h, (Color){0, 0, 0, 170});
     Color hc = (Color){255, 220, 120, 255}, tc = RAYWHITE, dc = (Color){180, 220, 255, 255};
     snprintf(b, sizeof b, "PERF  (F7 hide, F8 dump)  last %.1f s, %d ticks", PO.win_s, PO.n); DrawText(b, x, y, 16, hc); y += 20;
@@ -608,6 +608,27 @@ static void draw_perf(int sw_, int sh_, double fps) {
         DrawText(tg, x + sx[3], y, 13, c);
         snprintf(b, sizeof b, "%.0f km/h", PO.spk[s].speed); DrawText(b, x + sx[4], y, 13, c); y += 15;
     }
+    /* pedals: device travel -> pedal handed to the car (gamepad trigger curve, keyboard = full pedal), and wheel lock-up */
+    const sim_snap* V = &VIEW; double dz, ga, mx;
+    DrawText("pedals", x, y + 3, 13, hc); y += 18;
+    const char* dev = V->device_kind == 2 ? "trigger" : (V->device_kind == 1 ? "pedal" : "key");
+    input_trigger_params(1, &dz, &ga, &mx);
+    snprintf(b, sizeof b, "brake %s %.2f -> pedal %.2f", dev, V->device_kind ? V->brk_raw : (V->in.brake > 0 ? 1.0 : 0.0), V->in.brake);
+    DrawText(b, x, y, 13, V->in.brake > 0.7 ? ORANGE : tc);
+    if (V->device_kind == 2) { snprintf(b, sizeof b, "curve gamma %.2f max %.2f dz %.2f", ga, mx, dz); DrawText(b, x + 250, y, 13, dc); }
+    y += 15;
+    input_trigger_params(0, &dz, &ga, &mx);
+    snprintf(b, sizeof b, "throttle %s %.2f -> pedal %.2f", dev, V->device_kind ? V->thr_raw : (V->in.throttle > 0 ? 1.0 : 0.0), V->in.throttle);
+    DrawText(b, x, y, 13, tc);
+    if (V->device_kind == 2) { snprintf(b, sizeof b, "curve gamma %.2f max %.2f dz %.2f", ga, mx, dz); DrawText(b, x + 250, y, 13, dc); }
+    y += 15;
+    static const char* WN[4] = {"FL", "FR", "RL", "RR"};
+    DrawText("slip ratio (LOCK < -0.15)", x, y, 13, tc);
+    for (int i = 0; i < 4; i++) {
+        double sr = V->t.w[i].slip_ratio_ss; int lk = sr < -0.15;
+        snprintf(b, sizeof b, "%s %+.2f%s", WN[i], sr, lk ? " LOCK" : ""); DrawText(b, x + 190 + 90 * i, y, 13, lk ? RED : tc);
+    }
+    y += 15;
 }
 static void perf_dump_file(double fps) {
     po_update(1);

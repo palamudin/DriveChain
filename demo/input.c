@@ -18,7 +18,16 @@ static struct {
     double ffb_gain, ffb_min, ffb_max_nm, ffb_smooth_hz; int ffb_inv;
     int prev_up, prev_dn;
     double ffb_filt;
+    double tr_dz[2], tr_gamma[2], tr_max[2];   /* gamepad trigger curve: [0] throttle, [1] brake */
 } C;
+
+double input_trigger_curve(double raw, double dz, double gamma, double max) {
+    if (!(dz >= 0 && dz < 1)) dz = 0;
+    if (!(gamma > 0)) gamma = 1;
+    double x = (raw - dz) / (1 - dz); x = x < 0 ? 0 : (x > 1 ? 1 : x);
+    return max * (gamma == 1 ? x : pow(x, gamma));
+}
+void input_trigger_params(int brake, double* dz, double* gamma, double* max) { int i = brake ? 1 : 0; *dz = C.tr_dz[i]; *gamma = C.tr_gamma[i]; *max = C.tr_max[i]; }
 
 static double pedal(double v, int inv, double dead) {   /* raw axis -1..1 -> 0..1 */
     double p = (v + 1) * 0.5; if (inv) p = 1 - p;
@@ -34,6 +43,10 @@ int input_open(const cfg_t* cfg, input_state* st) {
     C.brk_inv = cfg_int(cfg, "input.brake_invert", 1); C.clu_inv = cfg_int(cfg, "input.clutch_invert", 1);
     C.hb_inv = cfg_int(cfg, "input.handbrake_invert", 0);
     C.dead = cfg_num(cfg, "input.steer_deadzone", 0.0); C.pedal_dead = cfg_num(cfg, "input.pedal_deadzone", 0.02);
+    /* gamepad triggers only (the wheel/pedal rig stays linear): defaults = identity, see demo.ini [input] */
+    C.tr_dz[0] = cfg_num(cfg, "input.throttle_deadzone", 0.0); C.tr_gamma[0] = cfg_num(cfg, "input.throttle_gamma", 1.0); C.tr_max[0] = cfg_num(cfg, "input.throttle_max", 1.0);
+    C.tr_dz[1] = cfg_num(cfg, "input.brake_deadzone", 0.0);    C.tr_gamma[1] = cfg_num(cfg, "input.brake_gamma", 1.0);    C.tr_max[1] = cfg_num(cfg, "input.brake_max", 1.0);
+    for (int i = 0; i < 2; i++) { if (!(C.tr_dz[i] >= 0 && C.tr_dz[i] < 0.9)) C.tr_dz[i] = 0; if (!(C.tr_gamma[i] > 0)) C.tr_gamma[i] = 1; if (!(C.tr_max[i] >= 0 && C.tr_max[i] <= 1)) C.tr_max[i] = 1; }
     char k[64];
     for (int g = 1; g <= 7; g++) { snprintf(k, sizeof k, "input.gear%d_button", g); C.gear_btn[g] = cfg_int(cfg, k, -1); }
     C.rev_btn = cfg_int(cfg, "input.reverse_button", -1);
@@ -99,8 +112,11 @@ void input_poll(input_state* st) {
     if (st->kind == 2) {
         double sx = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_LEFTX) / 32767.0;
         st->steer = -sx;
-        st->throttle = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) / 32767.0;
-        st->brake = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_TRIGGERLEFT) / 32767.0;
+        /* SDL game-controller triggers: 0 (released) .. 32767 (full), linear in travel (XInput 0..255 scaled by SDL) */
+        st->throttle_raw = fmax(0, SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) / 32767.0);
+        st->brake_raw = fmax(0, SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_TRIGGERLEFT) / 32767.0);
+        st->throttle = input_trigger_curve(st->throttle_raw, C.tr_dz[0], C.tr_gamma[0], C.tr_max[0]);
+        st->brake = input_trigger_curve(st->brake_raw, C.tr_dz[1], C.tr_gamma[1], C.tr_max[1]);
         st->handbrake = SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_B) ? 1 : 0;
         st->clutch = SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_X) ? 1 : 0;
         int up = SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER), dn = SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_LEFTSHOULDER);
@@ -116,6 +132,7 @@ void input_poll(input_state* st) {
     st->steer = C.steer_inv ? s : -s;     /* SDL: + = right; ours: + = left */
     st->throttle = C.thr_axis >= 0 && C.thr_axis < st->naxes ? pedal(st->axis[C.thr_axis], C.thr_inv, C.pedal_dead) : 0;
     st->brake = C.brk_axis >= 0 && C.brk_axis < st->naxes ? pedal(st->axis[C.brk_axis], C.brk_inv, C.pedal_dead) : 0;
+    st->throttle_raw = st->throttle; st->brake_raw = st->brake;   /* wheel pedals: linear */
     st->clutch = C.clu_axis >= 0 && C.clu_axis < st->naxes ? pedal(st->axis[C.clu_axis], C.clu_inv, C.pedal_dead) : 0;
     st->handbrake = C.hb_axis >= 0 && C.hb_axis < st->naxes ? pedal(st->axis[C.hb_axis], C.hb_inv, C.pedal_dead) : 0;
     if (C.hb_btn >= 0 && SDL_JoystickGetButton(js, C.hb_btn)) st->handbrake = 1;
