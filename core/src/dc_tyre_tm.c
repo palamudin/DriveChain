@@ -215,6 +215,7 @@ void dc_tyre_tm_init(dc_car* c) {
         B->kz_mode = T->tm_kz_mode;
         B->shape = T->tm_shape;
         B->damp_mode = T->tm_damp_mode;
+        B->slide_dir = T->tm_slide_dir;
         B->kappa = T->tm_contact_ratio > 0 ? T->tm_contact_ratio : 0.8;
         B->roll = T->tm_carcass_roll > 0 ? T->tm_carcass_roll : 0.6;
         B->cz = T->tm_cz > 0 ? T->tm_cz : 300;
@@ -599,6 +600,17 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
             byn = (by + h * sly) / Dy; ex_star = (bx + h * slx) / Dx;
         }
     }
+    double Dret = 1;   /* plastic divisor of the longitudinal deflection (slide_dir): d ex / d omega scales with it */
+    if (B->slide_dir > 0.5 && t->grip > 0) {
+        /* option (tyre_tm_slide_dir = 1, not in TARMAC): return the trial deflection onto |K b| = mu N along the Coulomb flow
+           (sliding opposite the force, isotropic friction) instead of scaling it radially. TARMAC's radial scaling keeps the
+           elastic ratio Kx sx / Ky sy of the trial, so a fully sliding tyre's force leans toward the stiffer axis: at a locked,
+           steered front wheel the force is ~10 deg off the slip velocity toward the wheel plane, i.e. a locked wheel still
+           "steers" (in the wrong direction). Same backward-Euler return as the brush model (dc_tyre_carcass_return). */
+        double ex0 = ex_star;
+        dc_tyre_carcass_return(B->kx, B->ky, Dx, Dy, mu * N, &ex_star, &byn);
+        if (ex0 != 0) Dret = ex_star / ex0;
+    }
     t->by_new = byn; t->ey_new = 0;   /* belt shift is in Pc already: no extra n x (ey Fx) moment */
     t->ex_star = ex_star;
     if (B->damp_mode > 0.5) {
@@ -608,12 +620,12 @@ void dc_tyre_tm_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc
            K sigma + c V) and the brush curve is not truncated by a viscous share of the mu N cap. */
         t->Fy = B->ky * byn + cd * (byn - by) / h;
         t->Fx_star = B->kx * ex_star + cd * (ex_star - bx) / h;
-        t->D = h * t->Re / Dx;
+        t->D = h * t->Re / Dx * Dret;
         t->kx = B->kx + cd / h;
     } else {
         t->Fy = B->ky * byn + cd * sly;
         t->Fx_star = B->kx * ex_star + cd * slx;
-        t->D = h * t->Re / Dx;
+        t->D = h * t->Re / Dx * Dret;
         t->kx = B->kx + cd * Dx / h;
     }
     if (t->grip <= 0) { t->Fy = 0; t->Fx_star = 0; t->kx = 0; }
@@ -762,8 +774,13 @@ void dc_tyre_tm_phaseB(dc_car* c, int i, v3 cw, v3 a, double omega_new, double h
         double ey = t->by_new;
         if (t->grip <= 0) { ex = 0; ey = 0; }
         /* plastic return map: no unlimited stored shear while sliding */
-        double em = hypot(B->kx * ex, B->ky * ey);
-        if (em > cap && em > 0) { ex *= cap / em; ey *= cap / em; }
+        if (B->slide_dir > 0.5) {   /* isotropic Coulomb return (tyre_tm_slide_dir = 1), as in phase A */
+            double hh = h > 0 ? h : 1e-3, avx = fabs(t->Vcx), sx = t->sig_x > 0 ? t->sig_x : 1, sy = t->sig_y > 0 ? t->sig_y : 1;
+            dc_tyre_carcass_return(B->kx, B->ky, 1 + hh * avx / sx, 1 + hh * avx / sy, cap, &ex, &ey);
+        } else {
+            double em = hypot(B->kx * ex, B->ky * ey);
+            if (em > cap && em > 0) { ex *= cap / em; ey *= cap / em; }
+        }
         S->ex = ex; S->ey = ey; S->phi = t->phi_new;
         t->pe += 0.5 * B->kx * ex * ex + 0.5 * B->ky * ey * ey;
         t->pe += 0.5 * t->kt * t->phi_new * t->phi_new;

@@ -183,7 +183,7 @@ static const fld axle_f[] = {
     TF("tyre_tm_carcass_roll", tm_carcass_roll), TF("tyre_tm_cz", tm_cz), TF("tyre_tm_kx", tm_kx), TF("tyre_tm_ky", tm_ky),
     TF("tyre_tm_relax_x", tm_relax_x), TF("tyre_tm_relax_y", tm_relax_y), TF("tyre_tm_damping", tm_damping), TF("tyre_tm_mu", tm_mu),
     TF("tyre_tm_load_sens", tm_load_sens), TF("tyre_tm_fz_ref", tm_fz_ref), TF("tyre_tm_slide_floor", tm_slide_floor),
-    TF("tyre_tm_slide_speed", tm_slide_speed), TF("tyre_tm_crr", tm_crr), TF("tyre_tm_k_rim", tm_k_rim), TF("tyre_tm_c_rim", tm_c_rim), TF("tyre_tm_shape", tm_shape), TF("tyre_tm_damp_mode", tm_damp_mode), TF("tyre_tm_slide_exp", tm_slide_exp), TF("tyre_carcass_store", carcass_store),
+    TF("tyre_tm_slide_speed", tm_slide_speed), TF("tyre_tm_crr", tm_crr), TF("tyre_tm_k_rim", tm_k_rim), TF("tyre_tm_c_rim", tm_c_rim), TF("tyre_tm_shape", tm_shape), TF("tyre_tm_damp_mode", tm_damp_mode), TF("tyre_tm_slide_exp", tm_slide_exp), TF("tyre_tm_slide_dir", tm_slide_dir), TF("tyre_carcass_store", carcass_store),
     {NULL, 0, 0, 0}};
 
 static char* trim(char* s) {

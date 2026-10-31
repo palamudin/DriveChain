@@ -127,7 +127,7 @@ static double brush_store(const dc_tc* t, double ex, double ey) {
    the sliding force toward the longitudinal axis (at wheel lock the lateral force came out 2-5x below tan(alpha) Fx).
    |K e(nu)| is convex and decreasing in nu, so Newton from nu = 0 increases monotonically onto the root; a fixed number
    of steps keeps it deterministic. Inside the boundary (|K e*| <= G) the deflection is elastic and unchanged. */
-static void carcass_return(double Kx, double Ky, double ax, double ay, double G, double* ex, double* ey) {
+void dc_tyre_carcass_return(double Kx, double Ky, double ax, double ay, double G, double* ex, double* ey) {
     double cx = Kx * *ex, cy = Ky * *ey;
     if (!(G > 0)) { *ex = 0; *ey = 0; return; }   /* no friction: the boundary is the origin (nu -> infinity) */
     if (cx * cx + cy * cy <= G * G) return;
@@ -408,7 +408,7 @@ void dc_tyre_phaseA(dc_car* c, int i, v3 cw, v3 a, v3 vc, v3 wc, double h, dc_tc
     t->D = h * t->Re / (1 + h * t->Vr / t->sig_x);
     /* plastic return onto the full-slide boundary before the force evaluation, so a sliding tyre's force is evaluated at
        the returned deflection (its direction opposes the sliding velocity), not at the elastic trial */
-    if (t->grip > 0) carcass_return(t->Cxtot / t->sig_x, t->Ctot / t->sig_y, 1 + h * t->Vr / t->sig_x, 1 + h * t->Vr / t->sig_y,
+    if (t->grip > 0) dc_tyre_carcass_return(t->Cxtot / t->sig_x, t->Ctot / t->sig_y, 1 + h * t->Vr / t->sig_x, 1 + h * t->Vr / t->sig_y,
                                     3 * t->mu_eff * t->Ntot, &t->ex_star, &t->ey_new);
     double sy = t->ey_new / t->sig_y + T->camber_gain * t->camber_l;
     double sx = t->ex_star / t->sig_x;
@@ -475,7 +475,7 @@ void dc_tyre_phaseB(dc_car* c, int i, v3 cw, v3 a, double omega_new, double h, d
     if (commit) {
         /* return the carcass deflection to the saturation boundary (excess is sliding, along the friction force) */
         double ey = t->ey_new;
-        carcass_return(t->Cxtot / t->sig_x, t->Ctot / t->sig_y, 1 + h * t->Vr / t->sig_x, 1 + h * t->Vr / t->sig_y, 3 * cap, &ex, &ey);
+        dc_tyre_carcass_return(t->Cxtot / t->sig_x, t->Ctot / t->sig_y, 1 + h * t->Vr / t->sig_x, 1 + h * t->Vr / t->sig_y, 3 * cap, &ex, &ey);
         S->ex = ex; S->ey = ey; S->phi = t->phi_new;
         double scale = 0.35 + 0.65 * fmin(S->pressure / T->pressure_ref, 1.5);
         t->pe += T->carcass_store > 0 ? brush_store(t, ex, ey)

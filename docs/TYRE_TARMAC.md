@@ -66,6 +66,29 @@ comparisons.
 | Turn slip | none | Tread-twist (parking) moment: torsional brush of the footprint, relaxing over the half length | required for parking / turn-in steering torque |
 | Damage, thermal, wear, gas temperature | modelled | not ported (constant grip and pressure; pressure comes from the host's own model) | out of scope; host has its own pressure state |
 | Rolling-resistance sign at standstill | `sign(Ω)` | `tanh(Ω Re / 0.5 m/s)` | no chatter at rest |
+| Sliding direction (`tyre_tm_slide_dir = 1`, option, default 0) | radial return of the deflection onto the friction circle | isotropic Coulomb return (same as the envelope model) | a sliding tread's force must oppose its slip velocity (below) |
+
+### Sliding direction option (`tyre_tm_slide_dir = 1`, not in TARMAC; default 0)
+
+TARMAC caps the brush deflection by scaling it radially onto `|K b| = μN`. The trial deflection keeps its elastic
+ratio `Kx σx sx : Ky σy sy`, so with the carcass stiffer longitudinally the force of a fully sliding tyre leans toward
+the wheel plane instead of opposing the slip velocity. Rubber sliding friction is isotropic to first order (Coulomb;
+Pacejka, *Tire and Vehicle Dynamics*, 3rd ed., ch. 3 brush model: in the sliding region the shear stress opposes the local sliding
+velocity; Schallamach 1963): a locked wheel's force is anti-parallel to its contact-patch slip velocity whatever its steer
+angle, which is why a car with locked front wheels does not respond to the steering.
+
+Measured on the mx5_na front, full lock (34° road wheel), 20 km/h, brake locking the fronts:
+
+| | force vs slip velocity | yaw while sliding (steer held left) |
+|---|---|---|
+| TARMAC radial (0) | 168-172° (8-12° toward the wheel plane) | 72 → −9 deg/s: the nose turns away from the steer |
+| isotropic (1) | 179.6-180° | 71 → 0 deg/s: rotation stops, the car carries on along its momentum |
+
+The option returns the trial deflection along the Coulomb flow (backward Euler of `db/dt = s - |vx| b/σ - ν K b`,
+the same `dc_tyre_carcass_return` as the envelope model) in phase A and at commit. Elastic (non-sliding) states are
+untouched: the return acts only when the trial exceeds `μN`, so it changes a tyre at the friction limit and in full slide only.
+`make locktest` checks it (force within 4° of anti-slip on locked fronts, no yaw against the held steer). The demo
+exposes it as `car.tyre_slide_dir` (proposal propL, off until approved).
 
 ### Mz and pneumatic trail (addition)
 

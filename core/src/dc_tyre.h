@@ -2,6 +2,8 @@
 #ifndef DC_TYRE_H
 #define DC_TYRE_H
 #include "dc_internal.h"
+/* plastic return of a carcass/brush deflection onto |K e| = G with isotropic Coulomb sliding (dc_tyre.c) */
+void dc_tyre_carcass_return(double Kx, double Ky, double ax, double ay, double G, double* ex, double* ey);
 typedef struct {
     int contact, nrows;
     v3 n, xc, yc, p;                 /* effective normal, contact frame, effective point (world) */
