@@ -111,26 +111,33 @@ void sim_reuse_desc(const sim_t* S, char* b, int n) {
     snprintf(b, n, "factor reuse on (tol %.0e): %.1f %% hits of %lld, refactors %lld tol / %lld refine, dK max %.1e, refine err max %.1e mean %.1e",
              F->tol, F->solves ? 100.0 * (double)F->hits / (double)F->solves : 0.0, F->solves, F->refactor_tol, F->refactor_refine, F->dev_max, F->err_max, F->err_mean);
 }
+/* car parameters from the config, in this order: defaults, car.ini, substep rate, assist, solver, model, bricks,
+   car.setup, tyre_slide_dir (shared by sim_init and the garage retune) */
+int sim_load_params(const cfg_t* cfg, dc_car_params* P, char* err, int errlen) {
+    dc_default_params(P);
+    const char* carini = cfg_str(cfg, "car.ini", "");
+    if (*carini && !dc_load_params(carini, P, err, errlen)) return 0;
+    /* host tick and mechanics rate: physics.tick_hz (default 1000) x physics.substeps; an explicit physics.substep_hz wins */
+    { double thz = cfg_num(cfg, "physics.tick_hz", 1000); if (thz < 30) thz = 30;
+      int ns = cfg_int(cfg, "physics.substeps", 0);
+      if (ns > 0) P->substep_hz = thz * ns;
+      P->substep_hz = cfg_num(cfg, "physics.substep_hz", P->substep_hz); }
+    int as = cfg_int(cfg, "car.assist", -1); if (as >= 0) P->assist = as;
+    int so = cfg_int(cfg, "car.solver", -1); if (so >= 0) P->solver = so;   /* --set car.solver=0 -> legacy core */
+    { const char* pm = cfg_str(cfg, "physics.model", NULL); if (pm) P->model = !strcmp(pm, "fast") ? DC_MODEL_FAST : DC_MODEL_REFERENCE; }   /* reference = full numerics (default) */
+    P->bricks = cfg_int(cfg, "physics.bricks", 0);   /* tabulated model-reduction bricks (bitmask, 0 = full model) */
+    if (!sim_apply_setup(P, cfg_str(cfg, "car.setup", "legacy"), err, errlen)) return 0;   /* after car.solver: propBR needs the MB core */
+    { int sd = cfg_int(cfg, "car.tyre_slide_dir", -1);   /* TARMAC tyre sliding direction override: 1 = propL (in the default setup), 0 = TARMAC radial return */
+      if (sd >= 0) { for (int a = 0; a < 2; a++) P->axle[a].tyre.tm_slide_dir = sd;
+                     fprintf(stderr, "[car] tyre_tm_slide_dir = %d (%s)\n", sd, sd ? "propL: sliding force opposes the slip velocity" : "legacy TARMAC radial return"); } }
+    return 1;
+}
 int sim_init(sim_t* S, cfg_t* cfg, track_t* trk, audio_t* audio, char* err, int errlen) {
     memset(S, 0, sizeof *S);
     S->cfg = cfg; S->trk = trk; S->audio = audio;
-    dc_default_params(&S->P);
-    const char* carini = cfg_str(cfg, "car.ini", "");
-    if (*carini && !dc_load_params(carini, &S->P, err, errlen)) return 0;
-    /* host tick and mechanics rate: physics.tick_hz (default 1000) x physics.substeps; an explicit physics.substep_hz wins */
     { double thz = cfg_num(cfg, "physics.tick_hz", 1000); if (thz < 30) thz = 30; S->tick_dt = 1.0 / thz;
-      int ns = cfg_int(cfg, "physics.substeps", 0);
-      if (ns > 0) S->P.substep_hz = thz * ns;
-      S->P.substep_hz = cfg_num(cfg, "physics.substep_hz", S->P.substep_hz);
       S->perf_log = cfg_int(cfg, "physics.perf_log", 0); }
-    int as = cfg_int(cfg, "car.assist", -1); if (as >= 0) S->P.assist = as;
-    int so = cfg_int(cfg, "car.solver", -1); if (so >= 0) S->P.solver = so;   /* --set car.solver=0 -> legacy core */
-    { const char* pm = cfg_str(cfg, "physics.model", NULL); if (pm) S->P.model = !strcmp(pm, "fast") ? DC_MODEL_FAST : DC_MODEL_REFERENCE; }   /* reference = full numerics (default) */
-    S->P.bricks = cfg_int(cfg, "physics.bricks", 0);   /* tabulated model-reduction bricks (bitmask, 0 = full model) */
-    if (!sim_apply_setup(&S->P, cfg_str(cfg, "car.setup", "legacy"), err, errlen)) return 0;   /* after car.solver: propBR needs the MB core */
-    { int sd = cfg_int(cfg, "car.tyre_slide_dir", -1);   /* TARMAC tyre sliding direction override: 1 = propL (in the default setup), 0 = TARMAC radial return */
-      if (sd >= 0) { for (int a = 0; a < 2; a++) S->P.axle[a].tyre.tm_slide_dir = sd;
-                     fprintf(stderr, "[car] tyre_tm_slide_dir = %d (%s)\n", sd, sd ? "propL: sliding force opposes the slip velocity" : "legacy TARMAC radial return"); } }
+    if (!sim_load_params(cfg, &S->P, err, errlen)) return 0;
     if (!make_car(S)) { snprintf(err, errlen, "dc_create failed"); return 0; }
     S->rotation_rad = cfg_num(cfg, "input.rotation_deg", 2 * S->P.steer_lock_deg) * M_PI / 180;
     S->hands_k = cfg_num(cfg, "input.wheel_hands_k", 80); S->hands_d = cfg_num(cfg, "input.wheel_hands_d", 1.2);
@@ -192,6 +199,16 @@ int sim_rebuild_car(sim_t* S) {
     double yaw = atan2(2 * (q0 * q3 + q1 * q2), 1 - 2 * (q2 * q2 + q3 * q3));
     if (!make_car(S)) return 0;
     sim_reset_at(S, ch[0].pos[0], ch[0].pos[1], yaw, t0.vx); return 1;
+}
+/* garage retune (render thread, under the sim lock): reload the car parameters from S->cfg (car.ini = the tuned file)
+   and rebuild the car at the current pose and speed. Same parameter path as sim_init. */
+int sim_retune(sim_t* S, char* err, int errlen) {
+    dc_car_params P;
+    if (!sim_load_params(S->cfg, &P, err, errlen)) return 0;
+    S->P = P;
+    if (!sim_rebuild_car(S)) { snprintf(err, errlen, "dc_create failed"); return 0; }
+    S->rotation_rad = cfg_num(S->cfg, "input.rotation_deg", 2 * S->P.steer_lock_deg) * M_PI / 180;
+    return 1;
 }
 void sim_driver_engage(sim_t* S, int on) {
     if (!S->drv) return;
@@ -526,7 +543,16 @@ static void sim_tick_body(sim_t* S, double dt) {
     if (C->autopilot != S->ctl_seen.autopilot) { S->ctl_seen.autopilot = C->autopilot; S->autopilot = !S->autopilot; }
     if (C->drv_toggle != S->ctl_seen.drv_toggle) { S->ctl_seen.drv_toggle = C->drv_toggle; sim_driver_engage(S, !S->drv_on); }
     if (S->ext_hook) S->ext_hook(S, 0);
-    if (C->pause) { S->snap.paused = 1; snap_rec(S); return; }
+    if (C->pause) {
+        if (S->menu_poll) {   /* menu open: keep reading the device for menu navigation (wheel buttons / paddles / axes) */
+            input_poll(&S->dev);
+            S->menu_su += S->dev.shift_up; S->menu_sd += S->dev.shift_down; S->dev.shift_up = S->dev.shift_down = 0;
+            for (int a = 0; a < 8; a++) S->snap.raw_axis[a] = S->dev.axis[a];
+            S->snap.raw_buttons = S->dev.buttons_raw; S->snap.raw_naxes = S->dev.naxes;
+        }
+        S->snap.menu_su = S->menu_su; S->snap.menu_sd = S->menu_sd;
+        S->snap.paused = 1; snap_rec(S); return;
+    }
     S->snap.paused = 0;
 
 #ifdef DC_PROF

@@ -1,0 +1,17 @@
+Fonts bundled with the DriveChain demo menu
+================================
+
+All three families are licensed under the SIL Open Font License, Version 1.1.
+Full licence text: https://openfontlicense.org/open-font-license-official-text/
+
+Michroma          Copyright 2011 Vernon Adams. Upstream: https://github.com/googlefonts/Michroma-font
+                  File: Michroma-Regular.ttf (unmodified)
+Inter             Copyright 2016 The Inter Project Authors (Rasmus Andersson). Upstream: https://github.com/rsms/inter
+                  Files: Inter-Regular/SemiBold.ttf
+JetBrains Mono    Copyright 2020 The JetBrains Mono Project Authors. Upstream: https://github.com/JetBrains/JetBrainsMono
+                  File: JetBrainsMono-Medium.ttf
+
+The Inter and JetBrains Mono files are static instances made with fontTools (varLib.instancer) from the upstream
+variable fonts at fixed weights (400/500/600/700 and 400/500), so the menu can load fixed weights without variable
+axes. Glyph outlines are not otherwise changed. Under OFL 1.1 these are Modified Versions; neither font declares a
+Reserved Font Name, so the family names are kept. They remain under OFL 1.1 and may not be sold by themselves.

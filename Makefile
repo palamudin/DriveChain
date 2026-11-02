@@ -98,7 +98,7 @@ clean:
 
 # ---- raylib test drive (Linux). raylib is compiled from source by tools/build_raylib.sh into build-deps/linux
 RAYLIB_SRC ?= /workspace/deps/raylib-5.5/src
-DEMO_SRC = demo/main.c demo/sim.c demo/roadbake.c demo/track.c demo/meshtrack.c demo/audio.c demo/input.c demo/cfg.c demo/objload.c demo/drvproto.c demo/net.c
+DEMO_SRC = demo/main.c demo/sim.c demo/roadbake.c demo/track.c demo/meshtrack.c demo/audio.c demo/input.c demo/cfg.c demo/objload.c demo/drvproto.c demo/net.c demo/tune.c demo/menu.c
 build-deps/linux/libraylib.a:
 	tools/build_raylib.sh $(RAYLIB_SRC) build-deps/linux gcc ar linux
 # Built with DC_PROF (core compiled in): the F7 perf overlay reads the per-stage counters.
@@ -107,6 +107,13 @@ build/drivechain_demo: $(DEMO_SRC) demo/*.h $(CORE_SRC) core/src/*.h core/includ
 	  $(CORE_SRC) build-deps/linux/libraylib.a $$(sdl2-config --libs) -lGL -lm -lpthread -ldl -lrt -lX11
 demo: build/drivechain_demo
 .PHONY: demo
+
+# garage tune spec check: demo/ui/tune_spec.json parses, every expression evaluates on every car, write/reload round-trips
+build/tune_check: tools/tune_check.c demo/tune.c demo/sim.c demo/roadbake.c demo/track.c demo/meshtrack.c demo/audio.c demo/input.c demo/cfg.c demo/*.h build/libdrivechain.a
+	$(CC) -O2 -std=gnu11 -Wall -Wno-misleading-indentation -Wno-unused-parameter -DDEMO_NO_SDL -Icore/include -o $@ tools/tune_check.c demo/tune.c demo/sim.c demo/roadbake.c demo/track.c demo/meshtrack.c demo/audio.c demo/input.c demo/cfg.c build/libdrivechain.a -lm -lpthread
+tune_check: build/tune_check
+	./build/tune_check --selftest && for c in cars/*.ini; do ./build/tune_check $$c > /tmp/tc_c.txt && python3 tools/gen_tune_spec.py --check $$c > /tmp/tc_py.txt && diff -q /tmp/tc_c.txt /tmp/tc_py.txt && echo "tune_check $$c ok" || exit 1; done
+.PHONY: tune_check
 
 # ---- headless closed-loop driver harness (exact demo tick, no SDL / raylib)
 DT_SRC = tools/drivetest.c demo/sim.c demo/roadbake.c demo/track.c demo/meshtrack.c demo/audio.c demo/input.c demo/cfg.c

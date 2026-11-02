@@ -5,6 +5,8 @@
 #include "rlgl.h"
 #include "raymath.h"
 #include "sim.h"
+#include "menu.h"
+#include "tune.h"
 #include "drvproto.h"
 #include "objload.h"
 #include "meshtrack.h"
@@ -972,6 +974,22 @@ static void draw_scene(Camera3D cam, const sim_snap* V, const dc_car_params* P, 
 }
 
 /* F6: rebuild the world on the next map in place (physics is held by MTX while the map loads), then reset to its start */
+static int load_map(int next) {   /* rebuild the world on MAPS[next] (caller holds the physics) */
+    char err[256] = "";
+    track_t T2; memset(&T2, 0, sizeof T2);
+    if (!track_select(&T2, MAPS[next], cfg_num(&CFG, "track.rough_scale", 1.0), err, sizeof err) && strcmp(MAPS[next], "proving")) {
+        fprintf(stderr, "[demo] map '%s' failed: %s\n", MAPS[next], err); track_free(&T2); return 0;
+    }
+    for (int i = 0; i < NCH; i++) UnloadModel(CH[i]);
+    NCH = 0; FAR_CH = -1;
+    for (int i = 0; i < NSIGN; i++) UnloadRenderTexture(SIGN_RT[i]);
+    NSIGN = 0;
+    track_free(&TRK); TRK = T2; CUR_MAP = next; set_map_title();
+    double t0 = GetTime(); build_world(); build_signs();
+    printf("[demo] map -> %s (%d chunks, %.1f s)\n", MAP_TITLE, NCH, GetTime() - t0); fflush(stdout);
+    HELP_ON = 1; HELP_STICKY = 0; HELP_T0 = GetTime();
+    return 1;
+}
 static void switch_map(sim_ctl* C) {
     if (NMAPS < 2) return;
     for (int tries = 0; tries < NMAPS; tries++) {
@@ -992,9 +1010,37 @@ static void switch_map(sim_ctl* C) {
         return;
     }
 }
+/* garage menu: full session restart (car / map / physics-class settings changed): stop the physics thread,
+   optionally switch the map, re-init the sim from CFG (the menu already applied the tune keys), restart the thread */
+static pthread_t PHYS_TH;
+static int sim_restart(int map, char* err, int errlen) {
+    if (g_threaded) { RUN = 0; pthread_join(PHYS_TH, NULL); }
+    void (*eh)(struct sim_s*, int) = SIM.ext_hook; void* ec = SIM.ext_ctx; int ecl = SIM.ext_clients; char rd[400]; memcpy(rd, SIM.rec_dir, sizeof rd);
+    sim_shutdown(&SIM);
+    if (map >= 0 && map != CUR_MAP && load_map(map)) { cfg_set(&CFG, "track.layout", MAPS[CUR_MAP]); if (TRK.layout == TRACK_MESH) cfg_set(&CFG, "start.spot", "start"); }
+    int ok = sim_init(&SIM, &CFG, &TRK, &AUD, err, errlen);
+    if (!ok) {   /* a broken tune must not leave the demo without a car: fall back to the base car file */
+        fprintf(stderr, "[demo] tune failed (%s) -> base car\n", err);
+        const char* b = cfg_str(&CFG, "ui.base_car", NULL); if (b) cfg_set(&CFG, "car.ini", b);
+        ok = sim_init(&SIM, &CFG, &TRK, &AUD, err, errlen);
+    }
+    SIM.ext_hook = eh; SIM.ext_ctx = ec; SIM.ext_clients = ecl; memcpy(SIM.rec_dir, rd, sizeof rd);
+    SIM.ctl.pause = 1; SIM.menu_poll = 1;
+    PEND = SIM.ctl; PUB = SIM.snap; PUB_OK = 0;
+    if (g_threaded) { RUN = 1; pthread_create(&PHYS_TH, NULL, phys_thread, NULL); }
+    return ok;
+}
+static void live_settings(int* camode, double* fovv, int* xray, int* forces) {   /* [ui] menu settings that apply immediately */
+    AUD.master = (float)cfg_num(&CFG, "audio.master", 0.8); AUD.engine_gain = (float)cfg_num(&CFG, "audio.engine", 1.0);
+    AUD.tyre_gain = (float)cfg_num(&CFG, "audio.tyres", 1.0); AUD.road_gain = (float)cfg_num(&CFG, "audio.road", 1.0); AUD.wind_gain = (float)cfg_num(&CFG, "audio.wind", 1.0);
+    SetTargetFPS(cfg_int(&CFG, "display.fps_cap", 0));
+    for (int i = 0; i < CAM_N; i++) if (!strcmp(cfg_str(&CFG, "camera.mode", "chase"), CAMN[i])) *camode = i;
+    *fovv = cfg_num(&CFG, "display.fov_v_deg", 50); *xray = cfg_int(&CFG, "display.xray", 0); *forces = cfg_int(&CFG, "display.force_arrows", 1);
+    CHASE_INIT = 0;
+}
 int main(int argc, char** argv) {
     const char* cfgpath = "demo.ini";
-    const char* shots = NULL; const char* wav = NULL; double shot_dt = 1.0 / 60; double max_time = 0;
+    const char* shots = NULL; const char* wav = NULL; const char* mshots = NULL; int nomenu = 0; double shot_dt = 1.0 / 60; double max_time = 0;
     for (int i = 1; i < argc; i++) if (!strcmp(argv[i], "--config") && i + 1 < argc) cfgpath = argv[++i];
     if (!cfg_load(&CFG, cfgpath)) printf("[demo] no %s - using defaults\n", cfgpath);
     for (int i = 1; i < argc; i++) {
@@ -1002,8 +1048,18 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--shots") && i + 1 < argc) shots = argv[++i];       /* "t:cam:file,t:cam:file" (sim seconds) */
         else if (!strcmp(argv[i], "--audio-wav") && i + 1 < argc) wav = argv[++i];
         else if (!strcmp(argv[i], "--time") && i + 1 < argc) max_time = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--nomenu")) nomenu = 1;
+        else if (!strcmp(argv[i], "--menu-shots") && i + 1 < argc) mshots = argv[++i];   /* "spec:file,..." (menu_shot specs) */
     }
-    int headless = shots != NULL || (wav && max_time > 0);
+    int headless = shots != NULL || (wav && max_time > 0) || mshots != NULL;
+    int menu_on = mshots ? 1 : (!headless && !nomenu && cfg_int(&CFG, "ui.menu", 1));
+    if (menu_on && !mshots) {   /* garage tune (menu output) on top of demo.ini; --set still wins */
+        char car0[300]; snprintf(car0, sizeof car0, "%s", cfg_str(&CFG, "car.ini", ""));
+        if (tune_overrides_load(&CFG, "user/drivechain_overrides.ini")) printf("[demo] garage tune: user/drivechain_overrides.ini\n");
+        for (int i = 1; i < argc; i++) if (!strcmp(argv[i], "--set") && i + 1 < argc) { char kv[256]; snprintf(kv, sizeof kv, "%s", argv[++i]); char* e = strchr(kv, '='); if (e) { *e = 0; cfg_set(&CFG, kv, e + 1); } }
+        FILE* cf = fopen(cfg_str(&CFG, "car.ini", ""), "r"); if (cf) fclose(cf);
+        else { const char* b = cfg_str(&CFG, "ui.base_car", NULL); FILE* bf = b ? fopen(b, "r") : NULL; if (bf) fclose(bf); cfg_set(&CFG, "car.ini", bf ? b : car0); }
+    }
     { const char* lay = cfg_str(&CFG, "track.layout", "proving"); char terr[256] = "";
       if (!track_select(&TRK, lay, cfg_num(&CFG, "track.rough_scale", 1.0), terr, sizeof terr)) { fprintf(stderr, "map '%s' failed: %s -> proving ground\n", lay, terr); lay = "proving"; }
       scan_maps(lay); set_map_title();
@@ -1040,7 +1096,7 @@ int main(int argc, char** argv) {
     title_font_load();
     printf("[demo] window ok\n"); fflush(stdout);
     SetTargetFPS(cfg_int(&CFG, "display.fps_cap", 0));
-    SetExitKey(KEY_ESCAPE);
+    SetExitKey(menu_on ? KEY_NULL : KEY_ESCAPE);
     LIT = LoadShaderFromMemory(VS, FS);
     LOC_VIEW = GetShaderLocation(LIT, "viewPos"); LOC_SUN = GetShaderLocation(LIT, "sunDir"); LOC_FOG = GetShaderLocation(LIT, "fogDen");
     Vector3 sun = Vector3Normalize((Vector3){-0.45f, -0.8f, -0.35f}); SetShaderValue(LIT, LOC_SUN, &sun, SHADER_UNIFORM_VEC3);
@@ -1059,10 +1115,21 @@ int main(int argc, char** argv) {
     int xray = cfg_int(&CFG, "display.xray", 0), hud = 1, forces = cfg_int(&CFG, "display.force_arrows", 1);
     double fovv = cfg_num(&CFG, "display.fov_v_deg", 50);
     int triple = cfg_int(&CFG, "display.triple", 0);
-    pthread_t th;
     g_threaded = !headless;
+    static menu_host MH;
+    if (menu_on) {
+        SIM.ctl.pause = 1; SIM.menu_poll = 1;   /* parked in the garage until Drive */
+        MH.cfg = &CFG; MH.maps = MAPS; MH.nmaps = NMAPS; MH.cur_map = &CUR_MAP; MH.map_title = MAP_TITLE; MH.view = &VIEW; MH.P = P; MH.dev_kind = SIM.snap.device_kind;
+        VIEW = SIM.snap; menu_init(&MH); menu_open(0);
+    }
     PEND = SIM.ctl; PUB = SIM.snap;
-    if (g_threaded) pthread_create(&th, NULL, phys_thread, NULL);
+    if (g_threaded) pthread_create(&PHYS_TH, NULL, phys_thread, NULL);
+    static RenderTexture2D SCENE; int scene_w = 0, scene_h = 0;
+    /* --menu-shots: each spec is set up, animated for 40 frames, then captured; "pause" first drives 8 s on autopilot */
+    char mspec[16][160], mfile[16][256]; int nms = 0, msi = 0, msf = 0;
+    if (mshots) { char buf[2048]; snprintf(buf, sizeof buf, "%s", mshots);
+        for (char* tok = strtok(buf, ","); tok && nms < 16; tok = strtok(NULL, ",")) { char* c = strchr(tok, ':');   /* spec has no colon; the path may (drive letter) */ if (!c) continue; *c = 0;
+            snprintf(mspec[nms], 160, "%s", tok); snprintf(mfile[nms], 256, "%s", c + 1); nms++; } }
 
     /* headless shot list */
     typedef struct { double t; int cam; char file[256]; int done; char cond; } shot_t; shot_t SH[16]; int nsh = 0;
@@ -1106,6 +1173,10 @@ int main(int argc, char** argv) {
         pfr.lock_us = (float)(prof_now_us() - pfr.tw);
 #endif
         sim_ctl* C = big && !g_threaded ? &SIM.ctl : &PEND;
+        int mopen = menu_on && menu_is_open();
+        if (mshots && msi < nms && !strcmp(mspec[msi], "pause") && VIEW.sim_time < 8.0) { if (mopen) menu_close(); mopen = 0; C->pause = 0; SIM.menu_poll = 0; }
+        if (mopen) { C->kb_left = C->kb_right = C->kb_up = C->kb_down = C->kb_clutch = C->kb_hand = 0; }
+        else {
         C->kb_left = IsKeyDown(KEY_LEFT) || IsKeyDown(KEY_A); C->kb_right = IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D);
         C->kb_up = IsKeyDown(KEY_UP) || IsKeyDown(KEY_W); C->kb_down = IsKeyDown(KEY_DOWN) || IsKeyDown(KEY_S);
         C->kb_clutch = IsKeyDown(KEY_LEFT_SHIFT); C->kb_hand = IsKeyDown(KEY_SPACE);
@@ -1120,6 +1191,8 @@ int main(int argc, char** argv) {
         if (IsKeyPressed(KEY_F9)) C->rec_toggle++;
         if (IsKeyPressed(KEY_PAUSE) || IsKeyPressed(KEY_F5)) C->pause = !C->pause;
         if (IsKeyPressed(KEY_F6) && !headless && big) switch_map(C);
+        if (menu_on && !mshots && (IsKeyPressed(KEY_ESCAPE) || IsGamepadButtonPressed(0, GAMEPAD_BUTTON_MIDDLE_RIGHT))) { C->pause = 1; SIM.menu_poll = 1; menu_open(1); mopen = 1; }
+        }
         if (headless) {   /* synchronous fixed-step physics for reproducible shots */
             static double hacc = 0; hacc += shot_dt;   /* whole host ticks per frame; the remainder carries over */
             while (hacc >= SIM.tick_dt - 1e-12) { sim_tick(&SIM, SIM.tick_dt); hacc -= SIM.tick_dt; }
@@ -1134,6 +1207,36 @@ int main(int argc, char** argv) {
             printf("[trace] t %.1f s %.0f d %+.1f v %.1f gear %d rpm %.0f ay %+.2f sw %+.0f\n", VIEW.sim_time, s_, d_, VIEW.t.speed * 3.6, VIEW.t.gear, VIEW.t.engine_rpm, VIEW.t.ay / 9.81, VIEW.t.sw_angle * 57.3); }
         pthread_mutex_unlock(&SMTX);
         if (big) pthread_mutex_unlock(&MTX);
+        if (menu_on) {   /* ---- garage / pause menu ---- */
+            if (!mshots && !mopen) { static unsigned wb_prev; int b = cfg_int(&CFG, "ui.wheel_menu_button", -1);   /* wheel button that opens the pause menu */
+                if (b >= 0 && b < 32 && (VIEW.raw_buttons & ~wb_prev & (1u << b))) { pthread_mutex_lock(&SMTX); PEND.pause = 1; SIM.menu_poll = 1; pthread_mutex_unlock(&SMTX); menu_open(1); mopen = 1; }
+                wb_prev = VIEW.raw_buttons; }
+            if (mshots && msi < nms && msf == 0 && (strcmp(mspec[msi], "pause") || VIEW.sim_time >= 8.0)) {
+                if (!strcmp(mspec[msi], "pause")) { SIM.ctl.pause = 1; SIM.menu_poll = 1; menu_open(1); }
+                if (!menu_shot(mspec[msi])) fprintf(stderr, "[menu-shot] bad spec '%s'\n", mspec[msi]);
+                mopen = 1; }
+            MH.dev_kind = VIEW.device_kind; MH.map_title = MAP_TITLE; MH.nmaps = NMAPS;
+            menu_action ma = mopen ? menu_update((float)dt) : MA_NONE;
+            if (ma == MA_QUIT) break;
+            if (ma == MA_LIVE) live_settings(&camode, &fovv, &xray, &forces);
+            if (ma == MA_DRIVE || ma == MA_RESTART || ma == MA_TO_GARAGE || ma == MA_APPLY) {
+                char e2[256] = ""; int want = ma == MA_RESTART || ma == MA_TO_GARAGE || menu_need_reinit() || menu_map_choice() >= 0;
+                live_settings(&camode, &fovv, &xray, &forces);
+                if (ma == MA_APPLY) {   /* car-only change in game: rebuild the car at its current pose */
+                    __atomic_store_n(&RENDER_WAIT, 1, __ATOMIC_RELEASE); pthread_mutex_lock(&MTX); __atomic_store_n(&RENDER_WAIT, 0, __ATOMIC_RELEASE);
+                    if (!sim_retune(&SIM, e2, sizeof e2)) fprintf(stderr, "[demo] retune failed: %s\n", e2);
+                    pthread_mutex_unlock(&MTX);
+                } else if (want) { double t0 = GetTime(); if (!sim_restart(menu_map_choice(), e2, sizeof e2)) { fprintf(stderr, "[demo] restart failed: %s\n", e2); break; }
+                    printf("[demo] session restart: %s, car %s (%.1f s)\n", MAP_TITLE, cfg_str(&CFG, "car.ini", "-"), GetTime() - t0); fflush(stdout); }
+                P = dc_params(SIM.car); MH.P = P; menu_after_init();
+                if (ma == MA_TO_GARAGE) menu_open(2);
+                else { pthread_mutex_lock(&SMTX); PEND.pause = 0; SIM.ctl.pause = 0; SIM.menu_poll = 0; pthread_mutex_unlock(&SMTX); CHASE_INIT = 0; HELP_T0 = GetTime(); }
+            }
+            if (ma == MA_RESUME) { pthread_mutex_lock(&SMTX); PEND.pause = 0; SIM.ctl.pause = 0; SIM.menu_poll = 0; pthread_mutex_unlock(&SMTX); }
+            mopen = menu_is_open();
+        }
+        if (mopen) { if (menu_garage_cam()) { ORB_Y += dt * 0.12; ORB_P = 0.16; ORB_D = 5.4; } }
+        else {
         if (IsKeyPressed(KEY_C)) { camode = (camode + 1) % CAM_N; CHASE_INIT = 0; }
         if (IsKeyPressed(KEY_F1)) { int vis = HELP_ON && (HELP_STICKY || GetTime() < HELP_T0 + 12.0); if (vis) HELP_ON = 0; else { HELP_ON = 1; HELP_STICKY = 1; } }
         if (IsKeyPressed(KEY_F2)) xray = !xray;
@@ -1144,9 +1247,10 @@ int main(int argc, char** argv) {
         { static int rep_was; if (VIEW.rep_done && !rep_was && cfg_int(&CFG, "replay.dump", 1)) perf_dump_file(GetFPS()); rep_was = VIEW.rep_done; }   /* replay end: auto F8 */
         if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) { Vector2 d = GetMouseDelta(); ORB_Y -= d.x * 0.01; ORB_P = fmin(1.4, fmax(-0.1, ORB_P + d.y * 0.01)); }
         ORB_D = fmax(2, ORB_D - GetMouseWheelMove() * 0.5);
+        }
         H_ffb[H_n % HIST] = (float)VIEW.t.column_torque; H_sw[H_n % HIST] = (float)VIEW.t.sw_angle; H_ay[H_n % HIST] = (float)VIEW.t.ay; H_n++;
 
-        int cur_cam = camode; shot_t* take = NULL;
+        int cur_cam = mopen && menu_garage_cam() ? CAM_ORBIT : camode; shot_t* take = NULL;
         if (headless) for (int i = 0; i < nsh; i++) if (!SH[i].done && VIEW.sim_time >= SH[i].t - 1e-9) {
             int ok = 1;
             if (SH[i].cond == 'k') { ok = 0; for (int w = 0; w < 4; w++) if ((VIEW.surf[w] == SURF_KERB || VIEW.surf[w] == SURF_SAUSAGE) && VIEW.t.w[w].fz > 500) ok = 1; }
@@ -1156,7 +1260,9 @@ int main(int argc, char** argv) {
         BeginDrawing();
         ClearBackground((Color){150, 185, 225, 255});
         int sw = GetScreenWidth(), sh = GetScreenHeight();
-        if (triple && cur_cam == CAM_COCKPIT) {
+        if (mopen) { if (sw != scene_w || sh != scene_h) { if (scene_w) UnloadRenderTexture(SCENE); SCENE = LoadRenderTexture(sw, sh); scene_w = sw; scene_h = sh; }
+            BeginTextureMode(SCENE); ClearBackground((Color){150, 185, 225, 255}); }
+        if (triple && cur_cam == CAM_COCKPIT && !mopen) {
             /* three panels, each its own frustum yawed by the panel's horizontal FOV (+ bezel) */
             double aspect = (sw / 3.0) / sh, hf = 2 * atan(tan(fovv * M_PI / 360) * aspect);
             double side = cfg_num(&CFG, "display.triple_side_deg", 0) > 0 ? cfg_num(&CFG, "display.triple_side_deg", 0) * M_PI / 180 : hf + cfg_num(&CFG, "display.bezel_deg", 1.5) * M_PI / 180;
@@ -1183,11 +1289,18 @@ int main(int argc, char** argv) {
             __atomic_store_n(&SIM.cam_yaw_mdeg, (int)lrint(CAM_YAW * 57295.8), __ATOMIC_RELAXED);
             draw_scene(cam, &VIEW, P, xray, forces, cur_cam);
         }
+        if (mopen) { EndTextureMode(); menu_draw(&SCENE, sw, sh); }
+        else {
         if (hud) draw_hud(&VIEW, P, sw, sh, GetFPS(), CAMN[cur_cam], hud == 1);
         if (PERF_ON) draw_perf(sw, sh, GetFPS());
         { double now_ = GetTime(), a = HELP_ON ? (HELP_STICKY ? 1.0 : fmin(1.0, fmax(0.0, (HELP_T0 + 12.0 - now_) / 2.0))) : 0.0;
           if (a > 0 && (!headless || getenv("DEMO_HELP"))) draw_spot_help(sw, sh, (float)a); }
+        }
         EndDrawing();
+        if (mshots && msi < nms && mopen && ++msf >= 40) {
+            Image im = LoadImageFromScreen(); ExportImage(im, mfile[msi]); UnloadImage(im);
+            printf("[menu-shot] %s -> %s\n", mspec[msi], mfile[msi]); fflush(stdout); msi++; msf = 0;
+            if (msi >= nms) break; }
         if (take) {
             Image im = LoadImageFromScreen(); ExportImage(im, take->file); UnloadImage(im);
             printf("[shot] t=%.2f cam=%s -> %s  (v %.1f km/h, ay %.2f g, sw %.0f deg, surf %s/%s/%s/%s)\n", VIEW.sim_time, CAMN[cur_cam], take->file, VIEW.t.speed * 3.6, VIEW.t.ay / 9.81,
@@ -1197,10 +1310,10 @@ int main(int argc, char** argv) {
 #ifdef DC_PROF
         pfr.draw_us = (float)(prof_now_us() - pfr.tw); prof_frame(&pfr);
 #endif
-        if (headless) { int all = 1; for (int i = 0; i < nsh; i++) if (!SH[i].done) all = 0; if (all || VIEW.sim_time >= max_time) { if (getenv("DEMO_PERF_DUMP")) perf_dump_file(GetFPS()); break; } }
+        if (headless && !mshots) { int all = 1; for (int i = 0; i < nsh; i++) if (!SH[i].done) all = 0; if (all || VIEW.sim_time >= max_time) { if (getenv("DEMO_PERF_DUMP")) perf_dump_file(GetFPS()); break; } }
     }
     RUN = 0;
-    if (g_threaded) pthread_join(th, NULL);
+    if (g_threaded) pthread_join(PHYS_TH, NULL);
 #ifdef DC_PROF
     if (pf_out) prof_dump(pf_out);
 #endif

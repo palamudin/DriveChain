@@ -25,6 +25,15 @@ Unzip anywhere and double-click `drivechain_demo.exe`. Run it from its own folde
 
 The console window prints the joysticks it found, which one it picked, and whether constant-force FFB opened (`[ffb] constant force OK`).
 
+## Garage and pause menu
+The demo starts in the garage: DRIVE, CAR, TRACK, TUNING, SETUPS, SETTINGS.
+- TUNING has nine pages (alignment, springs and dampers, tyres, brakes, differential, gearing, aero, weight, engine). Drag a slider, or use the arrow keys / d-pad. Shift is a fine step and Ctrl a coarse one; hold to repeat. Sliders snap at the stock value and at the limits.
+- The right panel shows live outputs from the tune, such as ride frequency, damping ratio, brake lock limits, gear speeds and aero balance, with the change against the saved setup (green = gain, red = loss). Values marked EST are estimates.
+- R reverts the selected row to the saved value, and Shift+R to stock. L links front and rear.
+- Press DRIVE to apply the tune. It is written to `user/car.ui.ini`, and settings go to `user/drivechain_overrides.ini`.
+- In the drive, Esc or gamepad Start opens the pause menu (resume, apply tune and resume, tuning, settings, restart, quit to garage, quit). Set `[ui] wheel_menu_button` to open it from a wheel button.
+- To skip the menu, use `--nomenu` or set `[ui] menu = 0`. Esc then quits as before.
+
 ## Physics core (`solver` in the car file)
 
 - `solver = 1` (default): the new coupled multibody core. Arms, knuckles, wheels, rack, column, U-joints,

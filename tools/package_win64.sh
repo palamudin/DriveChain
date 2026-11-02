@@ -74,5 +74,8 @@ sed 's/$/\r/' tools/dist_README.md > $D/README.md
 # private map notes (display name, credits) live with the map, never in tracked files: appended to the dist README only
 for t in private/tracks/*/; do [ -f "$t/DIST_README.md" ] && { printf '\n'; cat "$t/DIST_README.md"; } | sed 's/$/\r/' >> $D/README.md; done
 mkdir -p $D/fonts; cp demo/fonts/DejaVuSans.ttf demo/fonts/LICENSE_DejaVu.txt $D/fonts/
+# garage/pause menu: UI fonts (OFL, see LICENSE_UI_FONTS.txt) and the shared tuning spec (same file the Unity GUI reads)
+cp demo/fonts/Inter-Regular.ttf demo/fonts/Inter-SemiBold.ttf demo/fonts/JetBrainsMono-Medium.ttf demo/fonts/Michroma-Regular.ttf demo/fonts/LICENSE_UI_FONTS.txt $D/fonts/
+mkdir -p $D/ui; cp demo/ui/tune_spec.json $D/ui/
 (cd dist && zip -qr9 drivechain_win64.zip drivechain_win64)
 ls -la dist/drivechain_win64.zip

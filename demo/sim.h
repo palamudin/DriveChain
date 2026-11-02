@@ -41,6 +41,7 @@ typedef struct {            /* physics -> render */
     int gear_req, assist, autopilot, paused, device_kind, has_ffb;
     char device[128];
     double raw_axis[8]; int raw_buttons, raw_naxes, hgear;   /* input diagnostics for mapping */
+    int menu_su, menu_sd;     /* paddle (shift up / down) edge counters while the menu has the device (menu_poll) */
     double thr_raw, brk_raw;  /* device throttle / brake travel 0..1 before the gamepad trigger curve (F7) */
     int drv_on, drv_takeover, drv_mode, drv_clients; dc_driver_state drv_st;
     int rec_on, rep_on, rep_done, rep_match, rep_i, rep_n, rec_n; char rec_msg[200], rep_path[256], rec_path[256];   /* record / replay status */
@@ -87,6 +88,7 @@ typedef struct sim_s {
     sim_rec_tick* rep_buf; int rep_on, rep_i, rep_n, rep_done, rep_match; sim_rec_hdr rep_h; char rep_path[600];
     unsigned long long rep_hash;
     char rec_msg[200];                    /* last record / replay status line (HUD) */
+    int menu_poll, menu_su, menu_sd;      /* garage menu open: while paused, poll the device for navigation (no physics) */
     int cam_yaw_mdeg;                     /* render camera yaw (world, millidegrees; written by the render thread, atomic), for the per-tick record */
 #ifdef DC_PROF
     double pf_poll0, pf_poll1, pf_step0, pf_step1, pf_ffb1;   /* tick-phase stamps (us) */
@@ -95,6 +97,8 @@ typedef struct sim_s {
 int  sim_apply_setup(dc_car_params* P, const char* setup, char* err, int errlen);   /* car.setup: default (propBR + propD where applicable) | legacy */
 void sim_affinity_desc(const sim_t* S, char* b, int n);   /* affinity/priority line for F7 and the perf dump */
 void sim_reuse_desc(const sim_t* S, char* b, int n);      /* factor reuse settings + hit rate (F7 / dump) */
+int  sim_load_params(const cfg_t* cfg, dc_car_params* P, char* err, int errlen);   /* defaults + car.ini + [physics]/[car] overrides */
+int  sim_retune(sim_t* S, char* err, int errlen);   /* reload params from S->cfg and rebuild the car at the current pose */
 int  sim_init(sim_t* S, cfg_t* cfg, track_t* trk, audio_t* audio, char* err, int errlen);
 void sim_tick(sim_t* S, double dt);         /* one physics tick (dt = S->tick_dt) incl. input + FFB + audio */
 void sim_reset_on_track(sim_t* S, double s, double d, double speed);

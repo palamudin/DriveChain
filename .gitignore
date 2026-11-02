@@ -20,3 +20,4 @@ results/driver/drv_*.csv
 
 # valve step traces (regenerate with make valvetest)
 results/valve/*_step.csv
+user/

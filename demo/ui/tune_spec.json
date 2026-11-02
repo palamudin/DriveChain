@@ -1,0 +1,1941 @@
+{
+ "version": 1,
+ "consts": {
+  "g": 9.81,
+  "rho": 1.225,
+  "crr": 0.012,
+  "eta": 0.9
+ },
+ "vars": [
+  {
+   "n": "m",
+   "e": "car.mass"
+  },
+  {
+   "n": "a",
+   "e": "front.hub#0"
+  },
+  {
+   "n": "b",
+   "e": "-rear.hub#0"
+  },
+  {
+   "n": "L",
+   "e": "a + b"
+  },
+  {
+   "n": "tf",
+   "e": "2*front.hub#1"
+  },
+  {
+   "n": "tr",
+   "e": "2*rear.hub#1"
+  },
+  {
+   "n": "rf",
+   "e": "front.tyre_radius"
+  },
+  {
+   "n": "rr",
+   "e": "rear.tyre_radius"
+  },
+  {
+   "n": "h",
+   "e": "rf - front.hub#2"
+  },
+  {
+   "n": "wf",
+   "e": "b/L"
+  },
+  {
+   "n": "fzf",
+   "e": "m*g*wf/2"
+  },
+  {
+   "n": "fzr",
+   "e": "m*g*(1-wf)/2"
+  },
+  {
+   "n": "msf",
+   "e": "m*wf/2 - front.unsprung_mass"
+  },
+  {
+   "n": "msr",
+   "e": "m*(1-wf)/2 - rear.unsprung_mass"
+  },
+  {
+   "n": "kf",
+   "e": "front.wheel_rate"
+  },
+  {
+   "n": "kr",
+   "e": "rear.wheel_rate"
+  },
+  {
+   "n": "fnf",
+   "e": "sqrt(kf/msf)/(2*pi)"
+  },
+  {
+   "n": "fnr",
+   "e": "sqrt(kr/msr)/(2*pi)"
+  },
+  {
+   "n": "ccf",
+   "e": "2*sqrt(kf*msf)"
+  },
+  {
+   "n": "ccr",
+   "e": "2*sqrt(kr*msr)"
+  },
+  {
+   "n": "zbf",
+   "e": "front.damp_bump/ccf"
+  },
+  {
+   "n": "zrf",
+   "e": "front.damp_reb/ccf"
+  },
+  {
+   "n": "zbr",
+   "e": "rear.damp_bump/ccr"
+  },
+  {
+   "n": "zrr",
+   "e": "rear.damp_reb/ccr"
+  },
+  {
+   "n": "kpf",
+   "e": "(kf + front.arb)*tf^2/2"
+  },
+  {
+   "n": "kpr",
+   "e": "(kr + rear.arb)*tr^2/2"
+  },
+  {
+   "n": "rsf",
+   "e": "100*kpf/(kpf + kpr)"
+  },
+  {
+   "n": "rollg",
+   "e": "deg(m*g*h/(kpf + kpr))"
+  },
+  {
+   "n": "sagf",
+   "e": "1000*fzf/kf"
+  },
+  {
+   "n": "sagr",
+   "e": "1000*fzr/kr"
+  },
+  {
+   "n": "rwl",
+   "e": "car.steer_lock_deg/car.steer_ratio"
+  },
+  {
+   "n": "turns",
+   "e": "2*car.steer_lock_deg/360"
+  },
+  {
+   "n": "tcirc",
+   "e": "2*(L/sin(rad(rwl)) + tf/2)"
+  },
+  {
+   "n": "caster",
+   "e": "deg(axis(0))"
+  },
+  {
+   "n": "kpi",
+   "e": "deg(axis(1))"
+  },
+  {
+   "n": "toef",
+   "e": "2*1000*2*rf*sin(rad(front.static_toe_deg))"
+  },
+  {
+   "n": "toer",
+   "e": "2*1000*2*rr*sin(rad(rear.static_toe_deg))"
+  },
+  {
+   "n": "tbf",
+   "e": "front.brake_torque"
+  },
+  {
+   "n": "tbr",
+   "e": "rear.brake_torque"
+  },
+  {
+   "n": "bias",
+   "e": "100*tbf/(tbf + tbr)"
+  },
+  {
+   "n": "dmax",
+   "e": "2*(tbf/rf + tbr/rr)/(m*g)"
+  },
+  {
+   "n": "mxf",
+   "e": "front.tyre_mu_x"
+  },
+  {
+   "n": "mxr",
+   "e": "rear.tyre_mu_x"
+  },
+  {
+   "n": "fzbf",
+   "e": "m*g*(b + h*dmax)/L/2"
+  },
+  {
+   "n": "fzbr",
+   "e": "max(m*g*(a - h*dmax)/L/2, 0)"
+  },
+  {
+   "n": "limf",
+   "e": "mxf*front.tyre_fz0*(fzbf/front.tyre_fz0)^front.tyre_ls_exp_x*rf"
+  },
+  {
+   "n": "limr",
+   "e": "mxr*rear.tyre_fz0*(fzbr/rear.tyre_fz0)^rear.tyre_ls_exp_x*rr"
+  },
+  {
+   "n": "dlf",
+   "e": "mxf*m*g*b/(2*L)*rf/(tbf/dmax - mxf*m*g*h/(2*L)*rf)"
+  },
+  {
+   "n": "dlr",
+   "e": "mxr*m*g*a/(2*L)*rr/(tbr/dmax + mxr*m*g*h/(2*L)*rr)"
+  },
+  {
+   "n": "dlock",
+   "e": "min(sel(dlf > 0, dlf, 99), dlr)"
+  },
+  {
+   "n": "kzf",
+   "e": "front.tyre_kz_ref + front.tyre_kz_per_pa*(front.tyre_pressure - front.tyre_pressure_ref)"
+  },
+  {
+   "n": "kzr",
+   "e": "rear.tyre_kz_ref + rear.tyre_kz_per_pa*(rear.tyre_pressure - rear.tyre_pressure_ref)"
+  },
+  {
+   "n": "dzf",
+   "e": "1000*fzf/kzf"
+  },
+  {
+   "n": "dzr",
+   "e": "1000*fzr/kzr"
+  },
+  {
+   "n": "plf",
+   "e": "1000*front.tyre_patch_factor*sqrt(2*rf*dzf/1000)*2"
+  },
+  {
+   "n": "plr",
+   "e": "1000*rear.tyre_patch_factor*sqrt(2*rr*dzr/1000)*2"
+  },
+  {
+   "n": "csf",
+   "e": "100*(0.35 + 0.65*min(front.tyre_pressure/front.tyre_pressure_ref, 1.5))"
+  },
+  {
+   "n": "csr",
+   "e": "100*(0.35 + 0.65*min(rear.tyre_pressure/rear.tyre_pressure_ref, 1.5))"
+  },
+  {
+   "n": "hotf",
+   "e": "(front.tyre_pressure/1000 + 101.3)*(273 + 50)/(273 + 20) - 101.3"
+  },
+  {
+   "n": "hotr",
+   "e": "(rear.tyre_pressure/1000 + 101.3)*(273 + 50)/(273 + 20) - 101.3"
+  },
+  {
+   "n": "winf",
+   "e": "100*clamp(1 - ((hotf - 225)/45)^2, 0, 1)"
+  },
+  {
+   "n": "winr",
+   "e": "100*clamp(1 - ((hotr - 225)/45)^2, 0, 1)"
+  },
+  {
+   "n": "tpk",
+   "e": "tmax()"
+  },
+  {
+   "n": "ppk",
+   "e": "pmax()"
+  },
+  {
+   "n": "axt1",
+   "e": "tpk*gear(1)*car.final_drive"
+  },
+  {
+   "n": "lockp",
+   "e": "car.diff_preload + car.diff_power*axt1"
+  },
+  {
+   "n": "lockc",
+   "e": "car.diff_preload + car.diff_coast*car.coast_torque*gear(1)*car.final_drive"
+  },
+  {
+   "n": "visc100",
+   "e": "car.diff_viscous*100*2*pi/60"
+  },
+  {
+   "n": "v1",
+   "e": "vgear(1)"
+  },
+  {
+   "n": "v2",
+   "e": "vgear(2)"
+  },
+  {
+   "n": "v3",
+   "e": "vgear(3)"
+  },
+  {
+   "n": "v4",
+   "e": "vgear(4)"
+  },
+  {
+   "n": "v5",
+   "e": "vgear(5)"
+  },
+  {
+   "n": "v6",
+   "e": "vgear(6)"
+  },
+  {
+   "n": "d12",
+   "e": "car.limiter_rpm*(1 - gear(2)/gear(1))"
+  },
+  {
+   "n": "d23",
+   "e": "car.limiter_rpm*(1 - gear(3)/gear(2))"
+  },
+  {
+   "n": "d34",
+   "e": "car.limiter_rpm*(1 - gear(4)/gear(3))"
+  },
+  {
+   "n": "d45",
+   "e": "car.limiter_rpm*(1 - gear(5)/gear(4))"
+  },
+  {
+   "n": "vt",
+   "e": "vtop()"
+  },
+  {
+   "n": "q100",
+   "e": "0.5*rho*(100/3.6)^2"
+  },
+  {
+   "n": "q200",
+   "e": "0.5*rho*(200/3.6)^2"
+  },
+  {
+   "n": "dr200",
+   "e": "car.cda*q200"
+  },
+  {
+   "n": "df200f",
+   "e": "car.cla_front*q200"
+  },
+  {
+   "n": "df200r",
+   "e": "car.cla_rear*q200"
+  },
+  {
+   "n": "abal",
+   "e": "sel(abs(car.cla_front + car.cla_rear) > 0.0001, 100*car.cla_front/(car.cla_front + car.cla_rear), 50)"
+  },
+  {
+   "n": "pdrag",
+   "e": "car.cda*0.5*rho*(vt/3.6)^3/1000"
+  },
+  {
+   "n": "izz",
+   "e": "car.sprung_inertia#2 + 2*front.unsprung_mass*(a^2 + (tf/2)^2) + 2*rear.unsprung_mass*(b^2 + (tr/2)^2)"
+  },
+  {
+   "n": "pw",
+   "e": "ppk/(m/1000)"
+  }
+ ],
+ "overlay_default": {
+  "when": {
+   "front.tyre_width": [
+    0.182,
+    0.188
+   ],
+   "front.tyre_radius": [
+    0.285,
+    0.293
+   ]
+  },
+  "keys": {
+   "tyre_mu_y": "0.955",
+   "tyre_mu_x": "0.926",
+   "tyre_ls_exp_y": "0.90",
+   "tyre_ls_exp_x": "0.92"
+  }
+ },
+ "pages": [
+  {
+   "id": "align",
+   "title": "ALIGNMENT & STEERING",
+   "unity": "08",
+   "panel": "align",
+   "rows": [
+    {
+     "k": "front.static_camber_deg",
+     "l": "Camber",
+     "u": "deg",
+     "min": -5,
+     "max": 5,
+     "st": 0.1,
+     "d": 1,
+     "k2": "rear.static_camber_deg",
+     "lim": [
+      -3,
+      0
+     ],
+     "i": "Static camber at design ride height. Negative = top of the wheel leans in; more negative widens the cornering contact patch but costs braking and traction in a straight line."
+    },
+    {
+     "k": "front.static_toe_deg",
+     "l": "Toe",
+     "u": "deg / side",
+     "min": -1,
+     "max": 1,
+     "st": 0.01,
+     "d": 2,
+     "k2": "rear.static_toe_deg",
+     "lim": [
+      -0.2,
+      0.3
+     ],
+     "i": "Static toe per side, + = toe-in. Front toe-out sharpens turn-in; rear toe-in adds straight-line stability."
+    },
+    {
+     "k": "car.steer_ratio",
+     "l": "Steering ratio",
+     "u": ":1",
+     "min": 10,
+     "max": 20,
+     "st": 0.1,
+     "d": 1,
+     "lim": [
+      12,
+      17
+     ],
+     "i": "Steering-wheel angle per road-wheel angle. Lower = quicker steering."
+    },
+    {
+     "k": "car.steer_lock_deg",
+     "l": "Steering lock",
+     "u": "deg at wheel",
+     "min": 360,
+     "max": 900,
+     "st": 1,
+     "d": 0,
+     "lim": [
+      450,
+      540
+     ],
+     "i": "Steering-wheel angle at full lock (each way)."
+    },
+    {
+     "k": "car.assist",
+     "l": "Power assist",
+     "u": "",
+     "min": 0,
+     "max": 1,
+     "st": 1,
+     "d": 0,
+     "opts": [
+      "OFF",
+      "ON"
+     ],
+     "vals": [
+      "0",
+      "1"
+     ],
+     "i": "Hydraulic rack assist on / off (car.assist)."
+    },
+    {
+     "k": "car.assist_tref",
+     "l": "Assist threshold",
+     "u": "N·m",
+     "min": 0,
+     "max": 8,
+     "st": 0.1,
+     "d": 1,
+     "i": "Torsion-bar torque at which the assist valve opens."
+    },
+    {
+     "k": "car.rack_friction",
+     "l": "Rack friction",
+     "u": "N",
+     "min": 0,
+     "max": 200,
+     "st": 1,
+     "d": 0,
+     "lim": [
+      30,
+      120
+     ],
+     "i": "Coulomb friction in the rack; a little gives the wheel weight on centre, too much hides the tyre."
+    }
+   ],
+   "out": [
+    {
+     "l": "Caster",
+     "e": "caster",
+     "u": "deg",
+     "d": 1
+    },
+    {
+     "l": "King-pin incl.",
+     "e": "kpi",
+     "u": "deg",
+     "d": 1
+    },
+    {
+     "l": "Road-wheel lock",
+     "e": "rwl",
+     "u": "deg",
+     "d": 1
+    },
+    {
+     "l": "Turns lock-to-lock",
+     "e": "turns",
+     "u": "",
+     "d": 2
+    },
+    {
+     "l": "Turning circle",
+     "e": "tcirc",
+     "u": "m",
+     "d": 1,
+     "est": 1
+    },
+    {
+     "l": "Total toe F",
+     "e": "toef",
+     "u": "mm",
+     "d": 1
+    },
+    {
+     "l": "Total toe R",
+     "e": "toer",
+     "u": "mm",
+     "d": 1
+    }
+   ],
+   "note": "Caster and KPI from the front ball joints (car file). Turning circle: kerb-to-kerb, simple bicycle model."
+  },
+  {
+   "id": "springs",
+   "title": "SPRINGS & DAMPERS",
+   "unity": "09",
+   "panel": "springs",
+   "rows": [
+    {
+     "k": "front.wheel_rate",
+     "l": "Wheel rate",
+     "u": "kN/m",
+     "min": 0,
+     "max": 30,
+     "st": 0.1,
+     "d": 1,
+     "k2": "rear.wheel_rate",
+     "s": 0.001,
+     "lim": [
+      8,
+      25
+     ],
+     "i": "Spring rate measured at the wheel (spring x motion ratio squared). Sets ride frequency and body control."
+    },
+    {
+     "k": "front.arb",
+     "l": "Anti-roll bar",
+     "u": "kN/m",
+     "min": 0,
+     "max": 20,
+     "st": 0.1,
+     "d": 1,
+     "k2": "rear.arb",
+     "s": 0.001,
+     "lim": [
+      0,
+      15
+     ],
+     "i": "Bar rate at the wheel. More front bar = more front roll stiffness share = more understeer."
+    },
+    {
+     "k": "front.preload_travel",
+     "l": "Ride height",
+     "u": "mm",
+     "min": -30,
+     "max": 30,
+     "st": 1,
+     "d": 0,
+     "k2": "rear.preload_travel",
+     "s": 1000,
+     "lim": [
+      -15,
+      15
+     ],
+     "i": "Spring preload travel: + raises the corner, - lowers it."
+    },
+    {
+     "k": "front.damp_bump",
+     "l": "Bump, slow",
+     "u": "N·s/m",
+     "min": 0,
+     "max": 2000,
+     "st": 10,
+     "d": 0,
+     "k2": "rear.damp_bump",
+     "lim": [
+      400,
+      1600
+     ],
+     "i": "Low-speed bump damping: body motions under roll, pitch and heave."
+    },
+    {
+     "k": "front.damp_fast_bump",
+     "l": "Bump, fast",
+     "u": "N·s/m",
+     "min": 0,
+     "max": 1400,
+     "st": 10,
+     "d": 0,
+     "k2": "rear.damp_fast_bump",
+     "i": "High-speed bump damping past the knee: kerbs and sharp bumps."
+    },
+    {
+     "k": "front.damp_reb",
+     "l": "Rebound, slow",
+     "u": "N·s/m",
+     "min": 0,
+     "max": 2900,
+     "st": 10,
+     "d": 0,
+     "k2": "rear.damp_reb",
+     "lim": [
+      800,
+      2600
+     ],
+     "i": "Low-speed rebound damping: how fast the body recovers."
+    },
+    {
+     "k": "front.damp_fast_reb",
+     "l": "Rebound, fast",
+     "u": "N·s/m",
+     "min": 0,
+     "max": 2500,
+     "st": 10,
+     "d": 0,
+     "k2": "rear.damp_fast_reb",
+     "i": "High-speed rebound past the knee."
+    },
+    {
+     "k": "front.bumpstop_up",
+     "l": "Bump-stop gap",
+     "u": "mm",
+     "min": 0,
+     "max": 120,
+     "st": 1,
+     "d": 0,
+     "k2": "rear.bumpstop_up",
+     "s": 1000,
+     "lim": [
+      30,
+      90
+     ],
+     "i": "Free bump travel before the bump rubber engages."
+    }
+   ],
+   "out": [
+    {
+     "l": "Ride freq F",
+     "e": "fnf",
+     "u": "Hz",
+     "d": 2,
+     "good": [
+      1.0,
+      2.2
+     ]
+    },
+    {
+     "l": "Ride freq R",
+     "e": "fnr",
+     "u": "Hz",
+     "d": 2,
+     "good": [
+      1.0,
+      2.2
+     ]
+    },
+    {
+     "l": "Damping ζ bump F/R",
+     "e": "zbf",
+     "u": "",
+     "d": 2,
+     "good": [
+      0.15,
+      0.7
+     ]
+    },
+    {
+     "l": "",
+     "e": "zbr",
+     "u": "",
+     "d": 2,
+     "good": [
+      0.15,
+      0.7
+     ]
+    },
+    {
+     "l": "Damping ζ reb F/R",
+     "e": "zrf",
+     "u": "",
+     "d": 2,
+     "good": [
+      0.25,
+      0.9
+     ]
+    },
+    {
+     "l": "",
+     "e": "zrr",
+     "u": "",
+     "d": 2,
+     "good": [
+      0.25,
+      0.9
+     ]
+    },
+    {
+     "l": "Roll stiffness F",
+     "e": "rsf",
+     "u": "%",
+     "d": 1,
+     "good": [
+      45,
+      70
+     ]
+    },
+    {
+     "l": "Roll gradient",
+     "e": "rollg",
+     "u": "deg/g",
+     "d": 2,
+     "est": 1
+    }
+   ],
+   "note": "Sprung corner mass = static axle load / 2 - unsprung. Roll gradient assumes a ground-level roll axis (estimate)."
+  },
+  {
+   "id": "tyres",
+   "title": "TYRES",
+   "unity": "10",
+   "panel": "tyres",
+   "rows": [
+    {
+     "k": "front.tyre_pressure",
+     "l": "Cold pressure",
+     "u": "kPa",
+     "min": 120,
+     "max": 280,
+     "st": 1,
+     "d": 0,
+     "k2": "rear.tyre_pressure",
+     "s": 0.001,
+     "lim": [
+      170,
+      240
+     ],
+     "i": "Cold inflation pressure. In the sim it sets vertical stiffness, sidewall progression and carcass stiffness."
+    },
+    {
+     "k": "car.tyre_slide_dir",
+     "l": "Sliding direction",
+     "u": "",
+     "min": 0,
+     "max": 1,
+     "st": 1,
+     "d": 0,
+     "opts": [
+      "LEGACY",
+      "ISOTROPIC"
+     ],
+     "vals": [
+      "0",
+      "1"
+     ],
+     "t": "demo",
+     "i": "TARMAC sliding direction: isotropic Coulomb (default) or the legacy radial return."
+    },
+    {
+     "k": "front.tyre_mu_x",
+     "l": "Peak μ long.",
+     "u": "",
+     "min": 0,
+     "max": 2,
+     "st": 0.01,
+     "d": 2,
+     "k2": "rear.tyre_mu_x",
+     "ro": 1,
+     "i": "Peak longitudinal friction (setup default overlay applied)."
+    },
+    {
+     "k": "front.tyre_mu_y",
+     "l": "Peak μ lat.",
+     "u": "",
+     "min": 0,
+     "max": 2,
+     "st": 0.01,
+     "d": 2,
+     "k2": "rear.tyre_mu_y",
+     "ro": 1,
+     "i": "Peak lateral friction (setup default overlay applied)."
+    }
+   ],
+   "out": [
+    {
+     "l": "Vertical rate F/R",
+     "e": "kzf/1000",
+     "u": "kN/m",
+     "d": 0
+    },
+    {
+     "l": "",
+     "e": "kzr/1000",
+     "u": "kN/m",
+     "d": 0
+    },
+    {
+     "l": "Static deflection F/R",
+     "e": "dzf",
+     "u": "mm",
+     "d": 1
+    },
+    {
+     "l": "",
+     "e": "dzr",
+     "u": "mm",
+     "d": 1
+    },
+    {
+     "l": "Contact length F/R",
+     "e": "plf",
+     "u": "mm",
+     "d": 0
+    },
+    {
+     "l": "",
+     "e": "plr",
+     "u": "mm",
+     "d": 0
+    },
+    {
+     "l": "Carcass stiffness F/R",
+     "e": "csf",
+     "u": "%",
+     "d": 0
+    },
+    {
+     "l": "",
+     "e": "csr",
+     "u": "%",
+     "d": 0
+    },
+    {
+     "l": "Hot pressure F/R",
+     "e": "hotf",
+     "u": "kPa",
+     "d": 0,
+     "est": 1
+    },
+    {
+     "l": "",
+     "e": "hotr",
+     "u": "kPa",
+     "d": 0,
+     "est": 1
+    },
+    {
+     "l": "Grip window F/R",
+     "e": "winf",
+     "u": "%",
+     "d": 0,
+     "est": 1,
+     "good": [
+      70,
+      101
+     ]
+    },
+    {
+     "l": "",
+     "e": "winr",
+     "u": "%",
+     "d": 0,
+     "est": 1,
+     "good": [
+      70,
+      101
+     ]
+    }
+   ],
+   "note": "The sim has no tyre temperature: hot pressure (20 → 50 °C) and the grip window (centred 225 kPa hot) are estimates."
+  },
+  {
+   "id": "brakes",
+   "title": "BRAKES",
+   "unity": "11",
+   "panel": "brakes",
+   "rows": [
+    {
+     "k": "front.brake_torque",
+     "l": "Brake torque",
+     "u": "N·m",
+     "min": 0,
+     "max": 1900,
+     "st": 5,
+     "d": 0,
+     "k2": "rear.brake_torque",
+     "lim": [
+      600,
+      1300
+     ],
+     "i": "Maximum brake torque per wheel at full pedal."
+    },
+    {
+     "k": "ui.brake_bias",
+     "l": "Brake bias",
+     "u": "% front",
+     "min": 40,
+     "max": 85,
+     "st": 0.5,
+     "d": 1,
+     "lim": [
+      60,
+      75
+     ],
+     "t": "bias",
+     "i": "Front share of total brake torque. Moves torque between the axles and keeps the total."
+    },
+    {
+     "k": "rear.handbrake_torque",
+     "l": "Handbrake",
+     "u": "N·m",
+     "min": 0,
+     "max": 1000,
+     "st": 5,
+     "d": 0,
+     "i": "Handbrake torque per rear wheel."
+    }
+   ],
+   "out": [
+    {
+     "l": "Bias",
+     "e": "bias",
+     "u": "% F",
+     "d": 1
+    },
+    {
+     "l": "Full-pedal decel",
+     "e": "dmax",
+     "u": "g",
+     "d": 2,
+     "est": 1
+    },
+    {
+     "l": "Front @ full pedal",
+     "e": "tbf",
+     "u": "N·m",
+     "d": 0
+    },
+    {
+     "l": "Front lock limit",
+     "e": "limf",
+     "u": "N·m",
+     "d": 0,
+     "est": 1
+    },
+    {
+     "l": "Rear @ full pedal",
+     "e": "tbr",
+     "u": "N·m",
+     "d": 0
+    },
+    {
+     "l": "Rear lock limit",
+     "e": "limr",
+     "u": "N·m",
+     "d": 0,
+     "est": 1
+    },
+    {
+     "l": "First lock at",
+     "e": "dlock",
+     "u": "g",
+     "d": 2,
+     "est": 1
+    },
+    {
+     "l": "Locks first",
+     "e": "sel(dlr < dlf, 1, sel(dlf > 0, 0, 1))",
+     "u": "",
+     "d": 0,
+     "est": 1,
+     "tone": "axle"
+    }
+   ],
+   "note": "Lock limits use static load transfer (CG height estimate) and the tyre load sensitivity at full-pedal decel."
+  },
+  {
+   "id": "drivetrain",
+   "title": "DIFFERENTIAL & DRIVETRAIN",
+   "unity": "12",
+   "panel": "diff",
+   "rows": [
+    {
+     "k": "car.diff_viscous",
+     "l": "Viscous coupling",
+     "u": "N·m/(rad/s)",
+     "min": 0,
+     "max": 30,
+     "st": 0.1,
+     "d": 1,
+     "lim": [
+      0,
+      15
+     ],
+     "i": "Viscous LSD: locking torque per rad/s of axle-half speed difference."
+    },
+    {
+     "k": "car.diff_power",
+     "l": "Ramp lock, power",
+     "u": "",
+     "min": 0,
+     "max": 1,
+     "st": 0.01,
+     "d": 2,
+     "i": "Clutch-pack lock fraction of input torque on power."
+    },
+    {
+     "k": "car.diff_coast",
+     "l": "Ramp lock, coast",
+     "u": "",
+     "min": 0,
+     "max": 1,
+     "st": 0.01,
+     "d": 2,
+     "i": "Clutch-pack lock fraction of input torque on the overrun."
+    },
+    {
+     "k": "car.diff_preload",
+     "l": "Preload",
+     "u": "N·m",
+     "min": 0,
+     "max": 200,
+     "st": 1,
+     "d": 0,
+     "i": "Locking torque with no input torque."
+    },
+    {
+     "k": "car.clutch_torque",
+     "l": "Clutch capacity",
+     "u": "N·m",
+     "min": 0,
+     "max": 500,
+     "st": 1,
+     "d": 0,
+     "lim": [
+      180,
+      400
+     ],
+     "i": "Clutch slip torque."
+    },
+    {
+     "k": "car.engine_inertia",
+     "l": "Engine inertia",
+     "u": "kg·m²",
+     "min": 0,
+     "max": 0.25,
+     "st": 0.001,
+     "d": 3,
+     "i": "Flywheel + crank inertia: lower revs faster, lower stores less."
+    },
+    {
+     "k": "car.coast_torque",
+     "l": "Engine braking",
+     "u": "N·m",
+     "min": 0,
+     "max": 120,
+     "st": 1,
+     "d": 0,
+     "i": "Overrun drag torque at the coast rpm."
+    }
+   ],
+   "out": [
+    {
+     "l": "Peak torque",
+     "e": "tpk",
+     "u": "N·m",
+     "d": 0
+    },
+    {
+     "l": "Peak power",
+     "e": "ppk",
+     "u": "kW",
+     "d": 0
+    },
+    {
+     "l": "Axle torque, 1st",
+     "e": "axt1",
+     "u": "N·m",
+     "d": 0
+    },
+    {
+     "l": "Lock on power, 1st",
+     "e": "lockp",
+     "u": "N·m",
+     "d": 0
+    },
+    {
+     "l": "Lock on coast, 1st",
+     "e": "lockc",
+     "u": "N·m",
+     "d": 0
+    },
+    {
+     "l": "Viscous @ 100 rpm",
+     "e": "visc100",
+     "u": "N·m",
+     "d": 0
+    }
+   ],
+   "note": "Ramp LSD: T_lock = preload + ramp × input torque (core model). Viscous: T = c × Δω."
+  },
+  {
+   "id": "gearing",
+   "title": "GEARING",
+   "unity": "13",
+   "panel": "gearing",
+   "rows": [
+    {
+     "k": "car.gears#0",
+     "l": "1st",
+     "u": ":1",
+     "min": 0.5,
+     "max": 4.5,
+     "st": 0.001,
+     "d": 3,
+     "lim": [
+      2.8,
+      3.8
+     ],
+     "fine": 0.001,
+     "i": "1st gear ratio."
+    },
+    {
+     "k": "car.gears#1",
+     "l": "2nd",
+     "u": ":1",
+     "min": 0.5,
+     "max": 4.5,
+     "st": 0.001,
+     "d": 3,
+     "i": "2nd gear ratio."
+    },
+    {
+     "k": "car.gears#2",
+     "l": "3rd",
+     "u": ":1",
+     "min": 0.5,
+     "max": 4.5,
+     "st": 0.001,
+     "d": 3,
+     "i": "3rd gear ratio."
+    },
+    {
+     "k": "car.gears#3",
+     "l": "4th",
+     "u": ":1",
+     "min": 0.5,
+     "max": 4.5,
+     "st": 0.001,
+     "d": 3,
+     "i": "4th gear ratio."
+    },
+    {
+     "k": "car.gears#4",
+     "l": "5th",
+     "u": ":1",
+     "min": 0.5,
+     "max": 4.5,
+     "st": 0.001,
+     "d": 3,
+     "i": "5th gear ratio."
+    },
+    {
+     "k": "car.final_drive",
+     "l": "Final drive",
+     "u": ":1",
+     "min": 2.5,
+     "max": 6.5,
+     "st": 0.001,
+     "d": 3,
+     "lim": [
+      3.6,
+      4.8
+     ],
+     "i": "Final drive ratio: shorter (higher) = more acceleration, lower top speed."
+    },
+    {
+     "k": "car.limiter_rpm",
+     "l": "Rev limiter",
+     "u": "rpm",
+     "min": 5000,
+     "max": 9000,
+     "st": 50,
+     "d": 0,
+     "lim": [
+      6500,
+      7600
+     ],
+     "i": "Fuel cut rpm."
+    }
+   ],
+   "out": [
+    {
+     "l": "1st @ limiter",
+     "e": "v1",
+     "u": "km/h",
+     "d": 0
+    },
+    {
+     "l": "2nd",
+     "e": "v2",
+     "u": "km/h",
+     "d": 0
+    },
+    {
+     "l": "3rd",
+     "e": "v3",
+     "u": "km/h",
+     "d": 0
+    },
+    {
+     "l": "4th",
+     "e": "v4",
+     "u": "km/h",
+     "d": 0
+    },
+    {
+     "l": "5th",
+     "e": "v5",
+     "u": "km/h",
+     "d": 0
+    },
+    {
+     "l": "Drop 1→2",
+     "e": "d12",
+     "u": "rpm",
+     "d": 0
+    },
+    {
+     "l": "Drop 2→3",
+     "e": "d23",
+     "u": "rpm",
+     "d": 0
+    },
+    {
+     "l": "Drop 3→4",
+     "e": "d34",
+     "u": "rpm",
+     "d": 0
+    },
+    {
+     "l": "Drop 4→5",
+     "e": "d45",
+     "u": "rpm",
+     "d": 0
+    },
+    {
+     "l": "Top speed",
+     "e": "vt",
+     "u": "km/h",
+     "d": 0,
+     "est": 1
+    }
+   ],
+   "note": "Speeds at the limiter use the loaded tyre radius = car-file radius. Top speed: power vs drag + rolling (η 0.90, Crr 0.012, estimate)."
+  },
+  {
+   "id": "aero",
+   "title": "AERODYNAMICS",
+   "unity": "14",
+   "panel": "aero",
+   "rows": [
+    {
+     "k": "car.cda",
+     "l": "Drag area CdA",
+     "u": "m²",
+     "min": 0.3,
+     "max": 1.2,
+     "st": 0.005,
+     "d": 3,
+     "lim": [
+      0.5,
+      0.8
+     ],
+     "i": "Drag coefficient × frontal area."
+    },
+    {
+     "k": "car.cla_front",
+     "l": "Lift area front",
+     "u": "m²",
+     "min": -0.5,
+     "max": 0.8,
+     "st": 0.01,
+     "d": 2,
+     "k2": "car.cla_rear",
+     "lim": [
+      -0.1,
+      0.3
+     ],
+     "i": "Downforce coefficient × area per axle; negative = lift."
+    }
+   ],
+   "out": [
+    {
+     "l": "Drag @ 200 km/h",
+     "e": "dr200",
+     "u": "N",
+     "d": 0
+    },
+    {
+     "l": "Downforce F @ 200",
+     "e": "df200f",
+     "u": "N",
+     "d": 0
+    },
+    {
+     "l": "Downforce R @ 200",
+     "e": "df200r",
+     "u": "N",
+     "d": 0
+    },
+    {
+     "l": "Aero balance F",
+     "e": "abal",
+     "u": "%",
+     "d": 1
+    },
+    {
+     "l": "Drag power @ vmax",
+     "e": "pdrag",
+     "u": "kW",
+     "d": 1,
+     "est": 1
+    },
+    {
+     "l": "Top speed",
+     "e": "vt",
+     "u": "km/h",
+     "d": 0,
+     "est": 1
+    }
+   ],
+   "note": "F = ½ ρ v² × area, ρ = 1.225 kg/m³. Negative downforce = lift."
+  },
+  {
+   "id": "weight",
+   "title": "WEIGHT",
+   "unity": "07",
+   "panel": "weight",
+   "rows": [
+    {
+     "k": "car.mass",
+     "l": "Mass incl. driver",
+     "u": "kg",
+     "min": 700,
+     "max": 1600,
+     "st": 5,
+     "d": 0,
+     "lim": [
+      900,
+      1200
+     ],
+     "i": "Total mass. Inertias stay as set in the car file."
+    }
+   ],
+   "out": [
+    {
+     "l": "Mass",
+     "e": "m",
+     "u": "kg",
+     "d": 0
+    },
+    {
+     "l": "Front weight",
+     "e": "100*wf",
+     "u": "%",
+     "d": 1
+    },
+    {
+     "l": "Axle load F/R",
+     "e": "2*fzf/g",
+     "u": "kg",
+     "d": 0
+    },
+    {
+     "l": "",
+     "e": "2*fzr/g",
+     "u": "kg",
+     "d": 0
+    },
+    {
+     "l": "CG height",
+     "e": "1000*h",
+     "u": "mm",
+     "d": 0,
+     "est": 1
+    },
+    {
+     "l": "Yaw inertia Izz",
+     "e": "izz",
+     "u": "kg·m²",
+     "d": 0
+    },
+    {
+     "l": "Power / tonne",
+     "e": "pw",
+     "u": "kW/t",
+     "d": 0
+    }
+   ],
+   "note": "Izz = sprung inertia + unsprung corners as point masses. CG height = tyre radius + hub offset (estimate)."
+  },
+  {
+   "id": "engine",
+   "title": "ENGINE",
+   "unity": "04",
+   "panel": "engine",
+   "rows": [],
+   "out": [
+    {
+     "l": "Peak torque",
+     "e": "tpk",
+     "u": "N·m",
+     "d": 0
+    },
+    {
+     "l": "Peak power",
+     "e": "ppk",
+     "u": "kW",
+     "d": 0
+    },
+    {
+     "l": "Limiter",
+     "e": "car.limiter_rpm",
+     "u": "rpm",
+     "d": 0
+    },
+    {
+     "l": "Power / tonne",
+     "e": "pw",
+     "u": "kW/t",
+     "d": 0
+    }
+   ],
+   "note": "Full-load torque from the car file's engine table."
+  },
+  {
+   "id": "camera",
+   "title": "CAMERA",
+   "group": "settings",
+   "panel": "settings",
+   "rows": [
+    {
+     "k": "camera.mode",
+     "l": "Start camera",
+     "u": "",
+     "min": 0,
+     "max": 4,
+     "st": 1,
+     "d": 0,
+     "opts": [
+      "CHASE",
+      "COCKPIT",
+      "WHEEL",
+      "ORBIT",
+      "TV"
+     ],
+     "vals": [
+      "chase",
+      "cockpit",
+      "wheel",
+      "orbit",
+      "tv"
+     ],
+     "t": "demo",
+     "rs": 1,
+     "i": "Camera at the start of a drive (C cycles while driving)."
+    },
+    {
+     "k": "camera.follow",
+     "l": "Chase follow",
+     "u": "",
+     "min": 0,
+     "max": 2,
+     "st": 1,
+     "d": 0,
+     "opts": [
+      "BODY",
+      "VELOCITY",
+      "BLEND"
+     ],
+     "vals": [
+      "body",
+      "velocity",
+      "blend"
+     ],
+     "t": "demo",
+     "i": "Body: the car always points into the screen. Velocity: the camera trails the direction of travel, so slides show as yaw. Blend: a mix."
+    },
+    {
+     "k": "camera.follow_blend",
+     "l": "Follow blend",
+     "u": "% velocity",
+     "min": 0,
+     "max": 100,
+     "st": 5,
+     "d": 0,
+     "s": 100,
+     "t": "demo",
+     "i": "Share of the velocity direction when follow = blend."
+    },
+    {
+     "k": "camera.chase_dist",
+     "l": "Chase distance",
+     "u": "m",
+     "min": 3,
+     "max": 12,
+     "st": 0.1,
+     "d": 1,
+     "lim": [
+      5,
+      7
+     ],
+     "t": "demo",
+     "i": "Distance of the chase camera behind the car."
+    },
+    {
+     "k": "camera.chase_height",
+     "l": "Chase height",
+     "u": "m",
+     "min": 0.8,
+     "max": 4,
+     "st": 0.1,
+     "d": 1,
+     "t": "demo",
+     "i": "Height of the chase camera."
+    },
+    {
+     "k": "display.fov_v_deg",
+     "l": "Vertical FOV",
+     "u": "deg",
+     "min": 30,
+     "max": 90,
+     "st": 1,
+     "d": 0,
+     "lim": [
+      45,
+      60
+     ],
+     "t": "demo",
+     "rs": 1,
+     "i": "Vertical field of view; ultrawide keeps it and widens horizontally."
+    }
+   ],
+   "out": [],
+   "note": "Follow, distance and height apply live; start camera and FOV on the next drive."
+  },
+  {
+   "id": "physics",
+   "title": "PHYSICS",
+   "group": "settings",
+   "panel": "settings",
+   "rows": [
+    {
+     "k": "physics.model",
+     "l": "Solver model",
+     "u": "",
+     "min": 0,
+     "max": 1,
+     "st": 1,
+     "d": 0,
+     "opts": [
+      "FAST",
+      "REFERENCE"
+     ],
+     "vals": [
+      "fast",
+      "reference"
+     ],
+     "t": "demo",
+     "rs": 1,
+     "i": "Fast = same physics with bounded solver work. Reference = full numerics (slower)."
+    },
+    {
+     "k": "physics.substeps",
+     "l": "Substeps per tick",
+     "u": "",
+     "min": 1,
+     "max": 8,
+     "st": 1,
+     "d": 0,
+     "lim": [
+      2,
+      4
+     ],
+     "t": "demo",
+     "rs": 1,
+     "i": "Mechanics rate = tick rate x substeps. Lower on a slow PC."
+    },
+    {
+     "k": "physics.threads",
+     "l": "Worker threads",
+     "u": "",
+     "min": 1,
+     "max": 4,
+     "st": 1,
+     "d": 0,
+     "t": "demo",
+     "rs": 1,
+     "i": "Threads in the physics step; results are bit-identical for any count."
+    },
+    {
+     "k": "car.setup",
+     "l": "Car setup",
+     "u": "",
+     "min": 0,
+     "max": 1,
+     "st": 1,
+     "d": 0,
+     "opts": [
+      "DEFAULT",
+      "LEGACY"
+     ],
+     "vals": [
+      "default",
+      "legacy"
+     ],
+     "t": "demo",
+     "rs": 1,
+     "i": "Default = car file + proposal sets (bushings, TARMAC tyre set on matching cars). Legacy = car file as-is."
+    },
+    {
+     "k": "physics.tick_hz",
+     "l": "Host tick",
+     "u": "Hz",
+     "min": 240,
+     "max": 1000,
+     "st": 240,
+     "d": 0,
+     "opts": [
+      "240",
+      "480",
+      "960"
+     ],
+     "vals": [
+      "240",
+      "480",
+      "960"
+     ],
+     "t": "demo",
+     "rs": 2,
+     "i": "Input, force feedback and audio rate. Needs a program restart (audio runs at this rate)."
+    }
+   ],
+   "out": [],
+   "note": "Applied when you press Drive (the car is rebuilt at the start). Host tick needs a restart."
+  },
+  {
+   "id": "video",
+   "title": "VIDEO & AUDIO",
+   "group": "settings",
+   "panel": "settings",
+   "rows": [
+    {
+     "k": "display.fps_cap",
+     "l": "Frame cap",
+     "u": "fps",
+     "min": 0,
+     "max": 240,
+     "st": 10,
+     "d": 0,
+     "t": "demo",
+     "i": "0 = uncapped. Physics runs on its own thread."
+    },
+    {
+     "k": "display.vsync",
+     "l": "V-sync",
+     "u": "",
+     "min": 0,
+     "max": 1,
+     "st": 1,
+     "d": 0,
+     "opts": [
+      "OFF",
+      "ON"
+     ],
+     "vals": [
+      "0",
+      "1"
+     ],
+     "t": "demo",
+     "rs": 2,
+     "i": "Rendering only. Needs a restart."
+    },
+    {
+     "k": "display.msaa",
+     "l": "Anti-aliasing",
+     "u": "",
+     "min": 0,
+     "max": 1,
+     "st": 1,
+     "d": 0,
+     "opts": [
+      "OFF",
+      "4x MSAA"
+     ],
+     "vals": [
+      "0",
+      "1"
+     ],
+     "t": "demo",
+     "rs": 2,
+     "i": "Needs a restart."
+    },
+    {
+     "k": "display.fullscreen",
+     "l": "Fullscreen",
+     "u": "",
+     "min": 0,
+     "max": 1,
+     "st": 1,
+     "d": 0,
+     "opts": [
+      "OFF",
+      "ON"
+     ],
+     "vals": [
+      "0",
+      "1"
+     ],
+     "t": "demo",
+     "rs": 2,
+     "i": "Needs a restart."
+    },
+    {
+     "k": "audio.master",
+     "l": "Master volume",
+     "u": "%",
+     "min": 0,
+     "max": 100,
+     "st": 5,
+     "d": 0,
+     "s": 100,
+     "t": "demo",
+     "i": "Overall volume."
+    },
+    {
+     "k": "audio.engine",
+     "l": "Engine",
+     "u": "%",
+     "min": 0,
+     "max": 200,
+     "st": 5,
+     "d": 0,
+     "s": 100,
+     "t": "demo",
+     "i": "Engine sound gain."
+    },
+    {
+     "k": "audio.tyres",
+     "l": "Tyres",
+     "u": "%",
+     "min": 0,
+     "max": 200,
+     "st": 5,
+     "d": 0,
+     "s": 100,
+     "t": "demo",
+     "i": "Tyre scrub / squeal gain."
+    },
+    {
+     "k": "audio.road",
+     "l": "Road",
+     "u": "%",
+     "min": 0,
+     "max": 200,
+     "st": 5,
+     "d": 0,
+     "s": 100,
+     "t": "demo",
+     "i": "Road rumble gain."
+    },
+    {
+     "k": "audio.wind",
+     "l": "Wind",
+     "u": "%",
+     "min": 0,
+     "max": 200,
+     "st": 5,
+     "d": 0,
+     "s": 100,
+     "t": "demo",
+     "i": "Wind noise gain."
+    }
+   ],
+   "out": [],
+   "note": "Frame cap and volumes apply live."
+  },
+  {
+   "id": "devices",
+   "title": "DEVICES",
+   "group": "settings",
+   "panel": "settings",
+   "rows": [
+    {
+     "k": "input.device",
+     "l": "Input device",
+     "u": "",
+     "min": 0,
+     "max": 3,
+     "st": 1,
+     "d": 0,
+     "opts": [
+      "AUTO",
+      "WHEEL",
+      "GAMEPAD",
+      "KEYBOARD"
+     ],
+     "vals": [
+      "auto",
+      "wheel",
+      "gamepad",
+      "keyboard"
+     ],
+     "t": "demo",
+     "rs": 1,
+     "i": "Auto picks a wheel, then a gamepad, then the keyboard."
+    },
+    {
+     "k": "input.rotation_deg",
+     "l": "Wheel rotation",
+     "u": "deg",
+     "min": 180,
+     "max": 1080,
+     "st": 10,
+     "d": 0,
+     "lim": [
+      540,
+      900
+     ],
+     "t": "demo",
+     "rs": 1,
+     "i": "Lock-to-lock rotation of YOUR wheel as set in its driver (1:1 to the car's column)."
+    },
+    {
+     "k": "ffb.gain",
+     "l": "FFB gain",
+     "u": "%",
+     "min": 0,
+     "max": 200,
+     "st": 5,
+     "d": 0,
+     "s": 100,
+     "t": "demo",
+     "rs": 1,
+     "i": "Force feedback output = gain x column torque / max torque."
+    },
+    {
+     "k": "ffb.max_torque_nm",
+     "l": "FFB full scale",
+     "u": "N·m",
+     "min": 2,
+     "max": 25,
+     "st": 0.5,
+     "d": 1,
+     "t": "demo",
+     "rs": 1,
+     "i": "Column torque that maps to 100 % of your wheel base."
+    },
+    {
+     "k": "input.auto_clutch",
+     "l": "Auto clutch",
+     "u": "",
+     "min": 0,
+     "max": 2,
+     "st": 1,
+     "d": 0,
+     "opts": [
+      "AUTO",
+      "MANUAL",
+      "ON"
+     ],
+     "vals": [
+      "-1",
+      "0",
+      "1"
+     ],
+     "t": "demo",
+     "rs": 1,
+     "i": "Auto: off when an H-shifter is configured."
+    },
+    {
+     "k": "gamepad.mode",
+     "l": "Gamepad steering",
+     "u": "",
+     "min": 0,
+     "max": 1,
+     "st": 1,
+     "d": 0,
+     "opts": [
+      "ARMS",
+      "RAW"
+     ],
+     "vals": [
+      "arms",
+      "raw"
+     ],
+     "t": "demo",
+     "rs": 1,
+     "i": "Arms: the stick is the target of a compliant grip, the tyres can still turn the rim. Raw: stiff legacy servo."
+    },
+    {
+     "k": "gamepad.deadzone",
+     "l": "Stick deadzone",
+     "u": "",
+     "min": 0,
+     "max": 0.3,
+     "st": 0.01,
+     "d": 2,
+     "t": "demo",
+     "rs": 1,
+     "i": "Stick jitter isolation."
+    }
+   ],
+   "out": [],
+   "note": "Applied when you press Drive. Menu: arrows / d-pad move, left-right adjust, Enter / A select, Esc / B back; wheel paddles move between rows."
+  }
+ ]
+}
