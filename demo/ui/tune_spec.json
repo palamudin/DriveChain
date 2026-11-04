@@ -519,13 +519,13 @@
      "est": 1
     },
     {
-     "l": "Total toe F",
+     "l": "Front axle total toe",
      "e": "toef",
      "u": "mm",
      "d": 1
     },
     {
-     "l": "Total toe R",
+     "l": "Rear axle total toe",
      "e": "toer",
      "u": "mm",
      "d": 1
@@ -658,7 +658,7 @@
    ],
    "out": [
     {
-     "l": "Ride freq F",
+     "l": "Front axle ride freq",
      "e": "fnf",
      "u": "Hz",
      "d": 2,
@@ -668,7 +668,7 @@
      ]
     },
     {
-     "l": "Ride freq R",
+     "l": "Rear axle ride freq",
      "e": "fnr",
      "u": "Hz",
      "d": 2,
@@ -678,7 +678,7 @@
      ]
     },
     {
-     "l": "Damping ζ bump F/R",
+     "l": "Bump ζ front / rear",
      "e": "zbf",
      "u": "",
      "d": 2,
@@ -698,7 +698,7 @@
      ]
     },
     {
-     "l": "Damping ζ reb F/R",
+     "l": "Rebound ζ front / rear",
      "e": "zrf",
      "u": "",
      "d": 2,
@@ -718,7 +718,7 @@
      ]
     },
     {
-     "l": "Roll stiffness F",
+     "l": "Roll stiffness, front axle",
      "e": "rsf",
      "u": "%",
      "d": 1,
@@ -805,7 +805,7 @@
    ],
    "out": [
     {
-     "l": "Vertical rate F/R",
+     "l": "Vertical rate front / rear",
      "e": "kzf/1000",
      "u": "kN/m",
      "d": 0
@@ -817,7 +817,7 @@
      "d": 0
     },
     {
-     "l": "Static deflection F/R",
+     "l": "Static defl. front / rear",
      "e": "dzf",
      "u": "mm",
      "d": 1
@@ -829,7 +829,7 @@
      "d": 1
     },
     {
-     "l": "Contact length F/R",
+     "l": "Contact length front / rear",
      "e": "plf",
      "u": "mm",
      "d": 0
@@ -841,7 +841,7 @@
      "d": 0
     },
     {
-     "l": "Carcass stiffness F/R",
+     "l": "Carcass stiff. front / rear",
      "e": "csf",
      "u": "%",
      "d": 0
@@ -853,7 +853,7 @@
      "d": 0
     },
     {
-     "l": "Hot pressure F/R",
+     "l": "Hot pressure front / rear",
      "e": "hotf",
      "u": "kPa",
      "d": 0,
@@ -867,7 +867,7 @@
      "est": 1
     },
     {
-     "l": "Grip window F/R",
+     "l": "Grip window front / rear",
      "e": "winf",
      "u": "%",
      "d": 0,
@@ -942,7 +942,7 @@
     {
      "l": "Bias",
      "e": "bias",
-     "u": "% F",
+     "u": "% front",
      "d": 1
     },
     {
@@ -1320,19 +1320,19 @@
      "d": 0
     },
     {
-     "l": "Downforce F @ 200",
+     "l": "Front axle downforce @ 200",
      "e": "df200f",
      "u": "N",
      "d": 0
     },
     {
-     "l": "Downforce R @ 200",
+     "l": "Rear axle downforce @ 200",
      "e": "df200r",
      "u": "N",
      "d": 0
     },
     {
-     "l": "Aero balance F",
+     "l": "Aero balance, front axle",
      "e": "abal",
      "u": "%",
      "d": 1
@@ -1389,7 +1389,7 @@
      "d": 1
     },
     {
-     "l": "Axle load F/R",
+     "l": "Axle load front / rear",
      "e": "2*fzf/g",
      "u": "kg",
      "d": 0

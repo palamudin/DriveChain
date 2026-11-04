@@ -425,11 +425,20 @@ static void status_draw(void) {
 
 /* ================================================================== tune page: rows */
 typedef struct { int r, k; float y, cy; } line_t;
+/* paired (front / rear axle) rows: two side-by-side columns under a FRONT AXLE / REAR AXLE header */
+#define AXH_H 30
+#define PCOL(k) (CENX + 336 + (k) * 318)     /* column k start (axle tag) */
+#define PTX(k) (PCOL(k) + 22)                /* slider start */
+#define PTW 192                              /* slider width */
+#define PVX(k) (PCOL(k) + 292)               /* value right edge */
+static const char* AXN[2] = {"FRONT AXLE", "REAR AXLE"};
+static const char* AXT[2] = {"F", "R"};
 static int build_lines(int p, line_t* L, float* total) {
     int n = 0; float y = 0;
     for (int r = 0; r < PG(p)->nrow; r++) {
         const tune_row* R = &PG(p)->row[r];
-        if (is_pair(R)) { L[n++] = (line_t){r, 0, y, y + 36}; L[n++] = (line_t){r, 1, y, y + 76}; y += 108; }
+        if (is_pair(R)) { if (!r || !is_pair(&PG(p)->row[r - 1])) y += AXH_H;   /* FRONT AXLE / REAR AXLE header row */
+            L[n++] = (line_t){r, 0, y, y + 34}; L[n++] = (line_t){r, 1, y, y + 34}; y += 68; }
         else { L[n++] = (line_t){r, 0, y, y + 34}; y += 68; }
     }
     if (total) *total = y; return n;
@@ -438,9 +447,11 @@ static int build_lines(int p, line_t* L, float* total) {
 #define ROWS_H (PANH - 178)
 #define TX0 (CENX + 336)
 #define TW 420
+static float bh_of(const tune_row* r) { (void)r; return 60; }
 static float f_of(const tune_row* r, double v) { return r->max > r->min ? clampf((float)((v - r->min) / (r->max - r->min)), 0, 1) : 0; }
 static void slider_line(int p, int ri, int k2, float cy, int focus, int editing) {
-    const tune_row* r = &PG(p)->row[ri]; int key = p * 16 + ri;
+    const tune_row* r = &PG(p)->row[ri]; int key = p * 16 + ri; int pr = is_pair(r);
+    const float TX = pr ? PTX(k2) : TX0, TWW = pr ? PTW : TW;
     double v = rowv(r, k2, 0), sv = rowv(r, k2, 1), st = rowv(r, k2, 2);
     unsigned tid = HID(K_TRACK, key, k2), iid = HID(K_ITEM, key, k2);
     float th = hov(tid), ih = hov(iid);
@@ -448,14 +459,14 @@ static void slider_line(int p, int ri, int k2, float cy, int focus, int editing)
     float ro = r->ro ? 0.45f : 1;
     char b[64], bd[64];
     if (r->nopt) {   /* option chips with a sliding highlight */
-        int n = r->nopt; float gap = 6, cw = (TW - gap * (n - 1)) / n; int cur = (int)lround(v);
-        float hx = tween(HID(K_CH, key, k2), TX0 + cur * (cw + gap), 18);
-        rrect(TX0, cy - 17, TW, 34, 9, RGBA(255, 255, 255, 7));
+        int n = r->nopt; float gap = 6, cw = (TWW - gap * (n - 1)) / n; int cur = (int)lround(v);
+        float hx = tween(HID(K_CH, key, k2), TX + cur * (cw + gap), 18);
+        rrect(TX, cy - 17, TWW, 34, 9, RGBA(255, 255, 255, 7));
         glow(hx, cy - 17, cw, 34, 9, 6, GO1, 0.6f * fo);
         rrect(hx, cy - 17, cw, 34, 9, mixc(RGBA(201, 165, 92, 60), RGBA(201, 165, 92, 120), fo));
         rrline(hx, cy - 17, cw, 34, 9, 1, ca(GO0, 0.35f + 0.5f * fo));
         int stk = (int)lround(st);
-        for (int i = 0; i < n; i++) { float x = TX0 + i * (cw + gap); unsigned oid = HID(K_OPT, key, k2 * 8 + i); float oh = hov(oid); hit(oid, x, cy - 17, cw, 34);
+        for (int i = 0; i < n; i++) { float x = TX + i * (cw + gap); unsigned oid = HID(K_OPT, key, k2 * 8 + i); float oh = hov(oid); hit(oid, x, cy - 17, cw, 34);
             if (oh > 0.01f && i != cur) rrect(x, cy - 17, cw, 34, 9, RGBA(255, 255, 255, (unsigned char)(14 * oh)));
             char o[24]; snprintf(o, sizeof o, "%s", r->opt[i]); upcase(o);
             tx(F_SEMI, 12.5f, x + cw / 2, cy - 8, o, i == cur ? GO0 : mixc(GR2, GR1, oh), 0.16f, 1);
@@ -463,27 +474,27 @@ static void slider_line(int p, int ri, int k2, float cy, int focus, int editing)
         fmt_row(r, v, b, sizeof b);
     } else {
         float f = f_of(r, v), fk = tween(HID(K_KNOB, key, k2), f, editing ? 30 : 18);
-        float x0 = TX0, x1 = TX0 + TW, kx = x0 + fk * TW;
+        float x0 = TX, x1 = TX + TWW, kx = x0 + fk * TWW;
         float act = fmaxf(fo, th);
         /* track + recommended window + detents */
-        rrect(x0, cy - 1.5f, TW, 3, 1.5f, ca(mixc(GR3, GO2, th * 0.6f), 0.9f * ro));
-        if (r->has_lim) { float a = x0 + f_of(r, r->lim[0]) * TW, c = x0 + f_of(r, r->lim[1]) * TW;
+        rrect(x0, cy - 1.5f, TWW, 3, 1.5f, ca(mixc(GR3, GO2, th * 0.6f), 0.9f * ro));
+        if (r->has_lim) { float a = x0 + f_of(r, r->lim[0]) * TWW, c = x0 + f_of(r, r->lim[1]) * TWW;
             rect(a, cy - 1.5f, c - a, 3, ca(GR2, 0.45f * ro));
             for (int i = 0; i < 2; i++) { float x = i ? c : a; float pu = tween(HID(K_PULSE, key, i + 1) ^ 77u, 0, 4); float pk = *anim(HID(K_PULSE, key, i + 1), 0); (void)pu;
                 *anim(HID(K_PULSE, key, i + 1), 0) = approach(pk, 0, M.dt, 5);
                 line(x, cy - 7 - 3 * pk, x, cy + 7 + 3 * pk, 1, ca(mixc(GR2, GO0, pk), 0.9f * ro)); } }
-        float org = r->min < 0 && r->max > 0 ? x0 + f_of(r, 0) * TW : x0;
+        float org = r->min < 0 && r->max > 0 ? x0 + f_of(r, 0) * TWW : x0;
         if (r->min < 0 && r->max > 0) line(org, cy - 4, org, cy + 4, 1, ca(GR2, 0.6f));
         float fa = fminf(org, kx), fb = fmaxf(org, kx);
         rect(fa, cy - 1.5f, fb - fa, 3, ca(mixc(GO1, GO0, act), ro));
         if (act > 0.01f) rect(fa, cy - 3.5f, fb - fa, 7, ca(GO1, 0.10f * act));
         /* ghost stock marker (small down triangle + tick), saved marker dot */
-        { float sx = x0 + f_of(r, st) * TW; float pk = *anim(HID(K_PULSE, key, 0), 0); *anim(HID(K_PULSE, key, 0), 0) = approach(pk, 0, M.dt, 5);
+        { float sx = x0 + f_of(r, st) * TWW; float pk = *anim(HID(K_PULSE, key, 0), 0); *anim(HID(K_PULSE, key, 0), 0) = approach(pk, 0, M.dt, 5);
           Color gc = ca(mixc(GR1, GO0, pk), 0.75f * ro);
           DrawTriangle((Vector2){VX(sx - 5 - 2 * pk), VY(cy - 15)}, (Vector2){VX(sx), VY(cy - 8)}, (Vector2){VX(sx + 5 + 2 * pk), VY(cy - 15)}, ca(gc, GA * gc.a / 255.f));
           line(sx, cy - 8, sx, cy + 5, 1, ca(gc, 0.7f));
           if (pk > 0.02f) circ(sx, cy, 9 * pk + 3, ca(GO0, 0.18f * pk)); }
-        if (fabs(sv - st) > 1e-9 * fmax(1, fabs(st))) { float vx = x0 + f_of(r, sv) * TW; circ(vx, cy + 10, 2.2f, ca(GR1, 0.8f)); }
+        if (fabs(sv - st) > 1e-9 * fmax(1, fabs(st))) { float vx = x0 + f_of(r, sv) * TWW; circ(vx, cy + 10, 2.2f, ca(GR1, 0.8f)); }
         /* knob */
         float dragging = (M.drag_item == (int)tid) ? 1.f : 0.f; float kd = tween(tid ^ 0x68E31DA4u, dragging, 20);
         glow(kx - 4, cy - 12, 8, 24, 4, 9, GO0, (0.25f * th + 0.75f * fo) * ro);
@@ -492,22 +503,23 @@ static void slider_line(int p, int ri, int k2, float cy, int focus, int editing)
         /* min / max under the track when focused */
         if (fo > 0.02f) { char a[32], c[32]; fmtv(r->min, r->d, a, sizeof a); fmtv(r->max, r->d, c, sizeof c);
             tx(F_MONO, 11, x0, cy + 9, a, ca(GR3, fo), 0, 0); tx(F_MONO, 11, x1, cy + 9, c, ca(GR3, fo), 0, 2); }
-        hit(tid, x0 - 12, cy - 16, TW + 24, 32);
+        hit(tid, x0 - 12, cy - 16, TWW + 24, 32);
         double vr = tween(HID(K_VAL, key, k2), (float)v, 16); if (fabs(vr - v) < 0.5 * pow(10, -r->d)) vr = v;
         fmtv(vr, r->d, b, sizeof b);
     }
     /* value + delta vs saved */
-    tx(F_MONO, 17, CENX + 862, cy - 11, b, ca(mixc(GR1, GR0, fmaxf(fo, ih)), ro), 0, 2);
-    double d = v - sv;
-    if (r->nopt) { if (fabs(d) > 0.5) tx(F_SEMI, 12, CENX + 962, cy - 8, "CHANGED", GO0, 0.14f, 2); else tx(F_MONO, 13, CENX + 962, cy - 9, "—", GR3, 0, 2); }
-    else if (fabs(d) >= 0.5 * pow(10, -r->d)) { snprintf(bd, sizeof bd, "%s%.*f", d > 0 ? "+" : "−", r->d, fabs(d)); tx(F_MONO, 13, CENX + 962, cy - 9, bd, d > 0 ? GN0 : RD0, 0, 2); }
-    else tx(F_MONO, 13, CENX + 962, cy - 9, "—", GR3, 0, 2);
+    float vx = pr ? PVX(k2) : CENX + 862, dx = pr ? PVX(k2) : CENX + 962, dy = pr ? cy + 8 : cy - 9;   /* pairs: delta under the value */
+    tx(F_MONO, 17, vx, cy - (pr ? 15 : 11), b, ca(mixc(GR1, GR0, fmaxf(fo, ih)), ro), 0, 2);
+    double d = v - sv; float ds = pr ? 11 : 13;
+    if (r->nopt) { if (fabs(d) > 0.5) tx(F_SEMI, pr ? 10 : 12, dx, dy + 1, "CHANGED", GO0, 0.14f, 2); else if (!pr) tx(F_MONO, 13, dx, dy, "—", GR3, 0, 2); }
+    else if (fabs(d) >= 0.5 * pow(10, -r->d)) { snprintf(bd, sizeof bd, "%s%.*f", d > 0 ? "+" : "−", r->d, fabs(d)); tx(F_MONO, ds, dx, dy, bd, d > 0 ? GN0 : RD0, 0, 2); }
+    else if (!pr) tx(F_MONO, 13, dx, dy, "—", GR3, 0, 2);
 }
 static void tune_rows(int p, int focus_line, int col_focus, float alpha_in) {
     line_t L[32]; float total; int n = build_lines(p, L, &total);
     /* scroll so the focused line is visible */
     float target = M.scroll;
-    if (focus_line >= 0 && focus_line < n) { float top = L[focus_line].y, bot = L[focus_line].cy + 34;
+    if (focus_line >= 0 && focus_line < n) { float top = L[focus_line].y - (is_pair(&PG(p)->row[L[focus_line].r]) ? AXH_H : 0), bot = L[focus_line].cy + 34;
         if (top - target < 0) target = top; if (bot - target > ROWS_H) target = bot - ROWS_H; }
     if (total <= ROWS_H) target = 0; else target = clampf(target, 0, total - ROWS_H + 8);
     M.scroll = target; float sc = tween(HID(K_SEL, 3, p), target, 14);
@@ -519,7 +531,12 @@ static void tune_rows(int p, int focus_line, int col_focus, float alpha_in) {
         int foc = col_focus && focus_line == i;
         int rowfoc = col_focus && focus_line >= 0 && L[focus_line].r == L[i].r;
         if (L[i].r != lastr) {   /* row block: label, unit, link, separator */
-            lastr = L[i].r; float bh = is_pair(R) ? 100 : 60;
+            lastr = L[i].r; float bh = 60;
+            if (is_pair(R) && (!L[i].r || !is_pair(&PG(p)->row[L[i].r - 1]))) {   /* axle column headers over the slider columns */
+                float hy = by - AXH_H + 8;
+                for (int k = 0; k < 2; k++) { tx(F_SEMI, 10.5f, PTX(k), hy, AXN[k], k ? GO1 : BL0, 0.24f, 0);
+                    float w = tw(F_SEMI, 10.5f, AXN[k], 0.24f); line(PTX(k) + w + 10, hy + 7, PVX(k), hy + 7, 1, ca(k ? GO1 : BL0, 0.22f)); }
+            }
             float rf = tween(HID(K_SEL, 4, key), rowfoc ? 1.f : 0.f, 14);
             unsigned bid = HID(K_ITEM, key, 0); float bhv = hov(bid) + hov(HID(K_ITEM, key, 1)) + hov(HID(K_TRACK, key, 0)) + hov(HID(K_TRACK, key, 1));
             rrect(CENX + 16, by + 2, CENW - 32, bh, 10, RGBA(255, 255, 255, (unsigned char)(clampf(5 * fminf(1, bhv) + 9 * rf, 0, 255))));
@@ -530,19 +547,20 @@ static void tune_rows(int p, int focus_line, int col_focus, float alpha_in) {
             if (row_changed(R)) circ(CENX + 30, by + 26, 3, GO0);
             tx(F_INTER, 12.5f, CENX + 40 + 3 * rf, by + 38, u, R->ro ? GO2 : GR2, 0.02f, 0);
             if (is_pair(R)) {
-                int lk = M.link[p][L[i].r]; unsigned lid = HID(K_LINK, key, 0); float lh = hov(lid); hit(lid, CENX + 240, by + 44, 52, 28);
+                int lk = M.link[p][L[i].r]; unsigned lid = HID(K_LINK, key, 0); float lh = hov(lid); hit(lid, CENX + 240, by + 14, 52, 36);
                 float la = tween(HID(K_SEL, 5, key), lk ? 1.f : 0.f, 12);
                 Color lc = mixc(mixc(GR3, GR1, lh), GO0, la);
-                ring(CENX + 258, by + 58, 4.5f, 6, 0, 360, lc); ring(CENX + 274 - 4 * la, by + 58, 4.5f, 6, 0, 360, lc);
-                tx(F_SEMI, 10.5f, CENX + 252, by + 70, lk ? "LINKED" : "LINK", ca(lc, 0.9f), 0.14f, 0);
-                if (la > 0.01f) line(TX0 + f_of(R, rowv(R, 0, 0)) * TW, by + 36 + 12, TX0 + f_of(R, rowv(R, 1, 0)) * TW, by + 76 - 12, 1, ca(GO1, 0.45f * la));
+                ring(CENX + 258, by + 26, 4.5f, 6, 0, 360, lc); ring(CENX + 274 - 4 * la, by + 26, 4.5f, 6, 0, 360, lc);
+                tx(F_SEMI, 10.5f, CENX + 252, by + 37, lk ? "LINKED" : "LINK", ca(lc, 0.9f), 0.14f, 0);
+                if (la > 0.01f) line(PVX(0) + 8, cy, PCOL(1) - 6, cy, 1, ca(GO1, 0.45f * la));   /* linked: bridge between the axle columns */
             }
-            hit(HID(K_ITEM, key, 0), CENX + 16, by + 2, CENW - 32, is_pair(R) ? 50 : bh);
+            if (is_pair(R)) line(PCOL(1) - 13, by + 14, PCOL(1) - 13, by + 50, 1, RGBA(255, 255, 255, 14));
+            hit(HID(K_ITEM, key, 0), CENX + 16, by + 2, is_pair(R) ? PCOL(1) - 14 - CENX - 16 : CENW - 32, bh);
         }
-        if (is_pair(R)) { if (L[i].k) hit(HID(K_ITEM, key, 1), CENX + 16, by + 52, CENW - 32, 50);
-            tx(F_MONO, 12, CENX + 312, cy - 8, L[i].k ? "R" : "F", foc ? GO0 : GR2, 0, 0); }
+        if (is_pair(R)) { if (L[i].k) hit(HID(K_ITEM, key, 1), PCOL(1) - 12, by + 2, CENX + CENW - 16 - PCOL(1) + 12, bh_of(R));
+            tx(F_SEMI, 11, PCOL(L[i].k), cy - 8, AXT[L[i].k], foc ? GO0 : L[i].k ? ca(GO1, 0.85f) : ca(BL0, 0.85f), 0.1f, 0); }
         float fb = tween(HID(K_SEL, 6, key * 2 + L[i].k), foc ? 1.f : 0.f, 16);
-        if (fb > 0.01f) rect(CENX + 16, cy - 12, 3, 24, ca(GO0, fb));
+        if (fb > 0.01f) { if (is_pair(R) && L[i].k) rect(PCOL(1) - 14, cy - 12, 2, 24, ca(GO0, fb)); else rect(CENX + 16, cy - 12, 3, 24, ca(GO0, fb)); }
         slider_line(p, L[i].r, L[i].k, cy, foc, foc && (IN.left || IN.right));
     }
     EndScissorMode();
@@ -591,7 +609,7 @@ static void gauge(float x, float y, float w, const char* lab, double lo, double 
     tx(F_SEMI, 10.5f, x, y, lab, GR2, 0.18f, 0);
     float ty = y + 24; rrect(x, ty, w, 6, 3, RGBA(255, 255, 255, 30));
     if (g1 > g0) { float a = x + w * clampf((float)((g0 - lo) / (hi - lo)), 0, 1), b = x + w * clampf((float)((g1 - lo) / (hi - lo)), 0, 1); rrect(a, ty, b - a, 6, 3, ca(GN1, 0.45f)); }
-    double vs[2] = {vf, vr}; Color cs[2] = {BL0, GO0}; const char* nm[2] = {"F", "R"};
+    double vs[2] = {vf, vr}; Color cs[2] = {BL0, GO0}; const char* nm[2] = {"FRONT", "REAR"};
     for (int i = 0; i < 2; i++) { if (vs[i] != vs[i]) continue; float px = x + w * clampf((float)((vs[i] - lo) / (hi - lo)), 0, 1);
         rrect(px - 2, ty - 6, 4, 18, 2, cs[i]); char b[32]; snprintf(b, sizeof b, fmt, vs[i]);
         rrect(px - 6, ty - 8, 12, 22, 4, ca(cs[i], 0.14f));
@@ -606,7 +624,7 @@ static void ch_springs(float x, float y, float w, float h) {
     double rs = X("rsf"); float rf = TWV(HID(K_OUT, 51, 4), rs);
     float by = y + h - 40; tx(F_SEMI, 10.5f, gx, by - 18, "ROLL STIFFNESS SPLIT", GR2, 0.18f, 0);
     if (rs == rs) { float f = clampf(rf / 100.f, 0, 1); rrect(gx, by, gw * f, 10, 3, ca(BL0, 0.85f)); rrect(gx + gw * f + 2, by, gw * (1 - f) - 2, 10, 3, ca(GO1, 0.85f));
-        char b[32]; snprintf(b, sizeof b, "F %.0f%%", rf); tx(F_MONO, 11, gx, by + 14, b, BL0, 0, 0); snprintf(b, sizeof b, "R %.0f%%", 100 - rf); tx(F_MONO, 11, gx + gw, by + 14, b, GO0, 0, 2); }
+        char b[32]; snprintf(b, sizeof b, "FRONT %.0f%%", rf); tx(F_MONO, 11, gx, by + 14, b, BL0, 0, 0); snprintf(b, sizeof b, "REAR %.0f%%", 100 - rf); tx(F_MONO, 11, gx + gw, by + 14, b, GO0, 0, 2); }
 }
 static void ch_tyres(float x, float y, float w, float h) {
     chart_frame(x, y, w, h, "HOT PRESSURE · GRIP WINDOW");
@@ -620,7 +638,7 @@ static void ch_tyres(float x, float y, float w, float h) {
     for (int i = 0; i < 2; i++) { double p = hp[i]; if (!(p > 0)) continue; double g = exp(-0.5 * pow((p - c) / wdt, 2));
         float xx = px + pw * clampf((float)((p - lo) / (hi - lo)), 0, 1), yy = py + ph - ph * (float)g * 0.92f;
         line(xx, yy, xx, py + ph, 1, ca(cs[i], 0.5f)); circ(xx, yy, 5, cs[i]); circ(xx, yy, 9, ca(cs[i], 0.18f));
-        char b[24]; snprintf(b, sizeof b, "%s %.0f", i ? "R" : "F", p); tx(F_MONO, 11, xx + (i ? 8 : -8), yy - 18, b, cs[i], 0, i ? 0 : 2); }
+        char b[24]; snprintf(b, sizeof b, "%s %.0f", i ? "REAR" : "FRONT", p); tx(F_MONO, 11, xx + (i ? 8 : -8), yy - 18, b, cs[i], 0, i ? 0 : 2); }
     axis_lbl(px + pw, py - 14, "kPa hot", 2);
 }
 static void ch_brakes(float x, float y, float w, float h) {
@@ -671,13 +689,13 @@ static void ch_align(float x, float y, float w, float h) {
     float fx = x + w * 0.27f, fy = y + h * 0.56f; line(fx - 80, fy + 34, fx + 80, fy + 34, 1, RGBA(255, 255, 255, 40));
     rrect(fx - 44, fy - 8, 88, 10, 3, RGBA(255, 255, 255, 22));
     wheel_shape(fx - 58, fy, 14, 66, -cf * 4, ca(BL0, 0.9f)); wheel_shape(fx + 58, fy, 14, 66, cf * 4, ca(BL0, 0.9f));
-    tx(F_MONO, 10.5f, fx, fy + 44, TextFormat("F %.1f°  R %.1f°", cf, cr), GR1, 0, 1);
+    tx(F_MONO, 10.5f, fx, fy + 44, TextFormat("front %.1f°  rear %.1f°", cf, cr), GR1, 0, 1);
     /* top view (right) */
     float tx0 = x + w * 0.72f, ty0 = y + h * 0.55f;
     rrect(tx0 - 24, ty0 - 56, 48, 112, 10, RGBA(255, 255, 255, 14));
     float wt[2] = {tf, tr}; for (int i = 0; i < 2; i++) { float yy = ty0 + (i ? 40 : -40);
         wheel_shape(tx0 - 38, yy, 11, 30, wt[i] * 12, ca(i ? GO0 : BL0, 0.9f)); wheel_shape(tx0 + 38, yy, 11, 30, -wt[i] * 12, ca(i ? GO0 : BL0, 0.9f)); }
-    tx(F_MONO, 10.5f, tx0, ty0 + 62, TextFormat("toe F %.2f° R %.2f°", tf, tr), GR1, 0, 1);
+    tx(F_MONO, 10.5f, tx0, ty0 + 62, TextFormat("toe front %.2f°  rear %.2f°", tf, tr), GR1, 0, 1);
 }
 static void ch_aero(float x, float y, float w, float h) {
     chart_frame(x, y, w, h, "AERO LOADS @ 200 KM/H");
@@ -698,7 +716,7 @@ static void ch_aero(float x, float y, float w, float h) {
             DrawTriangle((Vector2){VX(ax[i] - 7), VY(ay - 14)}, (Vector2){VX(ax[i]), VY(ay - 4)}, (Vector2){VX(ax[i] + 7), VY(ay - 14)}, ca(c, GA)); }
         else { tip = ay - 14 - L; line(ax[i], ay - 4, ax[i], tip + 8, 3, c);
             DrawTriangle((Vector2){VX(ax[i] + 7), VY(tip + 10)}, (Vector2){VX(ax[i]), VY(tip)}, (Vector2){VX(ax[i] - 7), VY(tip + 10)}, ca(c, GA)); }
-        snprintf(b, sizeof b, "%s %+.0f N", i ? "R" : "F", v[i]); tx(F_MONO, 10.5f, ax[i], tip - 18, b, c, 0, 1); }
+        snprintf(b, sizeof b, "%s %+.0f N", i ? "REAR" : "FRONT", v[i]); tx(F_MONO, 10.5f, ax[i], tip - 18, b, c, 0, 1); }
     double ab = X("abal"); if (ab == ab) { float f = clampf((float)ab / 100.f, 0, 1), by = y + h - 24;
         rrect(bx, by, bw, 5, 2, RGBA(255, 255, 255, 30)); rrect(bx + bw * f - 3, by - 4, 6, 13, 3, GO0);
         tx(F_MONO, 10, bx, by - 15, "REAR", GR3, 0, 0); tx(F_MONO, 10, bx + bw, by - 15, "FRONT", GR3, 0, 2);
@@ -712,8 +730,8 @@ static void ch_weight(float x, float y, float w, float h) {
     float wf = TWV(HID(K_OUT, 57, 0), X("wf")); float gx = cx - L / 2 + L * wf;   /* front axle on the right */
     line(cx - L / 2, cy, cx + L / 2, cy, 1, RGBA(255, 255, 255, 30));
     circ(gx, cy, 12, ca(GO0, 0.16f)); circ(gx, cy, 6, GO0); ring(gx, cy, 9, 10, 0, 360, ca(GO0, 0.6f));
-    tx(F_MONO, 11, cx + L / 2 + 30, cy - 8, TextFormat("F %.1f%%", 100 * wf), BL0, 0, 0);
-    tx(F_MONO, 11, cx - L / 2 - 30, cy - 8, TextFormat("R %.1f%%", 100 - 100 * wf), GO0, 0, 2);
+    tx(F_MONO, 11, cx + L / 2 + 30, cy - 8, TextFormat("FRONT %.1f%%", 100 * wf), BL0, 0, 0);
+    tx(F_MONO, 11, cx - L / 2 - 30, cy - 8, TextFormat("REAR %.1f%%", 100 - 100 * wf), GO0, 0, 2);
     tx(F_MONO, 12, cx, y + h - 26, TextFormat("%.0f kg", X("m")), GR0, 0, 1);
 }
 static void ch_engine(float x, float y, float w, float h) {
@@ -780,7 +798,7 @@ static void info_panel(int p, const tune_row* fr, int fk) {
     /* focused row */
     float fy = TOPY + PANH - 176; line(INFX + 24, fy, INFX + INFW - 24, fy, 1, RGBA(255, 255, 255, 16));
     if (fr) {
-        char l[64]; snprintf(l, sizeof l, "%s%s", fr->l, is_pair(fr) ? (fk ? " · REAR" : " · FRONT") : ""); upcase(l);
+        char l[96]; if (is_pair(fr)) snprintf(l, sizeof l, "%s %s", AXN[fk ? 1 : 0], fr->l); else snprintf(l, sizeof l, "%s", fr->l); upcase(l);
         tx(F_MICH, 11, INFX + 26, fy + 16, l, GO1, 0.2f, 0);
         twrap(F_INTER, 14, INFX + 26, fy + 40, INFW - 52, fr->info[0] ? fr->info : P->note, GR1, 1.4f, 4);
         char a[32], s[32], c[32]; fmt_row(fr, rowv(fr, fk, 2), a, sizeof a); fmt_row(fr, rowv(fr, fk, 1), s, sizeof s); fmt_row(fr, rowv(fr, fk, 0), c, sizeof c);
@@ -927,7 +945,7 @@ static void tune_screen(int settings) {
     NBTN = 0; BTN[NBTN++] = B_REVERT; if (!settings) { BTN[NBTN++] = B_STOCK; BTN[NBTN++] = B_SAVE; } BTN[NBTN++] = B_DRIVE;
     bottom_buttons(M.col == 2);
     hints(M.col == 0 ? "↑↓ page   → / Enter edit   Q E page   Esc back" :
-          M.col == 1 ? "↑↓ row   ←→ adjust (hold)   Shift fine · Ctrl coarse   R revert   L link F/R   Esc back" : "←→ choose   Enter press   ↑ rows   Esc back");
+          M.col == 1 ? "↑↓ row   ←→ adjust (hold)   Shift fine · Ctrl coarse   R revert   L link front/rear   Esc back" : "←→ choose   Enter press   ↑ rows   Esc back");
 }
 static void stat_cell(float x, float y, float w, const char* lab, const char* val, const char* unit) {
     tx(F_SEMI, 10.5f, x, y, lab, GR2, 0.24f, 0); tx(F_MONO, 26, x, y + 22, val, GR0, 0, 0); tx(F_INTER, 13, x + tw(F_MONO, 26, val, 0) + 6, y + 34, unit, GR2, 0, 0); (void)w;
@@ -1052,7 +1070,7 @@ static menu_action upd_tune(int settings) {
     /* mouse */
     if (M.drag_item) {
         unsigned id = (unsigned)M.drag_item; int key = ha(id), k2 = hb(id), pp = key >> 4, ri = key & 15;
-        if (MDOWN && pp < M.S.npage) { const tune_row* r = &PG(pp)->row[ri]; float f = clampf((MXv - TX0) / TW, 0, 1); row_set_abs(pp, ri, k2, r->min + f * (r->max - r->min), 1); touched(pp, ri); }
+        if (MDOWN && pp < M.S.npage) { const tune_row* r = &PG(pp)->row[ri]; int pr = is_pair(r); float f = clampf((MXv - (pr ? PTX(k2) : TX0)) / (pr ? PTW : TW), 0, 1); row_set_abs(pp, ri, k2, r->min + f * (r->max - r->min), 1); touched(pp, ri); }
         else M.drag_item = 0;
     } else if (HOVER) {
         int k = hk(HOVER), a = ha(HOVER), b = hb(HOVER);
@@ -1060,7 +1078,7 @@ static menu_action upd_tune(int settings) {
         if ((k == K_ITEM || k == K_TRACK || k == K_OPT) && rp == p) {
             int kk = k == K_OPT ? b / 8 : b;
             if (MMOVED || MCLICK) { M.col = 1; M.item = line_of(p, ri, kk); }
-            if (MCLICK && k == K_TRACK) { M.drag_item = (int)HOVER; const tune_row* r = &PG(p)->row[ri]; float f = clampf((MXv - TX0) / TW, 0, 1); row_set_abs(p, ri, kk, r->min + f * (r->max - r->min), 1); touched(p, ri); }
+            if (MCLICK && k == K_TRACK) { M.drag_item = (int)HOVER; const tune_row* r = &PG(p)->row[ri]; int pr = is_pair(r); float f = clampf((MXv - (pr ? PTX(kk) : TX0)) / (pr ? PTW : TW), 0, 1); row_set_abs(p, ri, kk, r->min + f * (r->max - r->min), 1); touched(p, ri); }
             if (MCLICK && k == K_OPT) { row_set_abs(p, ri, kk, b % 8, 0); touched(p, ri); }
             if (MWHEEL != 0) { row_step(p, ri, kk, MWHEEL > 0 ? 1 : -1); touched(p, ri); }
         }
