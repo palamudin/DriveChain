@@ -13,7 +13,11 @@ vec3 srgb(vec3 c) { return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.05
 void main() {
   ivec2 px = ivec2(gl_GlobalInvocationID.xy); if (any(greaterThanEqual(px, ivec2(F.res.xy)))) return;
   vec2 uv = (vec2(px) + 0.5) * F.res.zw;
-  vec3 c = texture(hdrTex, uv).rgb + texture(bloomTex, uv).rgb * F.post.y;
+  vec3 c = texture(hdrTex, uv).rgb;
+  if (F.taa.w > 0.0) { // light sharpen after TAA (counteracts the history resampling softness; handbook: no TAA blur)
+    vec3 nb = texture(hdrTex, uv + vec2(F.res.z, 0)).rgb + texture(hdrTex, uv - vec2(F.res.z, 0)).rgb + texture(hdrTex, uv + vec2(0, F.res.w)).rgb + texture(hdrTex, uv - vec2(0, F.res.w)).rgb;
+    c = max(c + (c - nb * 0.25) * F.taa.w, 0.0); }
+  if (F.post.y > 0.0) c += texture(bloomTex, uv).rgb * F.post.y; // bloom pass skipped when 0 (isolate runs): never read its image
   c *= F.post.x; c = clamp(ACESOut * RRTODT(ACESIn * c), 0.0, 1.0);
   imageStore(outLdr, px, vec4(srgb(c), dot(srgb(c), vec3(0.299, 0.587, 0.114))));
 }

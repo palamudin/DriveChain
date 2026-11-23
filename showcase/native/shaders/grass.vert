@@ -8,7 +8,7 @@
 struct Blade { vec4 root; vec4 prm; }; // root xyz + hash, prm = (height, width, yaw, bend)
 layout(std430, set = 0, binding = 3) readonly buffer Blades { Blade b[]; } B;
 layout(location = 0) out vec3 vPos; layout(location = 1) out vec3 vNrm; layout(location = 2) out vec2 vUv; layout(location = 3) out vec4 vCur; layout(location = 4) out vec4 vPrev;
-layout(location = 5) out vec3 vX5; layout(location = 6) out vec3 vUp; layout(location = 7) out vec3 vToCam; layout(location = 8) flat out vec2 vCell;
+layout(location = 5) out vec3 vX5; layout(location = 6) out vec3 vUp; layout(location = 7) out vec3 vToCam; layout(location = 8) flat out vec4 vCell; layout(location = 9) flat out float vTreeDist;
 const int SEG = 5;
 vec3 bladePos(Blade bl, float t, float side, float time) {
   vec3 root = bl.root.xyz; float h = bl.prm.x, w = bl.prm.y * (1.0 - 0.85 * t);
@@ -26,7 +26,7 @@ void main() {
   float dist = distance(bl.root.xyz, F.camPos.xyz); float pxW = 2.0 * dist / (F.proj[1][1] * F.res.y); bl.prm.y = max(bl.prm.y, 2.0 * pxW);
   float time = F.camPos.w; vec3 wp = bladePos(bl, t, side, time);
   float cy = cos(bl.prm.z), sy = sin(bl.prm.z); vec3 fwd = vec3(sy, 0, cy);
-  vNrm = normalize(mix(-fwd, vec3(0, 1, 0), clamp(t * 0.6 + 0.35, 0.0, 1.0))); vPos = wp; vUv = vec2(t, bl.root.w); vX5 = vec3(0); vUp = vec3(0, 1, 0); vToCam = vec3(0); vCell = vec2(0);
-  vec3 wpPrev = bladePos(bl, t, side, time - 1.0 / 60.0);
-  vCur = F.viewProj * vec4(wp, 1); vPrev = F.prevViewProj * vec4(wpPrev, 1); gl_Position = vCur;
+  vNrm = normalize(mix(-fwd, vec3(0, 1, 0), clamp(t * 0.6 + 0.35, 0.0, 1.0))); vPos = wp; vUv = vec2(t, bl.root.w); vX5 = vec3(0); vUp = vec3(0, 1, 0); vToCam = vec3(0); vCell = vec4(0); vTreeDist = 0.0;
+  vec3 wpPrev = bladePos(bl, t, side, time - F.opt.w);
+  vCur = F.vpNJ * vec4(wp, 1); vPrev = F.prevVpNJ * vec4(wpPrev, 1); gl_Position = F.viewProj * vec4(wp, 1);
 }

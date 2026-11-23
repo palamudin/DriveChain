@@ -15,10 +15,13 @@ void main() {
   ivec2 px = ivec2(gl_GlobalInvocationID.xy); if (any(greaterThanEqual(px, ivec2(F.res.xy)))) return;
   vec2 uv = (vec2(px) + 0.5) * F.res.zw; float d = texture(depthTex, uv).r; if (d >= 1.0) { imageStore(outDirect, px, vec4(0)); return; }
   vec3 p = worldFromDepth(uv, d); vec4 A = texture(albedoTex, uv), N = texture(normalTex, uv);
+  if (N.w < 0.0) { imageStore(outDirect, px, vec4(0)); return; } // material group in flat/debug mode: unlit
+  bool fol = N.w > 3.5; if (fol) { N.w -= 4.0; A.a = 0.0; } // foliage: albedo.a = AO, not metalness
+  bool nospec = N.w > 1.5; if (nospec) N.w -= 2.0;
   vec3 n = normalize(N.xyz), v = normalize(F.camPos.xyz - p), l = F.sunDir.xyz, h = normalize(v + l);
   float nl = max(dot(n, l), 0.0), nv = max(dot(n, v), 1e-3), nh = max(dot(n, h), 0.0), vh = max(dot(v, h), 0.0);
   float a = max(N.w * N.w, 0.002); vec3 f0 = mix(vec3(0.04), A.rgb, A.a); vec3 Fs = f0 + (1.0 - f0) * pow(1.0 - vh, 5.0);
-  vec3 spec = D_GGX(nh, a) * V_SmithGGX(nv, nl, a) * Fs; vec3 diff = (1.0 - Fs) * (1.0 - A.a) * A.rgb / PI;
+  vec3 spec = nospec ? vec3(0) : D_GGX(nh, a) * V_SmithGGX(nv, nl, a) * Fs; vec3 diff = (1.0 - Fs) * (1.0 - A.a) * A.rgb / PI;
   float sh = texture(shadowMask, uv).r;
   imageStore(outDirect, px, vec4((diff + spec) * F.sunColor.rgb * nl * sh, 1.0));
 }

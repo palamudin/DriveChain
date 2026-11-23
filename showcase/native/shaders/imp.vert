@@ -6,18 +6,21 @@
 // Camera pass: quad faces the camera, cell picked from the tree-local view direction. Shadow pass (mode 1): quad faces the sun.
 layout(location = 3) in vec4 iPosYaw; layout(location = 4) in vec4 iPrm;
 layout(location = 0) out vec3 vPos; layout(location = 1) out vec3 vNrm; layout(location = 2) out vec2 vUv; layout(location = 3) out vec4 vCur; layout(location = 4) out vec4 vPrev;
-layout(location = 5) out vec3 vRight; layout(location = 6) out vec3 vUp; layout(location = 7) out vec3 vToCam; layout(location = 8) flat out vec2 vCell;
+layout(location = 5) out vec3 vRight; layout(location = 6) out vec3 vUp; layout(location = 7) out vec3 vToCam; layout(location = 8) flat out vec4 vCell; layout(location = 9) flat out float vTreeDist;
 const vec2 C[6] = vec2[](vec2(-1,-1), vec2(1,-1), vec2(1,1), vec2(-1,-1), vec2(1,1), vec2(-1,1));
 void main() {
   vec2 cr = C[gl_VertexIndex % 6]; vec3 ctr = iPosYaw.xyz + vec3(0, iPrm.w, 0); float R = iPrm.z;
-  vec3 toCam = pc.mode == 1u ? normalize(F.sunDir.xyz) : normalize(F.camPos.xyz - ctr);
+  vec3 toCam = shadowPass() ? normalize(F.sunDir.xyz) : normalize(F.camPos.xyz - ctr);
   vec3 right = normalize(cross(vec3(0, 1, 0), toCam)); vec3 up = cross(toCam, right);
   vec3 wp = ctr + (right * cr.x + up * cr.y) * R;
   // tree-local view direction (undo yaw), hemi-octahedral encode -> nearest cell
   float c = cos(iPosYaw.w), s = sin(iPosYaw.w); vec3 lv = normalize(vec3(c * toCam.x - s * toCam.z, max(toCam.y, 0.0), s * toCam.x + c * toCam.z));
   float d = abs(lv.x) + abs(lv.y) + abs(lv.z); vec2 o = lv.xz / d; vec2 e = vec2(o.x + o.y, o.x - o.y) * 0.5 + 0.5;
-  vCell = clamp(floor(e * float(pc.kindN)), 0.0, float(pc.kindN - 1u)); vUv = cr * 0.5 + 0.5;
+  // bilinear position in the 8x8 view grid: the fragment shader blends the 4 surrounding views (no snapping between views as the
+  // camera moves around a tree - one of the impostor "pop" sources)
+  vec2 cf = clamp(e * float(pc.kindN) - 0.5, vec2(0.0), vec2(float(pc.kindN) - 1.0)); vec2 cb = min(floor(cf), vec2(float(pc.kindN) - 2.0));
+  vCell = vec4(cb, cf - cb); vUv = cr * 0.5 + 0.5; vTreeDist = distance(iPosYaw.xz, F.camPos.xz);
   vRight = right; vUp = up; vToCam = toCam; vPos = wp; vNrm = toCam;
-  if (pc.mode == 1u) { gl_Position = pc.shadowVP * vec4(wp, 1); vCur = vPrev = gl_Position; return; }
-  vCur = F.viewProj * vec4(wp, 1); vPrev = F.prevViewProj * vec4(wp, 1); gl_Position = vCur;
+  if (shadowPass()) { gl_Position = pc.shadowVP * vec4(wp, 1); vCur = vPrev = gl_Position; return; }
+  vCur = F.vpNJ * vec4(wp, 1); vPrev = F.prevVpNJ * vec4(wp, 1); gl_Position = F.viewProj * vec4(wp, 1);
 }

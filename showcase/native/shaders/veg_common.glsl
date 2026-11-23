@@ -1,6 +1,9 @@
 // veg_common.glsl - vegetation instance layout + wind, shared by veg.vert / imp.vert / veg_shadow.vert
 // Instance: posYaw = (x, y, z, yaw); prm = (scale, wind phase, impostor half-size (world m), impostor centre height above root (world m))
-layout(push_constant) uniform VPC { mat4 shadowVP; vec4 tint; uint surf; uint layer; uint mode; uint kindN; } pc; // mode: 0 camera, 1 shadow pass
+layout(push_constant) uniform VPC { mat4 shadowVP; vec4 tint; uint surf; uint layer; uint mode; uint kindN; vec4 fade; } pc;
+// mode: bits 0-7 pass (0 camera, 1 shadow), bit 8 shrub kind. fade = (mesh->impostor band start, band end, hard switch (shadows), 0) in m
+bool shadowPass() { return (pc.mode & 255u) == 1u; }
+uint vegGroup() { return pc.surf == 203u ? G_GRASS : (pc.mode & 256u) != 0u ? G_SHRUBS : pc.surf == 200u ? G_BARK : pc.surf == 201u ? G_LEAVES : G_IMP; }
 vec3 rotY(vec3 p, float a) { float c = cos(a), s = sin(a); return vec3(c * p.x + s * p.z, p.y, -s * p.x + c * p.z); }
 // gentle trunk sway + leaf flutter, amplitude grows with height^2 (world metres above the root); stable (time-only)
 vec3 windOffset(vec3 wp, vec3 root, float phase, float t, float flutter) {

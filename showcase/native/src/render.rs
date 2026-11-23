@@ -7,6 +7,7 @@
 //!   4 screen-probe GI   compute (half res by default): SSRT3-style screen traces, + ray-query continuation on RTX
 //!   5 composite         compute: joint-bilateral GI upsample, sky ambient * AO, atmosphere, height fog + volumetric shafts
 //!   6 bloom             compute: 5-level 13-tap down / tent up chain
+//!   5b TAA (optional)   compute: jittered history resolve (taa.comp) -> copied back into the HDR target
 //!   7 post              compute: exposure + ACES -> sRGB  (tonemap BEFORE AA, per the handbook)
 //!   8 finish            compute: spatial AA (FXAA-style, no history), CA, vignette, grain
 //!   [DLSS hook: between 5 and 6 when built with --features dlss; see dlss.rs]
@@ -23,7 +24,8 @@ macro_rules! spv { ($n:literal) => { include_bytes!(concat!(env!("OUT_DIR"), "/"
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct FrameU { pub view: Mat4, pub proj: Mat4, pub view_proj: Mat4, pub inv_view_proj: Mat4, pub prev_view_proj: Mat4, pub shadow_vp: [Mat4; 2],
-    pub cam_pos: Vec4, pub sun_dir: Vec4, pub sun_color: Vec4, pub fog: Vec4, pub post: Vec4, pub res: Vec4, pub frame_info: [u32; 4], pub gi: Vec4 }
+    pub cam_pos: Vec4, pub sun_dir: Vec4, pub sun_color: Vec4, pub fog: Vec4, pub post: Vec4, pub res: Vec4, pub frame_info: [u32; 4], pub gi: Vec4,
+    pub vp_nj: Mat4, pub prev_vp_nj: Mat4, pub mat: [[u32; 4]; 3], pub taa: Vec4, pub opt: Vec4 }
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -32,16 +34,20 @@ pub struct Vertex { pub pos: [f32; 3], pub nrm: [f32; 3], pub uv: [f32; 2] }
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct GbufPC { model: Mat4, tint: Vec4, surf: u32, pad: [u32; 3] }
 
-pub struct GpuMesh { pub vb: Buffer, pub ib: Buffer, pub count: u32, pub verts: u32, pub surf: u32, pub tint: Vec4, pub model: Mat4, pub dynamic: bool, pub world: bool }
+pub struct GpuMesh { pub vb: Buffer, pub ib: Buffer, pub count: u32, pub verts: u32, pub surf: u32, pub tint: Vec4, pub model: Mat4, pub dynamic: bool, pub world: bool, pub group: usize }
 
 #[derive(Clone, Copy)]
-pub struct Settings { pub gi: u32, pub exposure: f32, pub bloom: f32, pub grain: f32, pub vignette: f32, pub fog: f32, pub volumetric: f32, pub gi_intensity: f32, pub wet: f32, pub sun_el: f32, pub sun_az: f32, pub sun_intensity: f32 }
-impl Default for Settings { fn default() -> Self { Settings { gi: 1, exposure: 0.85, bloom: 0.08, grain: 0.03, vignette: 0.3, fog: 0.0006, volumetric: 0.6, gi_intensity: 1.2, wet: 0.0, sun_el: 17.0, sun_az: 235.0, sun_intensity: 5.0 } } }
+pub struct Settings { pub gi: u32, pub exposure: f32, pub bloom: f32, pub grain: f32, pub vignette: f32, pub fog: f32, pub volumetric: f32, pub gi_intensity: f32, pub wet: f32, pub sun_el: f32, pub sun_az: f32, pub sun_intensity: f32,
+    /// --taa on|off, --taa-sharpen, --aniso N (clamped to the device limit), --spec-aa on|off, cheap sky (isolate runs), --crop x,y,w,h of a full_w x full_h frame
+    pub taa: bool, pub taa_sharpen: f32, pub aniso: f32, pub spec_aa: bool, pub cheap_sky: bool, pub crop: Option<[f32; 4]>, pub full: (u32, u32) }
+impl Default for Settings { fn default() -> Self { Settings { gi: 1, exposure: 0.85, bloom: 0.08, grain: 0.03, vignette: 0.3, fog: 0.0006, volumetric: 0.6, gi_intensity: 1.2, wet: 0.0, sun_el: 17.0, sun_az: 235.0, sun_intensity: 5.0,
+    taa: true, taa_sharpen: 0.1, aniso: 16.0, spec_aa: true, cheap_sky: false, crop: None, full: (0, 0) } } }
 
 enum Res { Ubo(vk::Buffer, u64), Tex(vk::ImageView, vk::Sampler), Img(vk::ImageView), Tlas(vk::AccelerationStructureKHR) }
 struct Pass { pipe: vk::Pipeline, layout: vk::PipelineLayout, dsl: vk::DescriptorSetLayout, set: vk::DescriptorSet }
 
-pub const PASS_NAMES: [&str; 9] = ["shadow cascades", "gbuffer", "shadow mask", "direct light", "screen-probe GI", "composite+fog", "bloom", "tonemap", "AA+lens"];
+pub const PASS_NAMES: [&str; 10] = ["shadow cascades", "gbuffer", "shadow mask", "direct light", "screen-probe GI", "composite+fog", "TAA", "bloom", "tonemap", "AA+lens"];
+const HALTON: [(f32, f32); 8] = [(0.5, 0.333333), (0.25, 0.666667), (0.75, 0.111111), (0.125, 0.444444), (0.625, 0.777778), (0.375, 0.222222), (0.875, 0.555556), (0.0625, 0.888889)];
 
 pub struct Renderer {
     pub w: u32, pub h: u32, ubo: Buffer, pub depth: Image, albedo: Image, normal: Image, vel: Image, mask: Image, direct: Image, gi: Image, hdr: Image,
@@ -51,8 +57,9 @@ pub struct Renderer {
     p_mask: Pass, p_light: Pass, p_gi: Pass, p_comp: Pass, p_post: Pass, p_fin: Pass, p_down: Vec<Pass>, p_up: Vec<Pass>,
     pool: vk::DescriptorPool, qpool: vk::QueryPool, pub cb: vk::CommandBuffer, pub fence: vk::Fence,
     pub meshes: Vec<GpuMesh>, frame: u32, prev_vp: Mat4, far_centre: Vec3, far_vp: Mat4, pub far_renders: u32, pub settings: Settings,
-    pub tlas: Option<crate::accel::Accel>, pub timings: [f32; 9],
+    pub tlas: Option<crate::accel::Accel>, pub timings: [f32; 10],
     pub veg: Option<crate::veg::Veg>, pub veg_ms: [f32; 2],
+    pub mats: crate::mat::Mats, hist: [Image; 2], p_taa: [Pass; 2], prev_vp_nj: Mat4, prev_cam: Vec3, pub taa_reset: bool, pub aniso: f32, pub dt: f32,
 }
 
 fn gi_dims(w: u32, h: u32, mode: u32) -> (u32, u32) { if mode == 2 { (w, h) } else { ((w + 1) / 2, (h + 1) / 2) } }
@@ -70,7 +77,8 @@ impl Renderer {
         let direct = c.image("direct", w, h, vk::Format::R16G16B16A16_SFLOAT, st, 1)?;
         let (gw, gh) = gi_dims(w, h, settings.gi);
         let gi = c.image("gi", gw, gh, vk::Format::R16G16B16A16_SFLOAT, st, 1)?;
-        let hdr = c.image("hdr", w, h, vk::Format::R16G16B16A16_SFLOAT, st, 1)?;
+        let hdr = c.image("hdr", w, h, vk::Format::R16G16B16A16_SFLOAT, st | vk::ImageUsageFlags::TRANSFER_DST, 1)?;
+        let hist = [c.image("taa0", w, h, vk::Format::R16G16B16A16_SFLOAT, st | vk::ImageUsageFlags::TRANSFER_SRC, 1)?, c.image("taa1", w, h, vk::Format::R16G16B16A16_SFLOAT, st | vk::ImageUsageFlags::TRANSFER_SRC, 1)?];
         let mut bloom = vec![]; let (mut bw, mut bh) = (w / 2, h / 2);
         for i in 0..5 { bloom.push(c.image(&format!("bloom{i}"), bw.max(1), bh.max(1), vk::Format::R16G16B16A16_SFLOAT, st, 1)?); bw /= 2; bh /= 2; }
         let ldr = c.image("ldr", w, h, vk::Format::R8G8B8A8_UNORM, st, 1)?;
@@ -86,12 +94,14 @@ impl Renderer {
         let tex_rough = crate::veg::texture_array(c, "texR", tw, &lr, &vec![false; lr.len()])?;
         let _ = n;
         let d = c.device.clone();
-        let all_imgs: Vec<(vk::Image, bool, u32)> = [&depth, &albedo, &normal, &vel, &mask, &direct, &gi, &hdr, &ldr, &out, &sm0, &sm1].iter().map(|i| (i.image, crate::vk::is_depth(i.format), 1)).chain(bloom.iter().map(|i| (i.image, false, 1))).collect();
+        let all_imgs: Vec<(vk::Image, bool, u32)> = [&depth, &albedo, &normal, &vel, &mask, &direct, &gi, &hdr, &ldr, &out, &sm0, &sm1, &hist[0], &hist[1]].iter().map(|i| (i.image, crate::vk::is_depth(i.format), 1)).chain(bloom.iter().map(|i| (i.image, false, 1))).collect();
         c.one_shot(|cb| unsafe {
             for (img, dpt, l) in &all_imgs { barrier(&d, cb, *img, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL, *dpt, *l); }
         })?;
+        // anisotropic filtering on every world material (--aniso N, default 16, clamped to the device limit)
+        let dev_aniso = unsafe { c.instance.get_physical_device_properties(c.pdev) }.limits.max_sampler_anisotropy; let max_aniso = settings.aniso.clamp(1.0, dev_aniso.max(1.0));
         let mk_s = |addr: vk::SamplerAddressMode, aniso: bool| unsafe { d.create_sampler(&vk::SamplerCreateInfo::default().mag_filter(vk::Filter::LINEAR).min_filter(vk::Filter::LINEAR).mipmap_mode(vk::SamplerMipmapMode::LINEAR)
-            .address_mode_u(addr).address_mode_v(addr).address_mode_w(addr).anisotropy_enable(aniso).max_anisotropy(8.0).max_lod(16.0), None) };
+            .address_mode_u(addr).address_mode_v(addr).address_mode_w(addr).anisotropy_enable(aniso && max_aniso > 1.0).max_anisotropy(max_aniso).max_lod(16.0), None) };
         let lin = mk_s(vk::SamplerAddressMode::REPEAT, true)?; let clamp = mk_s(vk::SamplerAddressMode::CLAMP_TO_EDGE, false)?;
         let shadow_s = unsafe { d.create_sampler(&vk::SamplerCreateInfo::default().mag_filter(vk::Filter::NEAREST).min_filter(vk::Filter::NEAREST).address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE).address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE), None)? };
         let ubo = c.buffer("frameU", std::mem::size_of::<FrameU>() as u64, vk::BufferUsageFlags::UNIFORM_BUFFER, MemoryLocation::CpuToGpu)?;
@@ -124,9 +134,12 @@ impl Renderer {
         for i in (0..4).rev() { p_up.push(Self::compute(&d, pool, spv!("bloom_up.comp"), vec![Res::Tex(bloom[i + 1].view, clamp), Res::Img(bloom[i].view)], 16, false)?); }
         let p_post = Self::compute(&d, pool, spv!("post.comp"), vec![u(), Res::Tex(hdr.view, clamp), Res::Tex(bloom[0].view, clamp), Res::Img(ldr.view)], 0, false)?;
         let p_fin = Self::compute(&d, pool, spv!("finish.comp"), vec![u(), Res::Tex(ldr.view, clamp), Res::Img(out.view)], 0, false)?;
+        let p_taa = [Self::compute(&d, pool, spv!("taa.comp"), vec![u(), Res::Tex(hdr.view, clamp), Res::Tex(hist[1].view, clamp), Res::Tex(vel.view, clamp), Res::Tex(depth.view, clamp), Res::Img(hist[0].view)], 0, false)?,
+                     Self::compute(&d, pool, spv!("taa.comp"), vec![u(), Res::Tex(hdr.view, clamp), Res::Tex(hist[0].view, clamp), Res::Tex(vel.view, clamp), Res::Tex(depth.view, clamp), Res::Img(hist[1].view)], 0, false)?];
         Ok(Renderer { w, h, ubo, depth, albedo, normal, vel, mask, direct, gi, hdr, bloom, ldr, out, sm0, sm1, tex_albedo, tex_rough, lin, clamp, shadow_s,
             gbuf_pipe, gbuf_layout, gbuf_dsl, gbuf_set, sh_pipe, sh_layout, p_mask, p_light, p_gi, p_comp, p_post, p_fin, p_down, p_up, pool, qpool, cb, fence,
-            meshes: vec![], frame: 0, prev_vp: Mat4::IDENTITY, far_centre: Vec3::splat(1e9), far_vp: Mat4::IDENTITY, far_renders: 0, settings, tlas: None, timings: [0.0; 9], veg: None, veg_ms: [0.0; 2] })
+            meshes: vec![], frame: 0, prev_vp: Mat4::IDENTITY, far_centre: Vec3::splat(1e9), far_vp: Mat4::IDENTITY, far_renders: 0, settings, tlas: None, timings: [0.0; 10], veg: None, veg_ms: [0.0; 2],
+            mats: crate::mat::Mats::default(), hist, p_taa, prev_vp_nj: Mat4::IDENTITY, prev_cam: Vec3::splat(1e9), taa_reset: true, aniso: max_aniso, dt: 1.0 / 60.0 })
     }
     fn make_set(d: &ash::Device, pool: vk::DescriptorPool, res: &[Res]) -> Result<(vk::DescriptorSetLayout, vk::DescriptorSet)> {
         let ty = |r: &Res| match r { Res::Ubo(..) => vk::DescriptorType::UNIFORM_BUFFER, Res::Tex(..) => vk::DescriptorType::COMBINED_IMAGE_SAMPLER, Res::Img(_) => vk::DescriptorType::STORAGE_IMAGE, Res::Tlas(_) => vk::DescriptorType::ACCELERATION_STRUCTURE_KHR };
@@ -200,7 +213,7 @@ impl Renderer {
     pub fn add_mesh(&mut self, c: &mut Ctx, v: &[Vertex], i: &[u32], surf: u32, tint: Vec4, dynamic: bool, world: bool) -> Result<usize> {
         let extra = if c.rt { vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR } else { vk::BufferUsageFlags::empty() };
         let vb = c.upload("vb", v, vk::BufferUsageFlags::VERTEX_BUFFER | extra)?; let ib = c.upload("ib", i, vk::BufferUsageFlags::INDEX_BUFFER | extra)?;
-        self.meshes.push(GpuMesh { vb, ib, count: i.len() as u32, verts: v.len() as u32, surf, tint, model: Mat4::IDENTITY, dynamic, world }); Ok(self.meshes.len() - 1)
+        self.meshes.push(GpuMesh { vb, ib, count: i.len() as u32, verts: v.len() as u32, surf, tint, model: Mat4::IDENTITY, dynamic, world, group: crate::mat::world_group(surf) }); Ok(self.meshes.len() - 1)
     }
     fn ortho_sun(sun: Vec3, centre: Vec3, e: f32) -> Mat4 {
         let up = if sun.y.abs() > 0.95 { Vec3::X } else { Vec3::Y };
@@ -209,8 +222,16 @@ impl Renderer {
     /// Record + submit one frame. Returns after GPU completion (simple, single frame in flight).
     pub fn render(&mut self, c: &Ctx, view: Mat4, cam_pos: Vec3, fov_y: f32, car_centre: Vec3, time: f32) -> Result<()> {
         let d = &c.device; let s = self.settings;
-        let mut proj = Mat4::perspective_rh(fov_y, self.w as f32 / self.h as f32, 0.1, 4000.0); proj.y_axis.y *= -1.0;
-        let vp = proj * view;
+        let (fw, fh) = if let Some(c) = s.crop { (c[0], c[1]) } else { (self.w as f32, self.h as f32) };
+        let mut proj = Mat4::perspective_rh(fov_y, fw / fh, 0.1, 4000.0); proj.y_axis.y *= -1.0;
+        // --crop: off-centre sub-frustum, so a W x H render is pixel-identical to that window of the full frame (fast lavapipe tests)
+        if let Some(c) = s.crop { let (sx, sy) = (fw / self.w as f32, fh / self.h as f32); let (cx, cy) = (2.0 * (c[2] + self.w as f32 * 0.5) / fw - 1.0, 2.0 * (c[3] + self.h as f32 * 0.5) / fh - 1.0);
+            proj = Mat4::from_cols(Vec4::new(sx, 0.0, 0.0, 0.0), Vec4::new(0.0, sy, 0.0, 0.0), Vec4::new(0.0, 0.0, 1.0, 0.0), Vec4::new(-cx * sx, -cy * sy, 0.0, 1.0)) * proj; }
+        let vp_nj = proj * view;
+        let cut = self.frame == 0 || self.taa_reset || cam_pos.distance(self.prev_cam) > 8.0; self.taa_reset = false; self.prev_cam = cam_pos;
+        let (jx, jy) = if s.taa { let h = HALTON[(self.frame % 8) as usize]; (h.0 - 0.5, h.1 - 0.5) } else { (0.0, 0.0) };
+        let jit = Mat4::from_cols(Vec4::X, Vec4::Y, Vec4::Z, Vec4::new(2.0 * jx / self.w as f32, 2.0 * jy / self.h as f32, 0.0, 1.0));
+        let vp = jit * vp_nj;
         let (el, az) = (s.sun_el.to_radians(), s.sun_az.to_radians());
         let sun = Vec3::new(el.cos() * az.sin(), el.sin(), el.cos() * az.cos()).normalize();
         let snap = |v: Vec3, t: f32| Vec3::new((v.x / t).round() * t, v.y, (v.z / t).round() * t);
@@ -220,8 +241,10 @@ impl Renderer {
         let fu = FrameU { view, proj, view_proj: vp, inv_view_proj: vp.inverse(), prev_view_proj: if self.frame == 0 { vp } else { self.prev_vp }, shadow_vp: [near_vp, self.far_vp],
             cam_pos: cam_pos.extend(time), sun_dir: sun.extend(0.0047 * 2.0), sun_color: (Vec3::new(1.0, 0.94, 0.86) * s.sun_intensity).extend(0.0),
             fog: Vec4::new(s.fog, 0.03, s.volumetric, 0.6), post: Vec4::new(s.exposure, s.bloom, s.grain, s.vignette),
-            res: Vec4::new(self.w as f32, self.h as f32, 1.0 / self.w as f32, 1.0 / self.h as f32), frame_info: [self.frame, c.rt as u32, s.gi, 0], gi: Vec4::new(s.gi_intensity, 1.0, 6.0, s.wet) };
-        self.prev_vp = vp;
+            res: Vec4::new(self.w as f32, self.h as f32, 1.0 / self.w as f32, 1.0 / self.h as f32), frame_info: [self.frame, c.rt as u32, s.gi, 0], gi: Vec4::new(s.gi_intensity, 1.0, 6.0, s.wet),
+            vp_nj, prev_vp_nj: if cut { vp_nj } else { self.prev_vp_nj }, mat: self.mats.words(), taa: Vec4::new(jx, jy, s.taa as i32 as f32, if s.taa { s.taa_sharpen } else { 0.0 }),
+            opt: Vec4::new(s.spec_aa as i32 as f32, (s.cheap_sky || self.mats.isolate) as i32 as f32, cut as i32 as f32, self.dt) };
+        self.prev_vp = vp; self.prev_vp_nj = vp_nj; let mats = self.mats;
         unsafe {
             d.wait_for_fences(&[self.fence], true, u64::MAX)?; d.reset_fences(&[self.fence])?;
             if self.frame > 0 { self.read_timings(c); }
@@ -232,7 +255,7 @@ impl Renderer {
                 .src_access_mask(vk::AccessFlags2::MEMORY_WRITE).dst_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE)]; d.cmd_pipeline_barrier2(cb, &vk::DependencyInfo::default().memory_barriers(&mb)); };
             let ts = |i: u32| d.cmd_write_timestamp2(cb, vk::PipelineStageFlags2::ALL_COMMANDS, self.qpool, i);
             ts(0);
-            if let Some(v) = &self.veg { d.cmd_write_timestamp2(cb, vk::PipelineStageFlags2::ALL_COMMANDS, self.qpool, 20); v.record_compute(d, cb); d.cmd_write_timestamp2(cb, vk::PipelineStageFlags2::ALL_COMMANDS, self.qpool, 21); }
+            if let Some(v) = &self.veg { d.cmd_write_timestamp2(cb, vk::PipelineStageFlags2::ALL_COMMANDS, self.qpool, 20); v.record_compute(d, cb, &mats); d.cmd_write_timestamp2(cb, vk::PipelineStageFlags2::ALL_COMMANDS, self.qpool, 21); }
             // 0: shadow cascades
             for (img, vpm, size, only_static) in [(&self.sm0, near_vp, 2048u32, false), (&self.sm1, self.far_vp, 4096u32, true)] {
                 if only_static && !far_dirty { continue; }
@@ -242,11 +265,11 @@ impl Renderer {
                 d.cmd_set_viewport(cb, 0, &[vk::Viewport { x: 0.0, y: 0.0, width: size as f32, height: size as f32, min_depth: 0.0, max_depth: 1.0 }]);
                 d.cmd_set_scissor(cb, 0, &[vk::Rect2D { offset: vk::Offset2D::default(), extent: vk::Extent2D { width: size, height: size } }]);
                 d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::GRAPHICS, self.sh_pipe);
-                for m in self.meshes.iter().filter(|m| !(only_static && m.dynamic)) {
+                for m in self.meshes.iter().filter(|m| !(only_static && m.dynamic) && mats.casts(m.group)) {
                     let mvp = vpm * m.model; d.cmd_push_constants(cb, self.sh_layout, vk::ShaderStageFlags::VERTEX, 0, bytemuck::bytes_of(&mvp));
                     d.cmd_bind_vertex_buffers(cb, 0, &[m.vb.buf], &[0]); d.cmd_bind_index_buffer(cb, m.ib.buf, 0, vk::IndexType::UINT32); d.cmd_draw_indexed(cb, m.count, 1, 0, 0, 0);
                 }
-                if let Some(v) = &self.veg { v.draw_shadow(d, cb, vpm); }
+                if let Some(v) = &self.veg { v.draw_shadow(d, cb, vpm, &mats); }
                 d.cmd_end_rendering(cb);
             }
             full(); ts(1);
@@ -260,33 +283,39 @@ impl Renderer {
             d.cmd_set_scissor(cb, 0, &[vk::Rect2D { offset: vk::Offset2D::default(), extent: ext }]);
             d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::GRAPHICS, self.gbuf_pipe);
             d.cmd_bind_descriptor_sets(cb, vk::PipelineBindPoint::GRAPHICS, self.gbuf_layout, 0, &[self.gbuf_set], &[]);
-            for m in &self.meshes {
+            for m in self.meshes.iter().filter(|m| mats.visible(m.group)) {
                 let pc = GbufPC { model: m.model, tint: m.tint, surf: m.surf, pad: [0; 3] };
                 d.cmd_push_constants(cb, self.gbuf_layout, vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT, 0, bytemuck::bytes_of(&pc));
                 d.cmd_bind_vertex_buffers(cb, 0, &[m.vb.buf], &[0]); d.cmd_bind_index_buffer(cb, m.ib.buf, 0, vk::IndexType::UINT32); d.cmd_draw_indexed(cb, m.count, 1, 0, 0, 0);
             }
-            if let Some(v) = &self.veg { d.cmd_write_timestamp2(cb, vk::PipelineStageFlags2::ALL_COMMANDS, self.qpool, 22); v.draw_gbuffer(d, cb); d.cmd_write_timestamp2(cb, vk::PipelineStageFlags2::ALL_COMMANDS, self.qpool, 23); }
+            if let Some(v) = &self.veg { d.cmd_write_timestamp2(cb, vk::PipelineStageFlags2::ALL_COMMANDS, self.qpool, 22); v.draw_gbuffer(d, cb, &mats); d.cmd_write_timestamp2(cb, vk::PipelineStageFlags2::ALL_COMMANDS, self.qpool, 23); }
             d.cmd_end_rendering(cb); full(); ts(2);
             let disp = |p: &Pass, w: u32, h: u32| { d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, p.pipe); d.cmd_bind_descriptor_sets(cb, vk::PipelineBindPoint::COMPUTE, p.layout, 0, &[p.set], &[]); d.cmd_dispatch(cb, (w + 7) / 8, (h + 7) / 8, 1); };
             disp(&self.p_mask, self.w, self.h); full(); ts(3);
             disp(&self.p_light, self.w, self.h); full(); ts(4);
             if s.gi != 0 { let (gw, gh) = gi_dims(self.w, self.h, s.gi); disp(&self.p_gi, gw, gh); full(); } ts(5);
             disp(&self.p_comp, self.w, self.h); full(); ts(6);
+            if s.taa { // resolve into the ping-pong history, then copy back into the HDR target (bloom/post unchanged)
+                let k = (self.frame % 2) as usize; disp(&self.p_taa[k], self.w, self.h); full();
+                let sub = vk::ImageSubresourceLayers { aspect_mask: vk::ImageAspectFlags::COLOR, mip_level: 0, base_array_layer: 0, layer_count: 1 };
+                d.cmd_copy_image(cb, self.hist[k].image, vk::ImageLayout::GENERAL, self.hdr.image, vk::ImageLayout::GENERAL, &[vk::ImageCopy { src_subresource: sub, dst_subresource: sub, src_offset: vk::Offset3D::default(), dst_offset: vk::Offset3D::default(), extent: vk::Extent3D { width: self.w, height: self.h, depth: 1 } }]); full();
+            }
             // DLSS hook (feature "dlss"): crate::dlss::evaluate(cb, hdr, depth, vel) would go here, then post at output res.
-            for (i, p) in self.p_down.iter().enumerate() {
+            ts(7);
+            for (i, p) in self.p_down.iter().enumerate().filter(|_| s.bloom > 0.0) {
                 let src_ext = if i == 0 { (self.w, self.h) } else { (self.bloom[i - 1].extent.width, self.bloom[i - 1].extent.height) };
                 let pc: [f32; 4] = [1.0 / src_ext.0 as f32, 1.0 / src_ext.1 as f32, 1.0, if i == 0 { 1.0 } else { 0.0 }];
                 d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, p.pipe); d.cmd_bind_descriptor_sets(cb, vk::PipelineBindPoint::COMPUTE, p.layout, 0, &[p.set], &[]);
                 d.cmd_push_constants(cb, p.layout, vk::ShaderStageFlags::COMPUTE, 0, bytemuck::cast_slice(&pc));
                 d.cmd_dispatch(cb, (self.bloom[i].extent.width + 7) / 8, (self.bloom[i].extent.height + 7) / 8, 1); full();
             }
-            for (k, p) in self.p_up.iter().enumerate() { let i = 3 - k; let se = self.bloom[i + 1].extent; let pc: [f32; 4] = [1.0 / se.width as f32, 1.0 / se.height as f32, 1.0, 0.0];
+            for (k, p) in self.p_up.iter().enumerate().filter(|_| s.bloom > 0.0) { let i = 3 - k; let se = self.bloom[i + 1].extent; let pc: [f32; 4] = [1.0 / se.width as f32, 1.0 / se.height as f32, 1.0, 0.0];
                 d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, p.pipe); d.cmd_bind_descriptor_sets(cb, vk::PipelineBindPoint::COMPUTE, p.layout, 0, &[p.set], &[]);
                 d.cmd_push_constants(cb, p.layout, vk::ShaderStageFlags::COMPUTE, 0, bytemuck::cast_slice(&pc));
                 d.cmd_dispatch(cb, (self.bloom[i].extent.width + 7) / 8, (self.bloom[i].extent.height + 7) / 8, 1); full(); }
-            ts(7);
-            disp(&self.p_post, self.w, self.h); full(); ts(8);
-            disp(&self.p_fin, self.w, self.h); full(); ts(9);
+            ts(8);
+            disp(&self.p_post, self.w, self.h); full(); ts(9);
+            disp(&self.p_fin, self.w, self.h); full(); ts(10);
             d.end_command_buffer(cb)?;
             let cbs = [cb]; d.queue_submit(c.queue, &[vk::SubmitInfo::default().command_buffers(&cbs)], self.fence)?;
         }
@@ -294,9 +323,9 @@ impl Renderer {
     }
     pub fn wait(&self, c: &Ctx) -> Result<()> { unsafe { c.device.wait_for_fences(&[self.fence], true, u64::MAX)?; } Ok(()) }
     pub fn read_timings(&mut self, c: &Ctx) {
-        let mut q = [0u64; 10];
+        let mut q = [0u64; 11];
         if unsafe { c.device.get_query_pool_results(self.qpool, 0, &mut q, vk::QueryResultFlags::TYPE_64) }.is_ok() {
-            for i in 0..9 { self.timings[i] = (q[i + 1].saturating_sub(q[i])) as f32 * c.ts_period * 1e-6; }
+            for i in 0..10 { self.timings[i] = (q[i + 1].saturating_sub(q[i])) as f32 * c.ts_period * 1e-6; }
         }
         let mut v = [0u64; 4];
         if self.veg.is_some() && unsafe { c.device.get_query_pool_results(self.qpool, 20, &mut v, vk::QueryResultFlags::TYPE_64) }.is_ok() {

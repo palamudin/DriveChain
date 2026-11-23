@@ -28,7 +28,7 @@ float cascade(sampler2D sm, mat4 vp, vec3 p, float texel, float rot) {
 void main() {
   ivec2 px = ivec2(gl_GlobalInvocationID.xy); if (any(greaterThanEqual(px, ivec2(F.res.xy)))) return;
   vec2 uv = (vec2(px) + 0.5) * F.res.zw; float d = texture(depthTex, uv).r; if (d >= 1.0) { imageStore(outMask, px, vec4(1)); return; }
-  vec3 p = worldFromDepth(uv, d); vec3 n = texture(normalTex, uv).xyz; float noise = ign(vec2(px)) * 6.2831;
+  vec3 p = worldFromDepth(uv, d); vec3 n = texture(normalTex, uv).xyz; float noise = sampleNoise(vec2(px), p) * 6.2831;
   float vis = 1.0;
 #if RAY_QUERY
   if (F.frameInfo.y != 0u) {

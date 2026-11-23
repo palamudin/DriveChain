@@ -17,21 +17,22 @@ use std::collections::HashMap;
 macro_rules! spv { ($n:literal) => { include_bytes!(concat!(env!("OUT_DIR"), "/", $n, ".spv")) } }
 
 #[derive(Clone, Copy, Debug)]
-pub struct VegOpts { pub trees: bool, pub shrubs: bool, pub grass: bool, pub grass_density: f32, pub grass_dist: f32, pub tree_shadows: bool, pub imp_dist: f32, pub max_blades: u32 }
-impl Default for VegOpts { fn default() -> Self { VegOpts { trees: true, shrubs: true, grass: true, grass_density: 24.0, grass_dist: 70.0, tree_shadows: true, imp_dist: 90.0, max_blades: 1_500_000 } } }
+pub struct VegOpts { pub trees: bool, pub shrubs: bool, pub grass: bool, pub grass_density: f32, pub grass_dist: f32, pub tree_shadows: bool, pub imp_dist: f32, pub max_blades: u32, pub aniso: f32, pub imp_band: f32 }
+impl Default for VegOpts { fn default() -> Self { VegOpts { trees: true, shrubs: true, grass: true, grass_density: 24.0, grass_dist: 70.0, tree_shadows: true, imp_dist: 90.0, max_blades: 1_500_000, aniso: 16.0, imp_band: 0.2 } } }
 impl VegOpts {
-    /// --no-trees --no-shrubs --no-grass --grass-density N --grass-dist M --no-tree-shadows --imp-dist M --max-blades N
+    /// --no-trees --no-shrubs --no-grass --grass-density N --grass-dist M --no-tree-shadows --imp-dist M --imp-band F (crossfade band, fraction of imp-dist) --max-blades N --aniso N
     pub fn from_args() -> VegOpts {
         let a: Vec<String> = std::env::args().collect(); let has = |n: &str| a.iter().any(|x| x == n);
         let num = |n: &str, d: f32| a.iter().position(|x| x == n).and_then(|i| a.get(i + 1)).and_then(|v| v.parse().ok()).unwrap_or(d);
         let d = VegOpts::default();
         VegOpts { trees: !has("--no-trees"), shrubs: !has("--no-shrubs"), grass: !has("--no-grass"), grass_density: num("--grass-density", d.grass_density), grass_dist: num("--grass-dist", d.grass_dist),
-            tree_shadows: !has("--no-tree-shadows"), imp_dist: num("--imp-dist", d.imp_dist), max_blades: num("--max-blades", d.max_blades as f32) as u32 }
+            tree_shadows: !has("--no-tree-shadows"), imp_dist: num("--imp-dist", d.imp_dist), max_blades: num("--max-blades", d.max_blades as f32) as u32,
+            aniso: num("--aniso", d.aniso), imp_band: num("--imp-band", d.imp_band).clamp(0.0, 0.8) }
     }
 }
 
 #[repr(C)] #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)] pub struct Inst { pos_yaw: [f32; 4], prm: [f32; 4] }
-#[repr(C)] #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)] struct VPC { shadow_vp: Mat4, tint: Vec4, surf: u32, layer: u32, mode: u32, kind_n: u32 }
+#[repr(C)] #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)] struct VPC { shadow_vp: Mat4, tint: Vec4, surf: u32, layer: u32, mode: u32, kind_n: u32, fade: Vec4 }
 #[repr(C)] #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)] struct GPC { p: Vec4, max_blades: u32, cell_count: u32, pad: [u32; 2] }
 
 struct Kind { name: String, shrub: bool, br: (Buffer, Buffer, u32), lf: (Buffer, Buffer, u32), bark_tint: Vec4, leaf_tint: Vec4, layer: u32, n: u32,
@@ -148,8 +149,9 @@ impl Veg {
         // impostor atlases hold linear values (baked into a linear 8-bit target without tonemapping): UNORM array, no decode
         let imp = texture_array(c, "impTex", 1024, &imp_layers, &vec![false; imp_layers.len()])?;
         let d = c.device.clone();
+        let an = opts.aniso.clamp(1.0, unsafe { c.instance.get_physical_device_properties(c.pdev) }.limits.max_sampler_anisotropy.max(1.0));
         let lin = unsafe { d.create_sampler(&vk::SamplerCreateInfo::default().mag_filter(vk::Filter::LINEAR).min_filter(vk::Filter::LINEAR).mipmap_mode(vk::SamplerMipmapMode::LINEAR)
-            .address_mode_u(vk::SamplerAddressMode::REPEAT).address_mode_v(vk::SamplerAddressMode::REPEAT).anisotropy_enable(true).max_anisotropy(8.0).max_lod(16.0), None)? };
+            .address_mode_u(vk::SamplerAddressMode::REPEAT).address_mode_v(vk::SamplerAddressMode::REPEAT).anisotropy_enable(an > 1.0).max_anisotropy(an).max_lod(16.0), None)? };
         let clampm = unsafe { d.create_sampler(&vk::SamplerCreateInfo::default().mag_filter(vk::Filter::LINEAR).min_filter(vk::Filter::LINEAR).mipmap_mode(vk::SamplerMipmapMode::LINEAR)
             .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE).address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE).max_lod(16.0), None)? };
         // ---- grass (compute)
@@ -218,9 +220,10 @@ impl Veg {
     /// CPU per frame (after the previous frame's fence): near/far split + grass cell list.
     pub fn update(&mut self, cam: Vec3) {
         let (mut nn, mut nf, mut tris) = (0, 0, 0u64);
-        for k in self.kinds.iter_mut() { let r = if k.shrub { self.opts.imp_dist * 0.6 } else { self.opts.imp_dist }; let r2 = r * r;
+        for k in self.kinds.iter_mut() { let r = if k.shrub { self.opts.imp_dist * 0.6 } else { self.opts.imp_dist }; let b = r * self.opts.imp_band * 0.5; let (n2, f2) = ((r + b) * (r + b), (r - b) * (r - b));
             let mut near = vec![]; let mut far = vec![];
-            for i in &k.list { let dx = i.pos_yaw[0] - cam.x; let dz = i.pos_yaw[2] - cam.z; if dx * dx + dz * dz < r2 { near.push(*i) } else { far.push(*i) } }
+            // inside the crossfade band a tree is in BOTH lists; veg.frag dithers mesh vs impostor by distance (no hard LOD pop)
+            for i in &k.list { let dx = i.pos_yaw[0] - cam.x; let dz = i.pos_yaw[2] - cam.z; let d2 = dx * dx + dz * dz; if d2 < n2 { near.push(*i) } if d2 >= f2 { far.push(*i) } }
             if let Some(a) = k.near.alloc.as_mut() { if let Some(m) = a.mapped_slice_mut() { let b: &[u8] = bytemuck::cast_slice(&near); m[..b.len()].copy_from_slice(b); } }
             if let Some(a) = k.far.alloc.as_mut() { if let Some(m) = a.mapped_slice_mut() { let b: &[u8] = bytemuck::cast_slice(&far); m[..b.len()].copy_from_slice(b); } }
             k.near_n = near.len() as u32; k.far_n = far.len() as u32; nn += k.near_n; nf += k.far_n; tris += k.near_n as u64 * k.tris; }
@@ -233,8 +236,8 @@ impl Veg {
             self.cells_in_range = g.cell_count; }
     }
     /// Outside any render pass: rebuild the grass blade buffer + indirect args.
-    pub fn record_compute(&self, d: &ash::Device, cb: vk::CommandBuffer) {
-        let Some(g) = &self.grass else { return };
+    pub fn record_compute(&self, d: &ash::Device, cb: vk::CommandBuffer, mats: &crate::mat::Mats) {
+        let Some(g) = &self.grass else { return }; if !mats.visible(crate::mat::G_GRASS) { return; }
         let bar = |src: vk::PipelineStageFlags2, sa: vk::AccessFlags2, dst: vk::PipelineStageFlags2, da: vk::AccessFlags2| { let mb = [vk::MemoryBarrier2::default().src_stage_mask(src).src_access_mask(sa).dst_stage_mask(dst).dst_access_mask(da)];
             unsafe { d.cmd_pipeline_barrier2(cb, &vk::DependencyInfo::default().memory_barriers(&mb)) } };
         unsafe {
@@ -249,32 +252,35 @@ impl Veg {
             bar(vk::PipelineStageFlags2::COMPUTE_SHADER, vk::AccessFlags2::SHADER_STORAGE_WRITE, vk::PipelineStageFlags2::DRAW_INDIRECT | vk::PipelineStageFlags2::VERTEX_SHADER, vk::AccessFlags2::INDIRECT_COMMAND_READ | vk::AccessFlags2::SHADER_STORAGE_READ);
         }
     }
-    fn push(&self, d: &ash::Device, cb: vk::CommandBuffer, vp: Mat4, tint: Vec4, surf: u32, layer: u32, mode: u32, n: u32) {
-        let pc = VPC { shadow_vp: vp, tint, surf, layer, mode, kind_n: n }; unsafe { d.cmd_push_constants(cb, self.layout, vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT, 0, bytemuck::bytes_of(&pc)); }
+    fn fade(&self, shrub: bool) -> Vec4 { let r = if shrub { self.opts.imp_dist * 0.6 } else { self.opts.imp_dist }; let b = r * self.opts.imp_band * 0.5; Vec4::new(r - b, r + b, r, 0.0) }
+    fn push(&self, d: &ash::Device, cb: vk::CommandBuffer, vp: Mat4, tint: Vec4, surf: u32, layer: u32, mode: u32, n: u32, shrub: bool) {
+        let pc = VPC { shadow_vp: vp, tint, surf, layer, mode: mode | ((shrub as u32) << 8), kind_n: n, fade: self.fade(shrub) }; unsafe { d.cmd_push_constants(cb, self.layout, vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT, 0, bytemuck::bytes_of(&pc)); }
     }
     /// Inside the G-buffer pass (same attachments as gbuffer.frag).
-    pub fn draw_gbuffer(&self, d: &ash::Device, cb: vk::CommandBuffer) {
+    pub fn draw_gbuffer(&self, d: &ash::Device, cb: vk::CommandBuffer, mats: &crate::mat::Mats) {
+        use crate::mat::*;
         unsafe {
             d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::GRAPHICS, self.p_mesh); d.cmd_bind_descriptor_sets(cb, vk::PipelineBindPoint::GRAPHICS, self.layout, 0, &[self.set], &[]);
             for k in self.kinds.iter().filter(|k| k.near_n > 0) {
                 d.cmd_bind_vertex_buffers(cb, 1, &[k.near.buf], &[0]);
-                for (part, tint, surf) in [(&k.br, k.bark_tint, 200u32), (&k.lf, k.leaf_tint, 201u32)] { if part.2 == 0 { continue; }
-                    self.push(d, cb, Mat4::IDENTITY, tint, surf, k.layer, 0, k.n); d.cmd_bind_vertex_buffers(cb, 0, &[part.0.buf], &[0]); d.cmd_bind_index_buffer(cb, part.1.buf, 0, vk::IndexType::UINT32); d.cmd_draw_indexed(cb, part.2, k.near_n, 0, 0, 0); }
+                for (part, tint, surf, g) in [(&k.br, k.bark_tint, 200u32, G_BARK), (&k.lf, k.leaf_tint, 201u32, G_LEAVES)] { if part.2 == 0 || !mats.visible(if k.shrub { G_SHRUBS } else { g }) { continue; }
+                    self.push(d, cb, Mat4::IDENTITY, tint, surf, k.layer, 0, k.n, k.shrub); d.cmd_bind_vertex_buffers(cb, 0, &[part.0.buf], &[0]); d.cmd_bind_index_buffer(cb, part.1.buf, 0, vk::IndexType::UINT32); d.cmd_draw_indexed(cb, part.2, k.near_n, 0, 0, 0); }
             }
             d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::GRAPHICS, self.p_imp);
-            for k in self.kinds.iter().filter(|k| k.far_n > 0) { self.push(d, cb, Mat4::IDENTITY, Vec4::ONE, 202, k.layer, 0, k.n); d.cmd_bind_vertex_buffers(cb, 0, &[k.far.buf], &[0]); d.cmd_draw(cb, 6, k.far_n, 0, 0); }
-            if let Some(g) = &self.grass { d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::GRAPHICS, self.p_grass); self.push(d, cb, Mat4::IDENTITY, Vec4::ONE, 203, 0, 0, 1); d.cmd_draw_indirect(cb, g.indirect.buf, 0, 1, 16); }
+            for k in self.kinds.iter().filter(|k| k.far_n > 0 && mats.visible(if k.shrub { G_SHRUBS } else { G_IMP })) { self.push(d, cb, Mat4::IDENTITY, Vec4::ONE, 202, k.layer, 0, k.n, k.shrub); d.cmd_bind_vertex_buffers(cb, 0, &[k.far.buf], &[0]); d.cmd_draw(cb, 6, k.far_n, 0, 0); }
+            if let Some(g) = self.grass.as_ref().filter(|_| mats.visible(G_GRASS)) { d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::GRAPHICS, self.p_grass); self.push(d, cb, Mat4::IDENTITY, Vec4::ONE, 203, 0, 0, 1, false); d.cmd_draw_indirect(cb, g.indirect.buf, 0, 1, 16); }
         }
     }
     /// Inside a shadow cascade pass. Near meshes alpha-tested; far trees as sun-facing impostors.
-    pub fn draw_shadow(&self, d: &ash::Device, cb: vk::CommandBuffer, vp: Mat4) {
+    pub fn draw_shadow(&self, d: &ash::Device, cb: vk::CommandBuffer, vp: Mat4, mats: &crate::mat::Mats) {
+        use crate::mat::*;
         if !self.opts.tree_shadows { return; }
         unsafe {
             d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::GRAPHICS, self.s_mesh); d.cmd_bind_descriptor_sets(cb, vk::PipelineBindPoint::GRAPHICS, self.layout, 0, &[self.set], &[]);
             for k in self.kinds.iter().filter(|k| k.near_n > 0) { d.cmd_bind_vertex_buffers(cb, 1, &[k.near.buf], &[0]);
-                for (part, surf) in [(&k.br, 200u32), (&k.lf, 201u32)] { if part.2 == 0 { continue; } self.push(d, cb, vp, Vec4::ONE, surf, k.layer, 1, k.n); d.cmd_bind_vertex_buffers(cb, 0, &[part.0.buf], &[0]); d.cmd_bind_index_buffer(cb, part.1.buf, 0, vk::IndexType::UINT32); d.cmd_draw_indexed(cb, part.2, k.near_n, 0, 0, 0); } }
+                for (part, surf, g) in [(&k.br, 200u32, G_BARK), (&k.lf, 201u32, G_LEAVES)] { if part.2 == 0 || !mats.casts(if k.shrub { G_SHRUBS } else { g }) { continue; } self.push(d, cb, vp, Vec4::ONE, surf, k.layer, 1, k.n, k.shrub); d.cmd_bind_vertex_buffers(cb, 0, &[part.0.buf], &[0]); d.cmd_bind_index_buffer(cb, part.1.buf, 0, vk::IndexType::UINT32); d.cmd_draw_indexed(cb, part.2, k.near_n, 0, 0, 0); } }
             d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::GRAPHICS, self.s_imp);
-            for k in self.kinds.iter().filter(|k| k.far_n > 0) { self.push(d, cb, vp, Vec4::ONE, 202, k.layer, 1, k.n); d.cmd_bind_vertex_buffers(cb, 0, &[k.far.buf], &[0]); d.cmd_draw(cb, 6, k.far_n, 0, 0); }
+            for k in self.kinds.iter().filter(|k| k.far_n > 0 && mats.casts(if k.shrub { G_SHRUBS } else { G_IMP })) { self.push(d, cb, vp, Vec4::ONE, 202, k.layer, 1, k.n, k.shrub); d.cmd_bind_vertex_buffers(cb, 0, &[k.far.buf], &[0]); d.cmd_draw(cb, 6, k.far_n, 0, 0); }
         }
     }
     pub fn stats(&self) -> String { format!("trees {} mesh ({:.1}M tris) + {} impostors | grass cells {} (max {} blades)", self.near_trees, self.near_tris as f64 / 1e6, self.far_trees, self.cells_in_range, self.blades_cap) }

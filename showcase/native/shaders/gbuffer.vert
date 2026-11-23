@@ -5,6 +5,7 @@ layout(location = 0) in vec3 inPos; layout(location = 1) in vec3 inNrm; layout(l
 layout(push_constant) uniform PC { mat4 model; vec4 tint; uint surf; uint pad0, pad1, pad2; } pc;
 layout(location = 0) out vec3 vPos; layout(location = 1) out vec3 vNrm; layout(location = 2) out vec2 vUv; layout(location = 3) out vec4 vCur; layout(location = 4) out vec4 vPrev;
 void main() {
-  vec4 wp = pc.model * vec4(inPos, 1.0); vPos = wp.xyz; vNrm = mat3(pc.model) * inNrm; vUv = inUv;
-  vCur = F.viewProj * wp; vPrev = F.prevViewProj * wp; gl_Position = vCur;
+  vec4 wp = pc.model * vec4(inPos, 1.0); if (pc.surf == 12u) wp.y += 0.02; // paint decals split from VIS_other: coplanar with the asphalt (z-fight)
+  vPos = wp.xyz; vNrm = mat3(pc.model) * inNrm; vUv = inUv;
+  vCur = F.vpNJ * wp; vPrev = F.prevVpNJ * wp; gl_Position = F.viewProj * wp;
 }
