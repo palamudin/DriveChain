@@ -15,7 +15,7 @@ const Q = new URLSearchParams(location.search);
 const CFG = {
   world: Q.get('world') ?? 'private/usce/usce.meshopt.glb',      // private, gitignored; falls back to the procedural track
   car: Q.get('carmesh') ?? 'private/miata_mesh/',                  // private OBJ set; falls back to procedural coupe
-  carId: +(Q.get('car') ?? 1), tune: +(Q.get('tune') ?? 0), tier: Q.get('tier') ?? 'high',
+  carId: +(Q.get('car') ?? 3), tune: +(Q.get('tune') ?? 0), tier: Q.get('tier') ?? 'high',
   webgl: Q.has('webgl'), auto: Q.has('auto'), still: Q.get('still'), spawn: +(Q.get('spawn') ?? 0), sunEl: +(Q.get('sunel') ?? 24), sunAz: +(Q.get('sunaz') ?? 215),
   warm: +(Q.get('warm') ?? 0), bench: Q.has('bench'), dpr: +(Q.get('dpr') ?? Math.min(devicePixelRatio, 1.5)), wet: +(Q.get('wet') ?? 0),
 };

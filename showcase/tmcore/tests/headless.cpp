@@ -1,4 +1,4 @@
-// headless.cpp - drive the BMW on the Ušće collider with the Tarmac core via tms.h (no renderer).
+// headless.cpp - drive the stock 1990 Miata on the Ušće collider with the Tarmac core via tms.h (no renderer).
 #include "tms.h"
 #include <cstdio>
 #include <cstdlib>
@@ -26,7 +26,7 @@ int main(int argc,char**argv){
   std::vector<double> lx,lz; { FILE* f=fopen("/workspace/drivechain/private/tracks/usce/line.csv","r"); char ln[256]; while(f&&fgets(ln,256,f)){ double a,b,c; if(sscanf(ln,"%lf,%lf,%lf",&a,&b,&c)==3){ lx.push_back(a); lz.push_back(-b);} } if(f)fclose(f); }
   double sx=lx[0],sz=lz[0],dx=lx[3]-lx[0],dz=lz[3]-lz[0]; double yaw=atan2(dx,dz);
   double y=tms_world_height(w,sx,200,sz); printf("spawn %.2f %.2f h=%.2f yaw=%.3f\n",sx,sz,y,yaw);
-  void* c=tms_car_create(w,TMS_CAR_BMW_E21,tune,sx,sz,yaw,y+1); printf("car %p err=%s\n",c,tms_last_error()); if(!c) return 1;
+  void* c=tms_car_create(w,TMS_CAR_MIATA_NA,tune,sx,sz,yaw,y+1); printf("car %p err=%s\n",c,tms_last_error()); if(!c) return 1;
   float s[TMS_STATE_FLOATS]; size_t near=0; int gear=1; double tg=0;
   auto t1=std::chrono::steady_clock::now(); int ticks=0;
   for(int frame=0; frame<seconds*60; frame++){

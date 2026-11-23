@@ -33,7 +33,7 @@ export class CarVisual {
     this.wheelRadius = cfg.wheel_radius_mesh?.[0] || 0.3; this.kind = 'private-obj'; this._spinGroups(); return this;
   }
   buildProcedural() {
-    // Own procedural low-poly coupe (publishable). Car frame: x fwd, y left, z up. Wheelbase 2.56, track 1.40 (E21-ish).
+    // Own procedural low-poly coupe (publishable). Car frame: x fwd, y left, z up. Wheelbase 2.56, track 1.40 (own proportions).
     const paint = new THREE.MeshPhysicalNodeMaterial({ color: 0xb01a14, roughness: 0.32, metalness: 0.1, clearcoat: 1, clearcoatRoughness: 0.04 });
     const glass = new THREE.MeshPhysicalNodeMaterial({ color: 0x0b0d10, roughness: 0.05, metalness: 0, clearcoat: 1 });
     const trim = new THREE.MeshStandardNodeMaterial({ color: 0x111111, roughness: 0.6 });

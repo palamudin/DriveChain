@@ -22,10 +22,10 @@ extern "C" {
 enum { TMS_SURF_TARMAC=0, TMS_SURF_KERB=1, TMS_SURF_GRASS=2, TMS_SURF_ROUGH=3, TMS_SURF_SAUSAGE=4, TMS_SURF_LINE=5,
        TMS_SURF_PAVE=6, TMS_SURF_PAD=7, TMS_SURF_GRAVEL=8, TMS_SURF_WALL=9, TMS_SURF_OTHER=10, TMS_SURF_CONCRETE=11 };
 
-/* Car ids follow Tarmac's CityVehicleCatalog102: 0 fiat-uno, 1 bmw-e21-323i, 2 formula-vector-ev102. */
-enum { TMS_CAR_UNO=0, TMS_CAR_BMW_E21=1, TMS_CAR_VECTOR=2 };
-/* BMW recovered suspension presets (BmwEmpiricalTunes439.cs, ported). */
-enum { TMS_TUNE_BASELINE=0, TMS_TUNE_CITY=1, TMS_TUNE_STREET=2, TMS_TUNE_RACE=3, TMS_TUNE_DRIFT=4 };
+/* Cars: 0 = the core's own default vehicle, 3 = stock 1990 Mazda MX-5 NA6 (public-spec values, see tms.cpp). */
+enum { TMS_CAR_BASELINE=0, TMS_CAR_MIATA_NA=3 };
+/* Tune: reserved (only the stock setup is shipped). */
+enum { TMS_TUNE_STOCK=0 };
 
 typedef struct TMSInput { double throttle, brake, steer, handbrake, clutch; int32_t gear; int32_t starter; } TMSInput;
 

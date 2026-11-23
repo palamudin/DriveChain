@@ -13,6 +13,17 @@ It drives a car on a glTF world in two renderers:
 Without them the web app falls back to its own procedural track and coupe (`web/js/proc-world.js`, `car.js`), but it still needs `web/wasm/tarmac.{mjs,wasm}`.
 To build the wasm and native core, put the solver at `tmcore/upstream` (or set `TARMAC_SRC`) and run `tmcore/build_wasm.sh`.
 
+## Car: stock 1990 Mazda MX-5 (NA6)
+The C API ships one car, `TMS_CAR_MIATA_NA` (3). Its gearbox, engine curve, open diff, spring, damper and ARB rates, brakes and hydraulic clutch come from public sources, cited in `tmcore/api/tms.cpp`:
+- Moss Miata 1990 spec sheet
+- Mazda's 1990 press specifications (hosted by miata.net)
+- topofsecond.com
+- DriveChain's own `cars/mx5_na.ini`
+
+Limits of the swap:
+- The core's chassis mass, inertia, tyres and suspension geometry are its frozen baseline (1200 kg), and this ABI cannot set them.
+- The core requires springs of at least 18 kN/m and dampers of at least 1.2 kN·s/m. The softer stock Miata rates (12.5/10.1 kN/m) are therefore clamped to that floor.
+
 ## World loader (swappable)
 Any glTF/GLB works: `?world=path/to/world.glb`.
 - Meshes named `COL_*` are collision only and `VIS_*` are visual only. Everything else is both.

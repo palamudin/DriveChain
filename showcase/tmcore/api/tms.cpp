@@ -55,43 +55,59 @@ TMCitySpawnV2 spawnOf(double x,double z,double yaw,double yHint){
   s.preferred_surface_id=TM_CITY_SURFACE_ID_ANY; return s;
 }
 void labelDigest(const char* l,uint8_t out[32]){ for(int lane=0;lane<4;lane++){ uint64_t h=1469598103934665603ull^(uint64_t)(lane+1)*0x9E3779B97F4A7C15ull; for(const char* c=l;*c;c++){h^=(uint8_t)*c;h*=1099511628211ull;} for(int k=0;k<8;k++)out[lane*8+k]=(uint8_t)(h>>(8*k)); } }
-// OrdinaryPhysicalStandards313.CreatePedals313(vehicleId) ported 1:1 (C# -> TMPedalActuationConfigV312 wire).
-// The native step refuses to advance without an active brake actuation (stepCore247), so this is mandatory.
-TMPedalActuationConfigV312 pedals313(int id){
-  const bool formula=id>=2, bmw=id==1; TMPedalActuationConfigV312 w{}; w.struct_size=sizeof w; w.abi_version=TM_PEDAL_ACTUATION_ABI_V312;
-  const double pressure=formula?9.0e6:6.8e6, totalTorque=formula?7200:bmw?4300:2500, frontFraction=formula?.58:bmw?.61:.64;
-  const double masterBore=formula?.01905:bmw?.02064:.01905, travel=formula?.105:.120, freeT=formula?.004:.006, pedalRatio=formula?5.1:bmw?4.75:4.6;
+// ---- Stock 1990 Mazda MX-5 / Miata (NA6, 1.6 B6ZE, 5-speed, open diff) ---------------------------------------------
+// All values below come from public sources or are own engineering estimates (marked EST). Sources:
+//  [S1] Moss Miata, 1990 MX-5 Miata specifications: https://mossmiata.com/miata-1990
+//       (B6 1.6 DOHC, 116 hp @ 6500, 100 lb-ft/136 N m @ 5500, idle 850, curb 940 kg, 185/60R14, open diff std / viscous LSD option)
+//  [S2] Mazda 1990 MX-5 Miata Specifications (press kit, hosted by miata.net):
+//       https://www.miata.net/faq/First%2025%20Years/Pricing%20&%20Specs%20-%20Model%20Year/Specifications/1990%20MX-5%20Miata%20Specifications.pdf
+//       (5-speed 3.136/1.888/1.330/1.000/0.814, R 3.758, final 4.300; hydraulic single dry plate clutch, 200 mm);
+//       cross-checked: https://topofsecond.com/vehicles/1990/mazda/mx-5-miata-1.6-us (brochure: 7000 rpm tach redline)
+//  [S3] DriveChain cars/mx5_na.ini (public repo palamudin/DriveChain): OEM spring rates 28.75/16.98 kN/m and motion
+//       ratios 0.66/0.77 -> wheel rates 12.5/10.1 kN/m; damping ratios; ARB 19 mm/12 mm wheel-rate estimates; torque curve shape.
+//  Disc sizes 235 mm vented front / 231 mm solid rear, 7/8" brake master, 5/8" clutch master and 3/4" slave are the
+//  commonly published NA 1.6 part sizes (parts catalogues); treat as EST.
+// The core's chassis mass, inertia, tyre and hardpoint geometry are its frozen baseline (not configurable through this ABI);
+// only gearbox, engine, drivetrain, springs/dampers/ARBs and pedal actuation are Miata-specific here.
+TMPedalActuationConfigV312 miataPedals(){
+  TMPedalActuationConfigV312 w{}; w.struct_size=sizeof w; w.abi_version=TM_PEDAL_ACTUATION_ABI_V312;
+  const double pressure=7.0e6;                          // EST working line pressure at full braking
+  const double frontTorque=950, rearTorque=450;         // N m per wheel at full pedal [S3]
+  const double masterBore=0.0222, travel=0.120, freeT=0.006, pedalRatio=4.0; // 7/8" master (EST), EST travel/ratio
   const double masterArea=3.141592653589793*masterBore*masterBore*.25, compliance=masterArea*((travel-freeT)/pedalRatio)/pressure;
-  const double fr[4]={formula?.150:bmw?.125:.110,formula?.150:bmw?.125:.110,formula?.135:bmw?.112:.095,formula?.135:bmw?.112:.095};
-  auto& b=w.brake; b.activation=TM_PEDAL_ACTUATION_AUTHORED_V312; b.topology=formula?1:0; b.assist=formula?0:1; b.provenance=3; /* AuthoredDesign */
-  labelDigest(formula?"formula-vector|inferred-brake":bmw?"bmw-e21-323i|inferred-brake|4300|0.61":"fiat-uno|inferred-brake",b.provenance_sha256);
-  b.maximum_pedal_travel_m=travel; b.free_pedal_travel_m=freeT; b.pedal_ratio=pedalRatio; b.booster_force_gain=formula?1:4; b.master_bore_m=masterBore;
-  b.circuit_compliance_m3_per_pa[0]=b.circuit_compliance_m3_per_pa[1]=compliance; b.maximum_pressure_pa=formula?18e6:12e6;
-  b.compensation_port_pedal_fraction=.005; b.pedal_return_stiffness_n_per_m=formula?320:250; b.pedal_return_preload_n=formula?8:5;
-  for(int k=0;k<4;k++){ double corner=totalTorque*(k<2?frontFraction:1-frontFraction)*.5; b.effective_radius_m[k]=fr[k]; b.pad_friction[k]=.38;
-    b.effective_clamp_area_m2[k]=corner/(pressure*.38*fr[k]); }
-  const uint32_t circ[4]={0u,formula?0u:1u,1u,formula?1u:0u}; for(int k=0;k<4;k++) b.circuit_for_corner[k]=circ[k];
-  auto& c=w.clutch; c.activation=TM_PEDAL_ACTUATION_AUTHORED_V312; c.clamp_curve=1; c.provenance=3;
-  if(formula||bmw){ const double ct=formula?.100:.130, cf=formula?.004:.010, cr=formula?4.8:4, cm=formula?.015:.016, cs=formula?.024:.028;
-    const double clear=(ct-cf)/cr*(cm*cm)/(cs*cs); c.actuation=1;
-    labelDigest(formula?"formula-vector|inferred-hydraulic-multiplate-clutch/v1":"bmw-e21-323i|inferred-hydraulic-clutch/v1",c.provenance_sha256);
-    c.maximum_pedal_travel_m=ct;c.free_pedal_travel_m=cf;c.pedal_ratio=cr;c.master_bore_m=cm;c.slave_bore_m=cs;c.cable_release_travel_ratio=.30;
-    c.bite_release_travel_m=(formula?.12:.18)*clear;c.clear_release_travel_m=clear;c.opening_speed_m_per_s=(formula?18:12)*clear;c.closing_speed_m_per_s=(formula?5:2.8)*clear;
-    c.pedal_return_stiffness_n_per_m=formula?160:180;c.pedal_return_preload_n=formula?3:4;
-    const double fb[5]={80,1000,1600,1450,1100}, ff[5]={100,1250,1900,1700,1200}; for(int k=0;k<5;k++)c.release_bearing_force_n[k]=formula?ff[k]:fb[k];
-  } else { c.actuation=0; labelDigest("fiat-uno|inferred-cable-clutch/v1",c.provenance_sha256);
-    c.maximum_pedal_travel_m=.125;c.free_pedal_travel_m=.012;c.pedal_ratio=4.1;c.master_bore_m=.016;c.slave_bore_m=.028;c.cable_release_travel_ratio=.32;
-    c.bite_release_travel_m=.0022;c.clear_release_travel_m=.0070;c.opening_speed_m_per_s=.080;c.closing_speed_m_per_s=.025;c.pedal_return_stiffness_n_per_m=155;c.pedal_return_preload_n=4;
-    const double fu[5]={60,700,1150,1050,780}; for(int k=0;k<5;k++)c.release_bearing_force_n[k]=fu[k]; }
+  const double fr[4]={0.100,0.100,0.097,0.097};        // EST effective pad radius: 235/231 mm discs minus half pad height
+  auto& b=w.brake; b.activation=TM_PEDAL_ACTUATION_AUTHORED_V312; b.topology=0; b.assist=1; b.provenance=3;
+  labelDigest("mazda-mx5-na6-1990|public-spec-brake",b.provenance_sha256);
+  b.maximum_pedal_travel_m=travel; b.free_pedal_travel_m=freeT; b.pedal_ratio=pedalRatio; b.booster_force_gain=4; b.master_bore_m=masterBore;
+  b.circuit_compliance_m3_per_pa[0]=b.circuit_compliance_m3_per_pa[1]=compliance; b.maximum_pressure_pa=12e6;
+  b.compensation_port_pedal_fraction=.005; b.pedal_return_stiffness_n_per_m=250; b.pedal_return_preload_n=5;
+  for(int k=0;k<4;k++){ double corner=k<2?frontTorque:rearTorque; b.effective_radius_m[k]=fr[k]; b.pad_friction[k]=.38; b.effective_clamp_area_m2[k]=corner/(pressure*.38*fr[k]); }
+  const uint32_t circ[4]={0u,1u,1u,0u}; for(int k=0;k<4;k++) b.circuit_for_corner[k]=circ[k]; // diagonal split
+  auto& c=w.clutch; c.activation=TM_PEDAL_ACTUATION_AUTHORED_V312; c.clamp_curve=1; c.provenance=3; c.actuation=1; // hydraulic
+  labelDigest("mazda-mx5-na6-1990|public-spec-hydraulic-clutch",c.provenance_sha256);
+  const double ct=.130, cf=.010, cr=4.0, cm=.015875, cs=.01905; const double clear=(ct-cf)/cr*(cm*cm)/(cs*cs);
+  c.maximum_pedal_travel_m=ct;c.free_pedal_travel_m=cf;c.pedal_ratio=cr;c.master_bore_m=cm;c.slave_bore_m=cs;c.cable_release_travel_ratio=.30;
+  c.bite_release_travel_m=.18*clear;c.clear_release_travel_m=clear;c.opening_speed_m_per_s=12*clear;c.closing_speed_m_per_s=2.8*clear;
+  c.pedal_return_stiffness_n_per_m=170;c.pedal_return_preload_n=4;
+  const double rb[5]={70,850,1350,1250,950}; for(int k=0;k<5;k++)c.release_bearing_force_n[k]=rb[k]; // EST diaphragm curve, 200 mm clutch
   return w;
 }
-// BmwEmpiricalTunes439.Suspension(name) ported 1:1 (effective wheel rates N/m, N s/m).
-void bmwTune(int t,TMVehicleSuspensionConfigV8& c){
-  double fs=34000,fd=3000,fa=18000,rs=36000,rd=2800,ra=4000;
-  switch(t){case TMS_TUNE_CITY: fs=27200;fd=2400;fa=9000;rs=28800;rd=2240;ra=2000;break;
-  case TMS_TUNE_STREET: fa=9000;break; case TMS_TUNE_RACE: fd=3600;fa=9000;rs=43200;rd=3360;ra=8000;break; default: break;}
-  c.front_spring_rate_n_per_m=fs;c.front_damper_rate_n_s_per_m=fd;c.front_anti_roll_rate_n_per_m=fa;
-  c.rear_spring_rate_n_per_m=rs;c.rear_damper_rate_n_s_per_m=rd;c.rear_anti_roll_rate_n_per_m=ra;
+void miataConfig(TMVehicleGearboxConfigV4& g,TMVehicleEngineConfigV5& e,TMVehicleDrivetrainConfigV7& dt,TMVehicleSuspensionConfigV8& su){
+  const double gr[5]={3.136,1.888,1.330,1.000,0.814}; for(int k=0;k<6;k++) g.forward_ratios[k]=k<5?gr[k]:0; // [S2]
+  g.reverse_ratio=3.758; g.final_drive_ratio=4.300; // [S2]
+  e.idle_rpm=850; e.limit_rpm=7200; e.shaft_inertia_kg_m2=0.12; // EST fuel cut just past the 7000 rpm redline [S2]; EST crank+flywheel inertia
+  const double rpm[13]={0,1000,2000,3000,4000,5000,5500,6000,6500,7000,7200,7500,8000};
+  const double tq[13]={60,95,112,121,127,132,136,133,127,115,110,60,0}; // shape [S3], peak 136 N m @ 5500 [S1]
+  e.curve_point_count=13; for(int k=0;k<13;k++){ e.torque_curve[k].rpm=rpm[k]; e.torque_curve[k].torque_nm=tq[k]; }
+  dt.drive_layout=TM_VEHICLE_DRIVE_RWD_V7; dt.differential_type=TM_VEHICLE_DIFFERENTIAL_OPEN_V7; // base 1990 car: open diff (viscous LSD was optional)
+  dt.preload_torque_nm=0; dt.power_lock_ratio=0; dt.coast_lock_ratio=0;
+  // Stock Miata wheel rates [S3]: springs 12.5/10.1 kN/m, dampers 1050/900 N s/m (mean of bump/rebound), ARB 9.5/2.5 kN/m.
+  // The core validates springs >= 18 kN/m and dampers >= 1.2 kN s/m (modules.hpp), so the soft stock values are clamped to
+  // that floor. Its baseline sprung mass is 1052 kg (Miata ~880 kg + driver), so the ride is stiffer than a real NA6.
+  auto clampR=[](double x,double lo,double hi){ return x<lo?lo:x>hi?hi:x; };
+  su.front_spring_rate_n_per_m=clampR(12500,18000,246153); su.rear_spring_rate_n_per_m=clampR(10100,18000,246153);
+  su.front_damper_rate_n_s_per_m=clampR(1050,1200,9000);   su.rear_damper_rate_n_s_per_m=clampR(900,1200,9000);
+  su.front_anti_roll_rate_n_per_m=9500; su.rear_anti_roll_rate_n_per_m=2500;
 }
 }
 
@@ -133,21 +149,19 @@ TMS_API void* tms_car_create(void* w,int carId,int tune,double x,double z,double
   if(!w){ setErr("car: null world"); return nullptr; }
   shippedMechanicsEnv();
   auto* W=(World*)w; TMCitySpawnV2 sp=spawnOf(x,z,yaw,yHint); void* v=nullptr;
-  if(carId==TMS_CAR_BMW_E21 && tune!=TMS_TUNE_BASELINE && tune!=TMS_TUNE_DRIFT){
-    // Custom spring/damper/ARB route (v8) with every other record at native defaults.
-    TMVehicleGearboxConfigV4 g{}; g.struct_size=sizeof g; TMVehicleEngineConfigV5 e{}; e.struct_size=sizeof e;
-    TMVehicleInstallationConfigV6 in{}; in.struct_size=sizeof in; TMVehicleDrivetrainConfigV7 dt{}; dt.struct_size=sizeof dt;
-    TMVehicleSuspensionConfigV8 su{}; su.struct_size=sizeof su;
+  if(carId==TMS_CAR_MIATA_NA){
+    TMVehicleGearboxConfigV4 g{}; g.struct_size=sizeof g; g.abi_version=TM_VEHICLE_GEARBOX_CONFIG_ABI_V4; TMVehicleEngineConfigV5 e{}; e.struct_size=sizeof e; e.abi_version=TM_VEHICLE_ENGINE_CONFIG_ABI_V5;
+    TMVehicleInstallationConfigV6 in{}; in.struct_size=sizeof in; in.abi_version=TM_VEHICLE_INSTALLATION_CONFIG_ABI_V6; TMVehicleDrivetrainConfigV7 dt{}; dt.struct_size=sizeof dt; dt.abi_version=TM_VEHICLE_DRIVETRAIN_CONFIG_ABI_V7;
+    TMVehicleSuspensionConfigV8 su{}; su.struct_size=sizeof su; su.abi_version=TM_VEHICLE_SUSPENSION_CONFIG_ABI_V8;
     if(tm_vehicle_get_default_gearbox_config_v4(&g)==0&&tm_vehicle_get_default_engine_config_v5(&e)==0&&tm_vehicle_get_default_installation_config_v6(&in)==0&&
        tm_vehicle_get_default_drivetrain_config_v7(&dt)==0&&tm_vehicle_get_default_suspension_config_v8(&su)==0){
-      bmwTune(tune,su); v=tm_vehicle_create_with_surface_and_config_v8(W->surface,&sp,&g,&e,&in,&dt,&su);
+      miataConfig(g,e,dt,su); v=tm_vehicle_create_with_surface_and_config_v8(W->surface,&sp,&g,&e,&in,&dt,&su);
     }
-    if(!v) setErr(std::string("tune route rejected, using baseline: ")+tm_vehicle_last_error());
+    if(!v){ setErr(std::string("miata config rejected: ")+tm_vehicle_last_error()); return nullptr; }
   }
-  if(!v) v=tm_vehicle_create_with_surface_v2(W->surface,&sp);
+  if(!v) v=tm_vehicle_create_with_surface_v2(W->surface,&sp); // TMS_CAR_BASELINE: the core's own default vehicle
   if(!v){ setErr(std::string("tm_vehicle_create_with_surface_v2: ")+tm_vehicle_last_error()); return nullptr; }
-  if(carId>0){ if(tm_vehicle_configure_car_powertrain_v104(v,(uint32_t)carId,1u,&sp)!=0){ setErr(std::string("configure_car_powertrain_v104: ")+tm_vehicle_last_error()); tm_vehicle_destroy(v); return nullptr; } }
-  { TMPedalActuationConfigV312 pc=pedals313(carId); if(tm_vehicle_configure_pedal_actuation_v312(v,&pc)!=0){ setErr(std::string("pedal312: ")+tm_vehicle_last_error()); tm_vehicle_destroy(v); return nullptr; } }
+  (void)tune; { TMPedalActuationConfigV312 pc=miataPedals(); if(tm_vehicle_configure_pedal_actuation_v312(v,&pc)!=0){ setErr(std::string("pedal312: ")+tm_vehicle_last_error()); tm_vehicle_destroy(v); return nullptr; } }
   // Raw62 ownership bit0: the finite Driver68 "hands" drive the physical rack toward input.steer (Unity keyboard/wheel path).
   tm_vehicle_set_raw_steering_owner_v62(v,1u);
   TMSAssistCfg a{16,104,1,0}; tm_vehicle_set_assists_v104(v,&a); // ABS on. ESP (bit1) is off by default: in this snapshot it cuts straight-line drive torque ~70% (measured 0-5 s: 6.4 vs 17.2 m/s)

@@ -52,7 +52,7 @@ fn main() -> Result<()> {
     let wp = world_path(); let w = world::load(&wp).with_context(|| "world (set DCS_WORLD or pass a .glb)")?;
     eprintln!("world '{}': {} parts, {} spawns, line {} pts", w.name, w.parts.len(), w.spawns.len(), w.line.len());
     if let Some(secs) = arg("--physics-bench") {
-        let secs: f32 = secs.parse().unwrap_or(20.0); let mut s = sim::Sim::new(&w, 1, 0)?; let n = (secs * 240.0) as i32; let t0 = std::time::Instant::now();
+        let secs: f32 = secs.parse().unwrap_or(20.0); let mut s = sim::Sim::new(&w, 3, 0)?; let n = (secs * 240.0) as i32; let t0 = std::time::Instant::now();
         for k in 0..n / 4 { let i = s.bot(); s.step(i, 4)?; if k % 240 == 0 { let p = s.state.pos(); eprintln!("t={:5.1}s v={:5.1} m/s gear {} rpm {:5.0} pos ({:.1},{:.1},{:.1})", k as f32 * 4.0 / 240.0, s.state.speed(), s.state.gear(), s.state.rpm(), p.x, p.y, p.z); } }
         let el = t0.elapsed().as_secs_f64(); println!("physics bench: {} ticks in {:.2} s = {:.0} us/tick ({:.0}% of one core at 240 Hz)", n, el, el * 1e6 / n as f64, el * 1e6 / n as f64 / 4166.7 * 100.0);
         return Ok(());
@@ -69,7 +69,7 @@ fn still(w: &world::World, out: &str) -> Result<()> {
     let mut r = render::Renderer::new(&mut c, wd, ht, &load_textures(), settings_from_args())?;
     upload_world(&mut r, &mut c, w)?; let ci = upload_car(&mut r, &mut c)?;
     if c.rt { let a = accel::Accel::new(&mut c, &r.meshes)?; r.bind_tlas(&c.device, a.tlas); r.tlas = Some(a); }
-    let mut s = sim::Sim::new(w, 1, 0)?; let mut cam = None;
+    let mut s = sim::Sim::new(w, 3, 0)?; let mut cam = None;
     for f in 0..frames { let i = s.bot(); s.step(i, 8)?; cam = Some(s.chase_camera(cam, 1.0 / 30.0)); let _ = f; }
     place_car(&mut r, &s, &ci); let (cp, ct) = cam.unwrap(); let view = Mat4::look_at_rh(cp, ct, Vec3::Y);
     let (centre, ..) = s.basis();
@@ -112,7 +112,7 @@ mod window {
             let mut r = render::Renderer::new(&mut c, wd, ht, &load_textures(), settings_from_args()).unwrap();
             upload_world(&mut r, &mut c, &self.w).unwrap(); let ci = upload_car(&mut r, &mut c).unwrap();
             if c.rt { let a = accel::Accel::new(&mut c, &r.meshes).unwrap(); r.bind_tlas(&c.device, a.tlas); r.tlas = Some(a); }
-            let s = sim::Sim::new(&self.w, 1, 0).unwrap();
+            let s = sim::Sim::new(&self.w, 3, 0).unwrap();
             let sem = || unsafe { c.device.create_semaphore(&avk::SemaphoreCreateInfo::default(), None).unwrap() };
             let (sem_acq, sem_done) = (sem(), sem());
             self.st = Some(State { win, c, r, s, ci, surface, sc_d, sc, imgs, sem_acq, sem_done, last: std::time::Instant::now(), acc: 0.0, cam: None, frames: 0, steer: 0.0, auto: false });
