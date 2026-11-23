@@ -90,7 +90,17 @@ Passes, each timed with GPU timestamps:
 8. Tonemap
 9. AA, lens and grain
 
+## Vegetation (web)
+The stand-in foliage blocks (`VIS_foliage`, about 35k tris) are replaced at load time by procedural trees from ez-tree (`web/js/trees.js`).
+- Placement: the foliage mesh is clustered on a 4 m grid. Trees are placed with a seed, with at least 3.5 m clearance from tarmac, kerb and line triangles (`?treeclear=`) and a minimum gap between trees.
+- Presets: six seeded variants for Belgrade parkland: poplar (aspen stand-in) ×2, ash ×2, oak and pine.
+- Near trees (within 70 m, `?treenear=`) are instanced ez-tree meshes that cast shadows.
+- Mid and far trees are hemi-octahedral impostors. Each preset gets an 8×8 view atlas (albedo plus normal), baked once at load. The impostors are lit at runtime by the real sun and sky.
+- `?trees=0` restores the old blocks. The RAW tier always shows the old blocks.
+- Native vegetation is still pending: the native renderer still draws the foliage blocks.
+
 ## Credits and references
+- ez-tree by Daniel Greenheck (MIT): https://github.com/dgreenheck/ez-tree, vendored at `web/vendor/ez-tree` with its LICENSE.
 - SSRT3 (screen-space GI idea): https://github.com/cdrinmatane/SSRT3 — no code copied.
 - SmartImposter (impostor caching idea, Rust/ash reference): https://github.com/SamG-Coder/SmartImposter — no code copied.
 - dlss5-visual-enhancer (https://github.com/Merserk/dlss5-visual-enhancer): evaluated. It is an offline image/video enhancer, not a real-time pass, so it is not used at runtime.

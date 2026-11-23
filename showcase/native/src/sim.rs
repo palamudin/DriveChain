@@ -84,3 +84,48 @@ pub fn car_meshes() -> Vec<(Vec<crate::render::Vertex>, Vec<u32>, u32, glam::Vec
     // -1 = body, 0..3 = wheel index
     vec![(bv, bi, 100, paint, -1), (cv, ci, 102, glass, -1), (wv.clone(), wi.clone(), 101, tyre, 0), (wv.clone(), wi.clone(), 101, tyre, 1), (wv.clone(), wi.clone(), 101, tyre, 2), (wv, wi, 101, tyre, 3)]
 }
+
+/// Load the local (private, never in git) OBJ car set used by the web build: <dir>/mesh.cfg, body.obj, wheel_*.obj (+ .mtl Kd colours).
+/// Body is moved to the wheel-centre origin and stretched to the physics wheelbase/track (like the web CarVisual). None if absent.
+pub fn car_meshes_obj(dir: &std::path::Path, wb_phys: f32, track_phys: f32) -> Option<Vec<(Vec<crate::render::Vertex>, Vec<u32>, u32, glam::Vec4, i32)>> {
+    use crate::render::Vertex; use std::collections::HashMap;
+    let cfg = std::fs::read_to_string(dir.join("mesh.cfg")).ok()?;
+    let mut kv: HashMap<String, Vec<f32>> = HashMap::new();
+    for l in cfg.lines() { if let Some((k, v)) = l.split_once('=') { kv.insert(k.trim().to_string(), v.split_whitespace().filter_map(|x| x.parse().ok()).collect()); } }
+    let wp = |k: &str| kv.get(k).filter(|v| v.len() == 3).map(|v| Vec3::new(v[0], v[1], v[2]));
+    let (fl, fr, rl, rr) = (wp("wheel_fl")?, wp("wheel_fr")?, wp("wheel_rl")?, wp("wheel_rr")?);
+    let centre = (fl + fr + rl + rr) * 0.25; let wb = ((fl + fr) * 0.5 - (rl + rr) * 0.5).x; let tr = (fl.y - fr.y + rl.y - rr.y) * 0.5;
+    let sx = if wb > 0.5 && wb_phys > 0.5 { wb_phys / wb } else { 1.0 }; let sy = if tr > 0.5 && track_phys > 0.5 { (track_phys / tr).clamp(0.9, 1.15) } else { 1.0 };
+    fn mtl(path: &std::path::Path) -> HashMap<String, [f32; 3]> { let mut m = HashMap::new(); let mut cur = String::new();
+        if let Ok(t) = std::fs::read_to_string(path) { for l in t.lines() { let l = l.trim(); if let Some(n) = l.strip_prefix("newmtl ") { cur = n.trim().to_string(); }
+            else if let Some(k) = l.strip_prefix("Kd ") { let v: Vec<f32> = k.split_whitespace().filter_map(|x| x.parse().ok()).collect(); if v.len() == 3 { m.insert(cur.clone(), [v[0], v[1], v[2]]); } } } } m }
+    // returns per-material (verts, idx)
+    fn obj(path: &std::path::Path, xf: &dyn Fn(Vec3) -> Vec3, nf: &dyn Fn(Vec3) -> Vec3) -> Option<Vec<(String, Vec<Vertex>, Vec<u32>)>> {
+        let t = std::fs::read_to_string(path).ok()?; let (mut p, mut n, mut uv) = (vec![], vec![], vec![]); let mut groups: Vec<(String, Vec<Vertex>, Vec<u32>)> = vec![("default".into(), vec![], vec![])];
+        for l in t.lines() { let mut it = l.split_whitespace(); match it.next() {
+            Some("v") => { let v: Vec<f32> = it.filter_map(|x| x.parse().ok()).collect(); if v.len() >= 3 { p.push(Vec3::new(v[0], v[1], v[2])); } }
+            Some("vn") => { let v: Vec<f32> = it.filter_map(|x| x.parse().ok()).collect(); if v.len() >= 3 { n.push(Vec3::new(v[0], v[1], v[2])); } }
+            Some("vt") => { let v: Vec<f32> = it.filter_map(|x| x.parse().ok()).collect(); if v.len() >= 2 { uv.push([v[0], v[1]]); } }
+            Some("usemtl") => { groups.push((it.next().unwrap_or("").to_string(), vec![], vec![])); }
+            Some("f") => { let g = groups.last_mut().unwrap(); let corners: Vec<Vertex> = it.filter_map(|c| { let mut s = c.split('/'); let pi: usize = s.next()?.parse().ok()?;
+                    let ti = s.next().and_then(|x| x.parse::<usize>().ok()); let ni = s.next().and_then(|x| x.parse::<usize>().ok());
+                    let pos = xf(*p.get(pi.checked_sub(1)?)?); let nrm = ni.and_then(|i| n.get(i - 1)).map(|v| nf(*v)).unwrap_or(Vec3::Z);
+                    Some(Vertex { pos: pos.to_array(), nrm: nrm.normalize_or(Vec3::Z).to_array(), uv: ti.and_then(|i| uv.get(i - 1)).copied().unwrap_or([0.0, 0.0]) }) }).collect();
+                for k in 1..corners.len().saturating_sub(1) { let b = g.1.len() as u32; g.1.extend([corners[0], corners[k], corners[k + 1]]); g.2.extend([b, b + 1, b + 2]); } }
+            _ => {} } }
+        Some(groups.into_iter().filter(|g| !g.2.is_empty()).collect())
+    }
+    let lin = |c: [f32; 3]| Vec3::new(c[0].powf(2.2), c[1].powf(2.2), c[2].powf(2.2));
+    let class = |name: &str, kd: [f32; 3]| -> (u32, glam::Vec4) { let n = name.to_lowercase();
+        if n.contains("glass") || n.contains("window") || n.contains("windscreen") { (102, glam::Vec4::new(0.01, 0.012, 0.015, 0.05)) }
+        else if n.contains("chassis") || n.contains("paint") || n.contains("body") { (100, lin(kd).extend(0.3)) }
+        else if n.contains("tyre") || n.contains("tire") || n.contains("rubber") { (101, glam::Vec4::new(0.015, 0.015, 0.015, 0.9)) }
+        else { (101, lin(kd).max(Vec3::splat(0.01)).extend(if n.contains("chrome") { 0.15 } else { 0.55 })) } };
+    let mut out = vec![];
+    let bm = mtl(&dir.join("body.mtl"));
+    let bx = move |v: Vec3| { let q = v - centre; Vec3::new(q.x * sx, q.y * sy, q.z) }; let bn = move |v: Vec3| Vec3::new(v.x / sx, v.y / sy, v.z);
+    for (m, v, i) in obj(&dir.join("body.obj"), &bx, &bn)? { let (s, t) = class(&m, *bm.get(&m).unwrap_or(&[0.3, 0.3, 0.3])); out.push((v, i, s, t, -1)); }
+    for (k, w) in ["fl", "fr", "rl", "rr"].iter().enumerate() { let wm = mtl(&dir.join(format!("wheel_{w}.mtl")));
+        if let Some(gs) = obj(&dir.join(format!("wheel_{w}.obj")), &|v| v, &|v| v) { for (m, v, i) in gs { let (s, t) = class(&m, *wm.get(&m).unwrap_or(&[0.05, 0.05, 0.05])); out.push((v, i, s, t, k as i32)); } } }
+    Some(out)
+}

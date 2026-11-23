@@ -36,7 +36,7 @@ pub struct GpuMesh { pub vb: Buffer, pub ib: Buffer, pub count: u32, pub verts: 
 
 #[derive(Clone, Copy)]
 pub struct Settings { pub gi: u32, pub exposure: f32, pub bloom: f32, pub grain: f32, pub vignette: f32, pub fog: f32, pub volumetric: f32, pub gi_intensity: f32, pub wet: f32, pub sun_el: f32, pub sun_az: f32, pub sun_intensity: f32 }
-impl Default for Settings { fn default() -> Self { Settings { gi: 1, exposure: 0.7, bloom: 0.08, grain: 0.03, vignette: 0.3, fog: 0.0006, volumetric: 0.6, gi_intensity: 1.2, wet: 0.0, sun_el: 17.0, sun_az: 235.0, sun_intensity: 5.0 } } }
+impl Default for Settings { fn default() -> Self { Settings { gi: 1, exposure: 0.85, bloom: 0.08, grain: 0.03, vignette: 0.3, fog: 0.0006, volumetric: 0.6, gi_intensity: 1.2, wet: 0.0, sun_el: 17.0, sun_az: 235.0, sun_intensity: 5.0 } } }
 
 enum Res { Ubo(vk::Buffer, u64), Tex(vk::ImageView, vk::Sampler), Img(vk::ImageView), Tlas(vk::AccelerationStructureKHR) }
 struct Pass { pipe: vk::Pipeline, layout: vk::PipelineLayout, dsl: vk::DescriptorSetLayout, set: vk::DescriptorSet }

@@ -31,9 +31,14 @@ fn upload_world(r: &mut render::Renderer, c: &mut vk::Ctx, w: &world::World) -> 
     eprintln!("render world: {} meshes, {} tris", w.parts.len(), tris); Ok(())
 }
 struct CarIdx { body: Vec<usize>, wheels: Vec<(usize, usize)> }
-fn upload_car(r: &mut render::Renderer, c: &mut vk::Ctx) -> Result<CarIdx> {
+fn upload_car(r: &mut render::Renderer, c: &mut vk::Ctx, s: &sim::Sim) -> Result<CarIdx> {
     let mut ci = CarIdx { body: vec![], wheels: vec![] };
-    for (v, i, surf, tint, wheel) in sim::car_meshes() { let k = r.add_mesh(c, &v, &i, surf, tint, true, false)?; if wheel < 0 { ci.body.push(k) } else { ci.wheels.push((k, wheel as usize)) } }
+    // local private OBJ car (same set as the web build) if present, else the own procedural placeholder
+    let st = &s.state; let w: Vec<glam::Vec3> = (0..4).map(|i| st.wheel(i)).collect();
+    let wb = ((w[0] + w[1]) * 0.5 - (w[2] + w[3]) * 0.5).length(); let tr = ((w[0] - w[1]).length() + (w[2] - w[3]).length()) * 0.5;
+    let dir = std::path::PathBuf::from(std::env::var("DCS_CARMESH").unwrap_or_else(|_| "../private-assets/miata_mesh".into()));
+    let meshes = match sim::car_meshes_obj(&dir, wb, tr) { Some(m) if !m.is_empty() => { eprintln!("car: OBJ set {} ({} parts, physics wheelbase {:.3} m track {:.3} m)", dir.display(), m.len(), wb, tr); m } _ => { eprintln!("car: procedural placeholder (no {})", dir.display()); sim::car_meshes() } };
+    for (v, i, surf, tint, wheel) in meshes { let k = r.add_mesh(c, &v, &i, surf, tint, true, false)?; if wheel < 0 { ci.body.push(k) } else { ci.wheels.push((k, wheel as usize)) } }
     Ok(ci)
 }
 fn place_car(r: &mut render::Renderer, s: &sim::Sim, ci: &CarIdx) {
@@ -67,9 +72,9 @@ fn still(w: &world::World, out: &str) -> Result<()> {
     let mut c = vk::Ctx::new(&[], std::env::args().all(|a| a != "--rt-off"))?;
     eprintln!("Vulkan device: {} | hardware RT (ray query): {}", c.name, c.rt);
     let mut r = render::Renderer::new(&mut c, wd, ht, &load_textures(), settings_from_args())?;
-    upload_world(&mut r, &mut c, w)?; let ci = upload_car(&mut r, &mut c)?;
+    let mut s = sim::Sim::new(w, 3, 0)?; upload_world(&mut r, &mut c, w)?; let ci = upload_car(&mut r, &mut c, &s)?;
     if c.rt { let a = accel::Accel::new(&mut c, &r.meshes)?; r.bind_tlas(&c.device, a.tlas); r.tlas = Some(a); }
-    let mut s = sim::Sim::new(w, 3, 0)?; let mut cam = None;
+    let mut cam = None;
     for f in 0..frames { let i = s.bot(); s.step(i, 8)?; cam = Some(s.chase_camera(cam, 1.0 / 30.0)); let _ = f; }
     place_car(&mut r, &s, &ci); let (cp, ct) = cam.unwrap(); let view = Mat4::look_at_rh(cp, ct, Vec3::Y);
     let (centre, ..) = s.basis();
@@ -110,9 +115,8 @@ mod window {
             let imgs = unsafe { sc_d.get_swapchain_images(sc).unwrap() };
             eprintln!("Vulkan device: {} | hardware RT (ray query): {} | {}x{} {:?}", c.name, c.rt, wd, ht, fmt.format);
             let mut r = render::Renderer::new(&mut c, wd, ht, &load_textures(), settings_from_args()).unwrap();
-            upload_world(&mut r, &mut c, &self.w).unwrap(); let ci = upload_car(&mut r, &mut c).unwrap();
+            let s = sim::Sim::new(&self.w, 3, 0).unwrap(); upload_world(&mut r, &mut c, &self.w).unwrap(); let ci = upload_car(&mut r, &mut c, &s).unwrap();
             if c.rt { let a = accel::Accel::new(&mut c, &r.meshes).unwrap(); r.bind_tlas(&c.device, a.tlas); r.tlas = Some(a); }
-            let s = sim::Sim::new(&self.w, 3, 0).unwrap();
             let sem = || unsafe { c.device.create_semaphore(&avk::SemaphoreCreateInfo::default(), None).unwrap() };
             let (sem_acq, sem_done) = (sem(), sem());
             self.st = Some(State { win, c, r, s, ci, surface, sc_d, sc, imgs, sem_acq, sem_done, last: std::time::Instant::now(), acc: 0.0, cam: None, frames: 0, steer: 0.0, auto: false });

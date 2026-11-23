@@ -29,7 +29,7 @@ void main() {
     vec4 A = texture(albedoTex, uv); vec3 n = normalize(texture(normalTex, uv).xyz); vec3 direct = texture(directTex, uv).rgb;
     vec4 gi = F.frameInfo.z != 0u ? upsampleGI(uv, d, n) : vec4(0, 0, 0, 1);
     float ao = mix(1.0, gi.a, F.gi.y);
-    col = direct + A.rgb * (1.0 - A.a) * (gi.rgb * F.gi.x + skyAmbient(n) * ao);
+    col = direct + A.rgb * (1.0 - A.a) * (gi.rgb * F.gi.x + skyAmbient(n) * ao * 2.6); // 2.6: sky irradiance proxy was ~2.5x low vs the web env-map reference (dark shadows)
     dist = length(far - F.camPos.xyz);
   }
   // height fog + volumetric in-scatter

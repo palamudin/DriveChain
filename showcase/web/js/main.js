@@ -8,6 +8,7 @@ import { CarVisual } from './car.js';
 import { Input } from './input.js';
 import { Bot } from './bot.js';
 import { chunkMesh } from './chunks.js';
+import { planTrees, Vegetation } from './trees.js';
 import { buildPipeline, TIERS, postParams } from './post.js';
 import { FarImpostors } from './impostor.js';
 
@@ -92,6 +93,11 @@ const MAT = { showcase: makeShowcaseMaterials(), raw: makeRawMaterials() };
 const worldBounds = new THREE.Box3().setFromObject(worldGroup);
 const impostors = new FarImpostors(renderer, scene, entries.map(e => e.mesh).filter(m => m.userData.center), { radius: +(Q.get('farr') ?? 260) });
 let impostorsOn = Q.get('imp') !== '0';
+// vegetation: ez-tree near meshes + baked octahedral impostors replace the stand-in foliage blocks (?trees=0 keeps the old blocks)
+let veg = null; const treesOn = Q.get('trees') !== '0';
+if (treesOn) { try { const plan = planTrees(entries, { clearance: +(Q.get('treeclear') ?? 3.5) }); veg = await new Vegetation(renderer, scene, plan, { nearR: +(Q.get('treenear') ?? 70) }).build();
+  log('trees', plan.trees.length, 'from', plan.clusters, 'foliage clusters,', plan.rejected, 'road-clearance rejects, bake', veg.bakeMs.toFixed(0), 'ms'); window.__dcs.trees = { n: plan.trees.length, clusters: plan.clusters, bakeMs: veg.bakeMs }; }
+  catch (e) { log('trees failed', e.message); console.error(e); veg = null; } }
 
 // ---------------------------------------------------------------- car + physics
 const car = new CarVisual(scene);
@@ -149,6 +155,7 @@ function applyTier(name) {
   carShadow.on.value = T.shadows && shadowCache ? 1 : 0;
   if (pipe) pipe.pp.dispose?.(); pipe = buildPipeline(renderer, scene, camera, name, sun);
   impostors.setEnabled(impostorsOn && !!T.impostors);
+  if (veg) veg.setEnabled(T.materials !== 'raw');
   $('tier').textContent = T.label + (impostors.enabled ? ' + far impostors' : ''); lastShadowCentre.set(1e9, 0, 0);
 }
 captureEnv(); { const target = tier; applyTier(CFG.warm ? 'raw' : target); tier = target; }
@@ -224,7 +231,7 @@ async function frameLoop() {
     if (shadowCache && TIERS[tier].shadows) renderCarShadow();
   }
   sky.position.copy(camera.position);
-  impostors.update(car.centre, camera.position);
+  impostors.update(car.centre, camera.position); if (veg && veg.enabled) veg.update(camera.position);
   const t0 = performance.now();
   pipe.pp.render();
   timings.cpu = performance.now() - t0;
@@ -232,11 +239,11 @@ async function frameLoop() {
   fpsAcc += dt; fpsN++; if (fpsAcc > 0.5) { fps = fpsN / fpsAcc; fpsAcc = 0; fpsN = 0; }
   if (state) {
     $('spd').textContent = (state[10] * 3.6).toFixed(0); $('gear').textContent = gear < 0 ? 'R' : gear === 0 ? 'N' : String(state[12] | 0); $('rpm').style.width = Math.min(100, state[11] / 72) + '%';
-    $('stats').textContent = `${backend} | ${fps.toFixed(0)} fps | GPU ${gpuMs ? gpuMs.toFixed(2) + ' ms' : 'n/a'} | CPU submit ${timings.cpu.toFixed(1)} ms | physics ${physInfo.usPerTick ? physInfo.usPerTick.toFixed(0) : '-'} us/tick x ${physInfo.ticks} | shadow ${shadowCache ? 'cached' : 'per-frame'} (${window.__dcs.shadowRenders || 0} renders) | tris ${(renderer.info.render.triangles / 1e3).toFixed(0)}k${impostors.enabled ? ` (far ring ${(impostors.farTris / 1e3 || 0).toFixed(0)}k tris cached, ${impostors.captures} captures)` : ''} | ${input.mode}${auto ? ' | AUTOPILOT' : ''}`;
+    $('stats').textContent = `${backend} | ${fps.toFixed(0)} fps | GPU ${gpuMs ? gpuMs.toFixed(2) + ' ms' : 'n/a'} | CPU submit ${timings.cpu.toFixed(1)} ms | physics ${physInfo.usPerTick ? physInfo.usPerTick.toFixed(0) : '-'} us/tick x ${physInfo.ticks} | shadow ${shadowCache ? 'cached' : 'per-frame'} (${window.__dcs.shadowRenders || 0} renders) | tris ${(renderer.info.render.triangles / 1e3).toFixed(0)}k${veg && veg.enabled ? ` | trees ${veg.plan.trees.length} (${veg.nearCount} mesh, ${(veg.tris / 1e3).toFixed(0)}k tris)` : ''}${impostors.enabled ? ` (far ring ${(impostors.farTris / 1e3 || 0).toFixed(0)}k tris cached, ${impostors.captures} captures)` : ''} | ${input.mode}${auto ? ' | AUTOPILOT' : ''}`;
   }
   window.__dcs.frames = frame; window.__dcs.simTime = simTime; window.__dcs.state = state && Array.from(state.slice(0, 16)); window.__dcs.gpuMs = gpuMs; window.__dcs.backend = backend; window.__dcs.ready = !!state && physReady;
   requestAnimationFrame(frameLoop);
 }
 $('hud').classList.remove('hide'); requestAnimationFrame(frameLoop);
-window.__dcs.applyTier = applyTier; window.__dcs.setCam = (m, o) => { camMode = m; if (o) Object.assign(orbit, o); }; window.__dcs.setSun = (e, a) => { setSun(e, a); captureEnv(); lastShadowCentre.set(1e9, 0, 0); };
+window.__dcs.applyTier = applyTier; window.__dcs.veg = () => veg; window.__dcs.THREE = THREE; window.__dcs.camera = camera; window.__dcs.scene = scene; window.__dcs.setCam = (m, o) => { camMode = m; if (o) Object.assign(orbit, o); }; window.__dcs.setSun = (e, a) => { setSun(e, a); captureEnv(); lastShadowCentre.set(1e9, 0, 0); };
 window.__dcs.setAuto = (v) => auto = v && !!bot; window.__dcs.cfg = CFG; window.__dcs.worldKind = worldKind; window.__dcs.carKind = () => car.kind; window.__dcs.physVersion = () => physVersion;
