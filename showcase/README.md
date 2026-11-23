@@ -49,7 +49,7 @@ Keys:
 - H: help
 
 URL params: `tier, webgl, world, auto, sunel, sunaz, exp, gi, fog, wet, cam, dpr, still, warm`.
-Vegetation toggles: `trees=0, shrubs=0, grass=0, grassdensity=14 (blades/m²), grassdist=45 (m), grassmax=90000, treeshadows=0, impdist=70 (m, mesh→impostor), vegplan=<url>, freeze (stops grass wind)`.
+Vegetation toggles: `trees=0, shrubs=0, grass=0, grassdensity=24 (blades/m², same as native), grassdist=45 (m), grassmax=160000, treeshadows=0, impdist=70 (m, mesh→impostor), vegplan=<url>, freeze (stops grass wind)`.
 
 Tiers:
 - RAW: unlit look, as in the old version.
@@ -78,20 +78,48 @@ Run modes:
 - `--physics-bench 20` benchmarks the physics.
 - `--input-test 30` (no GPU) lists controllers and prints raw axes/buttons and the mapped controls for 30 s.
 
-Vegetation toggles (native): `--no-trees --no-shrubs --no-grass --grass-density 24 --grass-dist 70 --max-blades 1500000 --no-tree-shadows --imp-dist 90 --old-foliage`.
-At startup the log (`drivechain.log` next to the exe, and stderr) prints the GPU, driver version, swapchain format and present mode (FIFO),
-and the vegetation setup; every 600 frames it logs the GPU ms per pass (also in the window title), including `grass compute` and `foliage+grass draw`.
+Vegetation toggles (native): `--no-trees --no-shrubs --no-grass --grass-density 24 --grass-dist 70 --max-blades 1500000 --no-tree-shadows --imp-dist 90 --imp-band 0.2 --old-foliage`.
+Image-stability toggles: `--taa on|off` (default on), `--taa-sharpen 0.1`, `--aniso 16` (clamped to the GPU limit), `--spec-aa on|off`
+(default on), `--present fifo|mailbox|immediate|relaxed` (default fifo = vsync; falls back to FIFO when unsupported). In the window:
+**F5** TAA on/off, **F8** spec-AA on/off.
+At startup the log (`drivechain.log` next to the exe, and stderr) prints the GPU, driver version, swapchain format, present mode (and the
+supported ones), the material switches and the TAA/spec-AA/aniso state, and the vegetation setup; every 600 frames it logs the frame time
+(mean / p99 / max: frame pacing) and the GPU ms per pass (also in the window title), including `grass compute` and `foliage+grass draw`.
+
+### Material groups (render only what you need)
+Groups: `leaves bark impostors shrubs grass markings asphalt kerbs terrain props car`. Each group has a mode, `on`, `flat` (unlit,
+textured), `debug` (unlit solid colour) or `off` (culled from every pass, shadows included), plus overrides `opaque` (no alpha test),
+`nomips` (mip 0 only), `noshadow` (casts no shadow) and `nospec` (no specular).
+- CLI: `--mat leaves=off,grass=flat,impostors=debug+nomips` (`all=` sets every group; `+flag` adds an override).
+- `--isolate leaves[,bark,...]` renders only those groups. Everything else is culled, and GI, volumetrics and bloom are skipped with a cheap sky.
+  Add `--crop x,y,w,h` (a window of the `--size` frame; same pixels, same projection) for still/sequence tests. On lavapipe a
+  12-frame tree sequence takes 8 s instead of 70 s for the full scene (GPU 208 ms vs 2302 ms per frame).
+- `render.ini` next to the exe: `[materials]` with `leaves = flat+opaque`, `isolate = leaves,bark`, ... (the CLI wins).
+- Keys: **F3** next group, **F4** next mode (on → flat → debug → off), **F6** pick an override, **F7** toggle it on the group, **F9** reset all.
+  The current state is shown on screen and logged to `drivechain.log` on every change.
+
+Foliage-flicker bisect recipe (Jakov's rig, in the window, standing still then driving slowly past trees):
+1. F5 (TAA off): if the boiling is clearly worse, TAA was working and the rest is non-temporal aliasing; F5 back on.
+2. F3 to `leaves`, F4 → `flat`. If the boiling stops, it is lighting (shadows/GI/spec) on the leaves; if it stays, it is coverage (alpha).
+3. Still on `leaves`: F6 to `opaque`, F7. Solid cards = no alpha test. If the boiling stops, it is alpha-test aliasing.
+   F7 again, F6 to `nomips`, F7: much worse = the mips are doing their job.
+4. F6 to `noshadow`, F7 on `leaves` and on `impostors`: if it stops, it is leaf self-shadowing (cascade/RT shadow noise).
+5. Same for `impostors` (far trees) and `grass`. `debug` mode shows which group a flickering pixel belongs to.
+6. Note the steps that change it (the log has every state) and send `drivechain.log`.
+Headless, the same on a soft GPU: `tools/flicker_native.sh <name> [args]` (12-frame sub-pixel dolly, foliage metrics),
+`tools/flicker_mask.sh <name> <groups>` (pixel mask of groups from the debug mode), `MASK=scratch/flk/mask_<name>.png tools/flicker_native.sh ...`.
 
 Passes, each timed with GPU timestamps:
 1. G-buffer
 2. Shadow cascades (near per-frame, far cached)
 3. Ray-query shadow mask (RT only)
 4. Direct light
-5. Screen-probe GI (SSRT3-style, half-res, ray query when available)
+5. Screen-probe GI (SSRT3-style, half-res, ray query when available; not used on foliage, which gets a world-locked canopy AO instead)
 6. Composite with height fog and physical sky
-7. Bloom
-8. Tonemap
-9. AA, lens and grain
+7. TAA (Halton 2,3 jitter, motion vectors incl. wind, closest-depth velocity, Catmull-Rom history, YCoCg variance clip, reset on camera cuts)
+8. Bloom
+9. Tonemap (+ light TAA sharpen)
+10. AA, lens and grain
 
 ## Vegetation (web + native)
 All old Ušće foliage geometry is gone: `tools/usce_veg_prep.py` writes `usce_v2.glb` (private) without `VIS_foliage` (35.5k tris of tree/hedge
@@ -123,8 +151,14 @@ DirectInput also reports its own axis/button/POV counts and force-feedback flag)
 
 - **F1** (or pad Back/View) toggles the input overlay: every device with live raw axis values and held buttons, plus the mapped
   steer/throttle/brake/clutch. **F2** reloads `input.ini`. `C` cycles the camera (chase, far chase, bonnet), `M` toggles auto/manual gearbox.
-- Default pad mapping: left stick steer (deadzone 0.08, linearity 1.5), RT throttle, LT brake, RB/LB gear up/down (switches to
-  manual), X handbrake, Y reset, B camera, Back overlay.
+- Default pad mapping = the original DriveChain (`demo/input.c`): left stick steer (deadzone 0.04, linear), RT throttle, LT brake
+  (0..1, linear, no deadzone), B handbrake, X clutch, RB/LB gear up/down (switches to manual), Y reset, right stick click camera, Back overlay.
+  An old `input.ini` (no `version = 2`) is replaced by the new defaults on start; the old file is kept as `input.ini.v1.bak`.
+- Xbox pads are always read through XInput, never as a DirectInput "wheel": DirectInput devices whose HID path carries `IG_`
+  (= XInput device) are skipped and logged. Pads that only exist in DirectInput (DualShock/DualSense, generic USB pads, third-party
+  Xbox clones) get a pad profile with the triggers split correctly (Xbox-style DI pads report both triggers on one combined Z axis:
+  LT = Z > 0, RT = Z < 0; Sony: L2/R2 on Rx/Ry). Wheel axes that the device doesn't have read as unbound instead of half throttle.
+  Tests: `cargo test --release input` (simulated XInput/DirectInput states) and `node tools/input_unit.mjs` (web).
 - `input.ini` is written next to the exe on first run. `[pad]` uses names (LX LY RX RY LT RT, A B X Y LB RB Back Start LS RS DUp DDown
   DLeft DRight, `-` prefix inverts an axis). `[wheel]` uses raw DirectInput numbers: `axis0..7` = X, Y, Z, Rx, Ry, Rz, Slider0, Slider1,
   `button0..31`, POV hat = `button32..35` (up, right, down, left). Prefix a binding with part of another device's name to read it from

@@ -64,12 +64,12 @@ impl Mats {
     }
     /// Overlay lines (F3/F4/F6 hotkeys); the selected group is marked.
     pub fn overlay_lines(&self) -> Vec<String> {
-        let mut v = vec!["MATERIALS  F3 group  F4 mode (on/flat/debug/off)  F6 pick feature  F7 toggle it  F9 reset".to_string()];
+        let mut v = vec!["MATERIALS F3 group F4 mode F9 reset".to_string(), "F6 pick override, F7 toggle it".to_string()];
         let mut line = String::new();
         for g in 0..GROUPS.len() { let mut s = format!("{}{}:{}", if g == self.sel { ">" } else { " " }, GROUPS[g], MODES[self.mode[g] as usize]);
             for (f, n) in FLAGS.iter().enumerate() { if self.flags[g] & (1 << f) != 0 { s.push('+'); s.push_str(&n[..3]); } }
-            if line.len() + s.len() > 70 { v.push(std::mem::take(&mut line)); } line.push_str(&s); line.push(' '); }
-        v.push(line); v.push(format!("  F7 toggles '{}' on {}", FLAGS[self.sel_flag], GROUPS[self.sel])); v
+            if line.len() + s.len() > 42 { v.push(std::mem::take(&mut line)); } line.push_str(&s); line.push(' '); }
+        v.push(line); v.push(format!(" F7: {} on {}", FLAGS[self.sel_flag], GROUPS[self.sel])); v
     }
     pub fn key_group(&mut self) { self.sel = (self.sel + 1) % GROUPS.len(); }
     pub fn key_mode(&mut self) { self.mode[self.sel] = (self.mode[self.sel] + 1) % 4; }

@@ -98,7 +98,7 @@ let grass = null;
 // vegetation: ez-tree near meshes + baked octahedral impostors replace the stand-in foliage blocks (?trees=0 keeps the old blocks)
 let veg = null; const flag = (k, d = true) => Q.has(k) ? Q.get(k) !== '0' && Q.get(k) !== 'false' : d;
 const treesOn = flag('trees'), shrubsOn = flag('shrubs'), grassOn = flag('grass');
-if (grassOn) { try { grass = new Grass(scene, entries, { density: +(Q.get('grassdensity') ?? 14), radius: +(Q.get('grassdist') ?? 45), max: +(Q.get('grassmax') ?? 90000) });
+if (grassOn) { try { grass = new Grass(scene, entries, { density: +(Q.get('grassdensity') ?? 24), radius: +(Q.get('grassdist') ?? 45), max: +(Q.get('grassmax') ?? 160000) });
   log('grass', grass.ntri, 'grass tris,', (grass.area / 1e4).toFixed(1), 'ha'); } catch (e) { log('grass failed', e.message); console.error(e); grass = null; } }
 for (const e of entries) if (e.cls === 32 || /foliage/i.test(e.name || '')) e.mesh.visible = false; // old stand-in blocks: never drawn
 if (treesOn || shrubsOn) { try { const planUrl = Q.get('vegplan') ?? CFG.world.replace(/[^/]*$/, 'veg_plan.json'); const plan = await loadPlan(planUrl, entries);

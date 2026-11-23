@@ -55,7 +55,7 @@ export function buildCollision(world) {
 const texCache = new Map();
 function tex(path, srgb) {
   if (texCache.has(path)) return texCache.get(path);
-  const t = new THREE.TextureLoader().load(path); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8;
+  const t = new THREE.TextureLoader().load(path); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 16;
   t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace; texCache.set(path, t); return t;
 }
 const TEX = 'assets/textures/';

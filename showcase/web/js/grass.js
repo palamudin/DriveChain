@@ -19,7 +19,7 @@ function hash(x, z, k) { let h = Math.imul((x * 73856093) ^ (z * 19349663) ^ (k 
 
 export class Grass {
   constructor(scene, entries, opts = {}) {
-    this.density = opts.density ?? 14; this.radius = opts.radius ?? 45; this.max = opts.max ?? 90000; this.cell = 8; this.enabled = true;
+    this.density = opts.density ?? 24; this.radius = opts.radius ?? 45; this.max = opts.max ?? 160000; this.cell = 8; this.enabled = true;
     // grass triangles (world space) binned into cells
     this.cells = new Map(); const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(); let area = 0, ntri = 0;
     for (const e of entries.filter(e => e.collide && [0, 1, 2, 5, 6, 8, 11].includes(e.surf))) { const road = e.surf !== 2; e.mesh.updateWorldMatrix(true, false); const g = e.mesh.geometry, P = g.attributes.position, I = g.index, m = e.mesh.matrixWorld, n = I ? I.count : P.count;

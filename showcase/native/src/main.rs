@@ -254,7 +254,7 @@ mod window {
                     if pk.contains(&KeyCode::F3) { m.key_group(); } if pk.contains(&KeyCode::F4) { m.key_mode(); } if pk.contains(&KeyCode::F6) { m.key_flag_pick(); }
                     if pk.contains(&KeyCode::F7) { m.key_flag(); } if pk.contains(&KeyCode::F9) { m.reset(); } if pk.contains(&KeyCode::F5) { st.r.settings.taa = !st.r.settings.taa; st.r.taa_reset = true; }
                     if pk.contains(&KeyCode::F8) { st.r.settings.spec_aa = !st.r.settings.spec_aa; }
-                    st.mat_ov = true; logln(&format!("materials: {} | TAA {} | spec-AA {}", st.r.mats.describe(), st.r.settings.taa, st.r.settings.spec_aa)); }
+                    st.mat_ov = true; logln(&format!("materials (keys): {} | selected {} / override {} | TAA {} | spec-AA {}", st.r.mats.describe(), mat::GROUPS[st.r.mats.sel], mat::FLAGS[st.r.mats.sel_flag], if st.r.settings.taa { "on" } else { "off" }, if st.r.settings.spec_aa { "on" } else { "off" })); }
                 let c = ii.poll();
                 if c.active { inp.steer = c.steer; inp.throttle = inp.throttle.max(c.throttle); inp.brake = inp.brake.max(c.brake); }
                 inp.clutch = c.clutch; if c.handbrake > 0.5 { inp.handbrake = 1.0; }
@@ -266,7 +266,7 @@ mod window {
                 if st.mat_ov || !st.r.mats.is_default() { /* shown below */ }
                 if ii.overlay { st.ov_last = ii.overlay_lines(&c); st.ov_last.push(format!("car: {:.0} km/h  gear {}{}  rpm {:.0}", st.s.state.speed() * 3.6, st.s.gear, if st.s.manual { " (manual)" } else { " (auto)" }, st.s.state.rpm())); } else { st.ov_last.clear(); }
             }
-            if st.mat_ov || !st.r.mats.is_default() { let mut l = st.r.mats.overlay_lines(); l.push(format!("TAA {} (F5) | spec-AA {} (F8) | aniso {}x", if st.r.settings.taa { "on" } else { "off" }, if st.r.settings.spec_aa { "on" } else { "off" }, st.r.aniso)); st.ov_last.extend(l); }
+            if st.mat_ov || !st.r.mats.is_default() { let mut l = st.r.mats.overlay_lines(); l.push(format!("TAA {} (F5) specAA {} (F8) {}x", if st.r.settings.taa { "on" } else { "off" }, if st.r.settings.spec_aa { "on" } else { "off" }, st.r.aniso)); st.ov_last.extend(l); }
             if st.auto { inp = st.s.bot(); }
             let ticks = (st.acc * 240.0).floor() as i32; let ticks = ticks.min(24); st.acc -= ticks as f64 / 240.0; if st.acc > 0.1 { st.acc = 0.0; }
             if ticks > 0 { st.s.step(inp, ticks)?; }
