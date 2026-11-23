@@ -6,10 +6,32 @@
 const PAD_AXES = ['LX', 'LY', 'RX', 'RY', 'LT', 'RT'];
 const PAD_BUTTONS = ['A', 'B', 'X', 'Y', 'LB', 'RB', 'LT2', 'RT2', 'Back', 'Start', 'LS', 'RS', 'DUp', 'DDown', 'DLeft', 'DRight', 'Home']; // W3C standard order
 export const DEFAULT_MAP = {
-  pad: { deadzone: 0.08, steer_linearity: 1.5, trigger_deadzone: 0.03, steer: 'LX', throttle: 'RT', brake: 'LT', clutch: '', gear_up: 'RB', gear_down: 'LB', handbrake: 'X', reset: 'Y', camera: 'B', overlay: 'Back' },
+  // pad defaults mirror the original C/raylib DriveChain (demo/input.c, SDL GameController): RT gas, LT brake, linear 0..1 triggers without
+  // deadzone, linear stick with a 0.04 deadzone, B handbrake, X clutch, RB/LB shift.
+  pad: { deadzone: 0.04, steer_linearity: 1, trigger_deadzone: 0, steer: 'LX', throttle: 'RT', brake: 'LT', clutch: 'X', gear_up: 'RB', gear_down: 'LB', handbrake: 'B', reset: 'Y', camera: 'RS', overlay: 'Back' },
   wheel: { device: '', steer: 'axis0', steer_invert: 0, steer_deadzone: 0, steer_gain: 1, throttle: 'axis1', throttle_invert: 1, brake: 'axis5', brake_invert: 1, clutch: 'axis6', clutch_invert: 1, pedal_deadzone: 0.02,
     gear_up: 'button4', gear_down: 'button5', handbrake: '', reset: 'button23', camera: 'button3', overlay: 'button7' },
 };
+
+const WHEELISH = /wheel|pedal|shifter|g29|g920|g923|g27|g25|t300|t150|tmx|t248|fanatec|csl|moza|simucube|thrustmaster|handbrake|button box/i;
+const PADISH = /xinput|xbox|045e|054c|057e|2dc8|dualshock|dualsense|wireless controller|gamepad|joypad|controller/i;
+/** Profile for a pad the browser did not map to the W3C 'standard' layout (Firefox on Linux, some Bluetooth pads):
+ *  axis/button indices of LX LY RX RY LT RT and the face/shoulder/menu buttons in standard order; tAx = triggers reported as -1..1 axes. */
+export function padProfile(id) {
+  const s = id.toLowerCase(); if (WHEELISH.test(s) || !PADISH.test(s)) return null;
+  if (/054c|dualshock|dualsense|wireless controller/.test(s) && !/xbox/.test(s)) return { ax: [0, 1, 2, 5], lt: 3, rt: 4, tAx: true, btn: [1, 2, 0, 3, 4, 5, null, null, 8, 9, 10, 11] };
+  if (/xinput|xbox|045e/.test(s)) return { ax: [0, 1, 3, 4], lt: 2, rt: 5, tAx: true, btn: [0, 1, 2, 3, 4, 5, null, null, 6, 7, 9, 10] };
+  return { ax: [0, 1, 2, 3], lt: 6, rt: 7, tAx: false, btn: [1, 2, 0, 3, 4, 5, 6, 7, 8, 9, 10, 11] }; // generic HID (e.g. F310 D-mode): triggers are buttons
+}
+/** Non-standard pad -> {axes, buttons} in standard layout. A trigger axis reads 0 until it has reported anything but exactly 0: browsers report an
+ *  untouched -1..1 trigger as 0, which mapped as (0+1)/2 = HALF throttle/brake at rest (one of the "triggers aren't gas/brake" causes). */
+export function padView(p, prof, seen) {
+  const a = (i) => p.axes[i] ?? 0, B = (i) => i == null ? { value: 0, pressed: false } : (p.buttons[i] || { value: 0, pressed: false });
+  const trig = (i) => { if (!prof.tAx) { const b = B(i); return b.value || (b.pressed ? 1 : 0); } const v = p.axes[i]; if (v == null) return 0; if (v !== 0) seen.add(i); return seen.has(i) ? Math.min(1, Math.max(0, (v + 1) / 2)) : 0; };
+  const lt = trig(prof.lt), rt = trig(prof.rt), btn = prof.btn.map(B);
+  btn[6] = { value: lt, pressed: lt > 0.5 }; btn[7] = { value: rt, pressed: rt > 0.5 };
+  return { index: p.index, id: p.id, mapping: 'standard', virtual: true, axes: prof.ax.map(a), buttons: [...btn, { value: 0, pressed: false }, { value: 0, pressed: false }, { value: 0, pressed: false }, { value: 0, pressed: false }] };
+}
 function bind(v, pad) {
   v = String(v ?? '').trim(); if (!v || v === 'none') return null; let dev = null; const k = v.lastIndexOf('/'); if (k >= 0) { dev = v.slice(0, k).trim().toLowerCase(); v = v.slice(k + 1).trim(); }
   let neg = false; if (v[0] === '-') { neg = true; v = v.slice(1); }
@@ -32,7 +54,8 @@ export class Input {
     this.pb = {}; this.wb = {}; for (const a of ['steer', 'throttle', 'brake', 'clutch', 'gear_up', 'gear_down', 'handbrake', 'reset', 'camera', 'overlay']) { this.pb[a] = bind(M.pad[a], true); this.wb[a] = bind(M.wheel[a], false); } }
   saveMap(user) { localStorage.setItem('dcs.inputMap', JSON.stringify(user)); this.setMap(user); }
   pressed(code) { const v = !!this.edges[code]; delete this.edges[code]; return v; }
-  pads() { return navigator.getGamepads ? [...navigator.getGamepads()].filter(Boolean) : []; }
+  pads() { const raw = navigator.getGamepads ? [...navigator.getGamepads()].filter(Boolean) : []; this.seen ??= new Map();
+    return raw.map(p => { if (p.mapping === 'standard') return p; const prof = padProfile(p.id); if (!prof) return p; if (!this.seen.has(p.index)) this.seen.set(p.index, new Set()); return padView(p, prof, this.seen.get(p.index)); }); }
   startCalib() { return 'use the F1 overlay to read raw axis numbers, then window.__dcs.input.saveMap({wheel:{steer:"axis0",throttle:"axis2",...}})'; }
   read(dt) {
     const k = this.keys, out = { throttle: 0, brake: 0, steer: 0, handbrake: 0, clutch: 0, gearUp: false, gearDown: false, reset: false, camera: false, device: 'keyboard' };
@@ -49,7 +72,7 @@ export class Input {
       const v = (b) => !b ? 0 : b.axis != null ? (b.axis === 4 ? p.buttons[6]?.value || 0 : b.axis === 5 ? p.buttons[7]?.value || 0 : (p.axes[b.axis] || 0) * (b.neg ? -1 : 1)) : (p.buttons[b.button]?.value || 0);
       const edge = (b) => b && b.button != null && p.buttons[b.button]?.pressed && !prevOf(p)[b.button];
       const sx = v(this.pb.steer), mag = Math.abs(sx), s = mag < P.deadzone ? 0 : Math.pow(Math.min(1, (mag - P.deadzone) / (1 - P.deadzone)), P.steer_linearity) * Math.sign(sx);
-      const trig = (x) => x < P.trigger_deadzone ? 0 : Math.min(1, (x - P.trigger_deadzone) / (1 - P.trigger_deadzone));
+      const trig = (x) => !(x > P.trigger_deadzone) ? 0 : Math.min(1, (x - P.trigger_deadzone) / (1 - P.trigger_deadzone));
       const th = trig(v(this.pb.throttle)), br = trig(v(this.pb.brake));
       if (s !== 0 || th > 0 || br > 0) { padSteer = padSteer ?? -s; out.device = 'gamepad'; }
       out.throttle = Math.max(out.throttle, th); out.brake = Math.max(out.brake, br); out.clutch = Math.max(out.clutch, trig(v(this.pb.clutch)));
@@ -59,7 +82,7 @@ export class Input {
     const raw = pads.filter(p => p.mapping !== 'standard');
     if (raw.length) {
       const pick = (dev) => { const key = dev ?? String(W.device || '').toLowerCase(); return key ? raw.find(p => p.id.toLowerCase().includes(key)) : raw[0]; };
-      const val = (a) => { const b = this.wb[a]; if (!b) return null; const p = pick(b.dev); if (!p) return null; let x = b.axis != null ? p.axes[b.axis] : (p.buttons[b.button]?.pressed ? 1 : -1); if (x == null) return null; if (b.neg) x = -x; if (+W[a + '_invert']) x = -x; return x; };
+      const val = (a) => { const b = this.wb[a]; if (!b) return null; const p = pick(b.dev); if (!p) return null; let x = b.axis != null ? p.axes[b.axis] : (p.buttons[b.button]?.pressed ? 1 : -1); if (x == null || !Number.isFinite(x)) return null; /* absent axis = unbound, not half pedal */ if (b.neg) x = -x; if (+W[a + '_invert']) x = -x; return x; };
       const edge = (a) => { const b = this.wb[a]; if (!b || b.button == null) return false; const p = pick(b.dev); return !!(p && p.buttons[b.button]?.pressed && !prevOf(p)[b.button]); };
       const pedal = (a) => { const x = val(a); if (x == null) return null; const q = Math.min(1, Math.max(0, (x + 1) / 2)); return q < W.pedal_deadzone ? 0 : (q - W.pedal_deadzone) / (1 - W.pedal_deadzone); };
       let s = val('steer'); if (s != null) { if (Math.abs(s) < W.steer_deadzone) s = 0; s = Math.max(-1, Math.min(1, s * W.steer_gain)); wheelSteer = -s; out.device = 'wheel'; }
