@@ -54,6 +54,10 @@ Design rules followed (Threat Interactive handbook):
 - GI runs at half resolution.
 - Frame timings are shown in the HUD (GPU ms via timestamp queries, physics µs/tick).
 
+## Known limits (headless verification)
+- Verified headless only in Chrome + SwiftShader via WebGL2. The WebGPU path initialises there, but SwiftShader loses the device. It falls back to WebGL2 automatically.
+- God rays hang the SwiftShader WebGL2 main thread, so the stills use `godrays=0`. God rays are unverified on a real GPU.
+
 ## Native: build
 - Linux: `cd native && cargo build --release`
 - Windows cross-build from Linux: `native/scripts/build_windows.sh`
