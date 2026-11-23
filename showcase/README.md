@@ -35,10 +35,7 @@ Any glTF/GLB works: `?world=path/to/world.glb`.
 cd web && python3 -m http.server 8765   # open http://localhost:8765/
 ```
 
-Controls:
-- Keyboard: WASD or arrows, Space for the handbrake, Q/E to shift gears.
-- Gamepad: standard mapping.
-- Steering wheel: Gamepad API. Press C to calibrate.
+Controls: keyboard WASD or arrows, Space handbrake, Q/E gears. Gamepads and wheels: see **Input and mapping** below.
 
 Keys:
 - 1–4: tier (RAW / BASE / HIGH / SHOWCASE)
@@ -52,6 +49,7 @@ Keys:
 - H: help
 
 URL params: `tier, webgl, world, auto, sunel, sunaz, exp, gi, fog, wet, cam, dpr, still, warm`.
+Vegetation toggles: `trees=0, shrubs=0, grass=0, grassdensity=14 (blades/m²), grassdist=45 (m), grassmax=90000, treeshadows=0, impdist=70 (m, mesh→impostor), vegplan=<url>, freeze (stops grass wind)`.
 
 Tiers:
 - RAW: unlit look, as in the old version.
@@ -75,9 +73,14 @@ Design rules followed (Threat Interactive handbook):
 - On Windows itself (MSVC + Vulkan SDK): `native/scripts/build_windows.ps1 [-Dlss]`
 
 Run modes:
-- `drivechain-native [world.glb]` opens a window.
-- `--still out.png --size 1920x1080` renders a headless still.
+- `drivechain-native [world.glb]` opens a window (default world `../private-assets/usce/usce_v2.glb`, falls back to `usce.glb`).
+- `--still out.png --size 1920x1080` renders a headless still; `--cam x,y,z --look x,y,z`, `--cam-rel back,up,side`, `--fov`, `--seq N [--dt s] [--cam-step x,y,z]` (frame sequences for flicker tests), `--grain`, `--sun-el/--sun-az`.
 - `--physics-bench 20` benchmarks the physics.
+- `--input-test 30` (no GPU) lists controllers and prints raw axes/buttons and the mapped controls for 30 s.
+
+Vegetation toggles (native): `--no-trees --no-shrubs --no-grass --grass-density 24 --grass-dist 70 --max-blades 1500000 --no-tree-shadows --imp-dist 90 --old-foliage`.
+At startup the log (`drivechain.log` next to the exe, and stderr) prints the GPU, driver version, swapchain format and present mode (FIFO),
+and the vegetation setup; every 600 frames it logs the GPU ms per pass (also in the window title), including `grass compute` and `foliage+grass draw`.
 
 Passes, each timed with GPU timestamps:
 1. G-buffer
@@ -90,17 +93,58 @@ Passes, each timed with GPU timestamps:
 8. Tonemap
 9. AA, lens and grain
 
-## Vegetation (web)
-The stand-in foliage blocks (`VIS_foliage`, about 35k tris) are replaced at load time by procedural trees from ez-tree (`web/js/trees.js`).
-- Placement: the foliage mesh is clustered on a 4 m grid. Trees are placed with a seed, with at least 3.5 m clearance from tarmac, kerb and line triangles (`?treeclear=`) and a minimum gap between trees.
-- Presets: six seeded variants for Belgrade parkland: poplar (aspen stand-in) ×2, ash ×2, oak and pine.
-- Near trees (within 70 m, `?treenear=`) are instanced ez-tree meshes that cast shadows.
-- Mid and far trees are hemi-octahedral impostors. Each preset gets an 8×8 view atlas (albedo plus normal), baked once at load. The impostors are lit at runtime by the real sun and sky.
-- `?trees=0` restores the old blocks. The RAW tier always shows the old blocks.
-- Native vegetation is still pending: the native renderer still draws the foliage blocks.
+## Vegetation (web + native)
+All old Ušće foliage geometry is gone: `tools/usce_veg_prep.py` writes `usce_v2.glb` (private) without `VIS_foliage` (35.5k tris of tree/hedge
+blocks) and without the 11,023 grass/bush "cards" inside `VIS_other` (44k tris: 2-8 triangle crossed quads, authored for an alpha shader
+we don't have, so they drew as black/flat slabs). Props (tents, boards, barriers) stay. It also writes `veg_plan.json`: 2936 trees + 131
+shrubs, seed 1990, at the original foliage positions, trees >= 3.5 m from tarmac/kerb/line, shrubs never on the road.
+- Kinds (same presets + seeds on both renderers, `web/js/trees.js` KINDS): poplar ×2 (aspen structure with green ash leaves: the aspen leaf
+  texture in ez-tree is autumn yellow), ash ×2, oak, pine; shrubs = ez-tree bush_1/2/3 (short trunk, dense branching).
+- Near: instanced ez-tree meshes (web 70 m, native 90 m; shrubs 60 %), shadow casting, wind in the vertex shader (native).
+- Far: hemi-octahedral impostors (8×8 views, albedo+alpha and normal atlases), lit at runtime. Native: alpha mips are
+  coverage-preserving (Castaño), so canopies don't thin out or shimmer; far trees cast shadows as sun-facing impostors; foliage gets its own
+  slope-scaled depth bias in the shadow cascades.
+- Native assets: `tools/bake_vegetation.mjs` runs `web/bake_veg.html` headless and writes `native/assets/vegetation/` (meshes .bin,
+  bark/leaf textures, impostor atlases, `vegetation.json`), generated from ez-tree (MIT). `DCS_VEG` / `DCS_VEGPLAN` override the paths.
+- Grass: blades only on grass collision surfaces (COL_grass) and never where a road surface lies above the grass mesh. Look after
+  Velorexe/unity-geometry-grass-shader (Unlicense: dense, tall blades, segmented bend, per-blade random facing/height/width/bend, wind,
+  base→tip gradient), rebuilt without geometry shaders: native `grass_gen.comp` generates the blade buffer per frame for 8 m cells
+  around the camera (hash-stable density falloff, frustum culled) and draws it with one indirect instanced draw (`grass.vert` builds a
+  5-segment blade from `gl_VertexIndex`, widened to >= 1.2 px at distance against shimmer); web `js/grass.js` is the same blade model as
+  an instanced mesh with vertex-shader wind.
+- The RAW tier (web) shows no vegetation (the old look minus the broken blocks).
+
+## Input and mapping
+Native (Windows): XInput for Xbox-style pads (polled every frame, works without window focus, hotplug checked every 2 s) and
+DirectInput 8 for wheels, pedal boxes, shifters and other joysticks (re-enumerated every 2 s). gilrs is no longer used on Windows: it
+only read the first device (on a wheel rig usually the wheel) through Windows.Gaming.Input, which is why the pad did nothing.
+Linux uses gilrs (evdev). Every device is logged at startup and on hotplug to `drivechain.log` (name, GUID, backend, axes, buttons;
+DirectInput also reports its own axis/button/POV counts and force-feedback flag).
+
+- **F1** (or pad Back/View) toggles the input overlay: every device with live raw axis values and held buttons, plus the mapped
+  steer/throttle/brake/clutch. **F2** reloads `input.ini`. `C` cycles the camera (chase, far chase, bonnet), `M` toggles auto/manual gearbox.
+- Default pad mapping: left stick steer (deadzone 0.08, linearity 1.5), RT throttle, LT brake, RB/LB gear up/down (switches to
+  manual), X handbrake, Y reset, B camera, Back overlay.
+- `input.ini` is written next to the exe on first run. `[pad]` uses names (LX LY RX RY LT RT, A B X Y LB RB Back Start LS RS DUp DDown
+  DLeft DRight, `-` prefix inverts an axis). `[wheel]` uses raw DirectInput numbers: `axis0..7` = X, Y, Z, Rx, Ry, Rz, Slider0, Slider1,
+  `button0..31`, POV hat = `button32..35` (up, right, down, left). Prefix a binding with part of another device's name to read it from
+  that device, for separate pedals or shifters, e.g. `throttle = CSL Pedals/axis1`. `device =` picks the wheel by name or GUID
+  substring (empty = first DirectInput device). Pedals: `*_invert = 1` when they read +1 released (most do), `pedal_deadzone`.
+  Steering: `steer_invert`, `steer_deadzone`, `steer_gain` (e.g. 1.5 when the wheel is set to 900° and the car's rack is about 540°).
+- How to map a new wheel: run `drivechain-native.exe --input-test 60` (or press F1 in game), move each control and note which
+  `aN` changes and in which direction, then write those numbers into `[wheel]`. Defaults are the Logitech G25/G27/G29/G920 layout
+  (steer axis0, throttle axis1, brake axis5, clutch axis6, paddles button4/5). Thrustmaster T300 combined pedals: throttle axis5, brake axis1.
+- Force feedback is not implemented yet (the wheel is read, not driven).
+
+Web: Gamepad API with the same model. Standard-mapped pads use the named mapping; wheels and pedals (non-standard mapping) use raw
+`axisN`/`buttonN` with the same `[wheel]` keys. F1 or pad Back toggles the overlay. Override the mapping with
+`localStorage.setItem('dcs.inputMap', JSON.stringify({wheel: {throttle: 'axis2', brake: 'axis3'}}))` (or `window.__dcs.input.saveMap({...})`,
+or `?inputmap=<url-encoded JSON>`); unset keys keep the defaults. Browsers hide pads until the first button press.
 
 ## Credits and references
-- ez-tree by Daniel Greenheck (MIT): https://github.com/dgreenheck/ez-tree, vendored at `web/vendor/ez-tree` with its LICENSE.
+- ez-tree by Daniel Greenheck (MIT): https://github.com/dgreenheck/ez-tree, vendored at `web/vendor/ez-tree` with its LICENSE; the native vegetation assets in `native/assets/vegetation` are generated from it (bark/leaf textures are ez-tree's own, MIT).
+- Grass look: Velorexe/unity-geometry-grass-shader (Unlicense): https://github.com/Velorexe/unity-geometry-grass-shader. Technique reproduced (compute + instancing instead of geometry/tessellation shaders), no code copied.
+- Coverage-preserving alpha mips: I. Castaño, "Computing Alpha Mipmaps" (2010).
 - SSRT3 (screen-space GI idea): https://github.com/cdrinmatane/SSRT3 — no code copied.
 - SmartImposter (impostor caching idea, Rust/ash reference): https://github.com/SamG-Coder/SmartImposter — no code copied.
 - dlss5-visual-enhancer (https://github.com/Merserk/dlss5-visual-enhancer): evaluated. It is an offline image/video enhancer, not a real-time pass, so it is not used at runtime.

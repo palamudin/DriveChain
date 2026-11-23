@@ -1,31 +1,41 @@
-// input.js - keyboard, standard gamepad and steering wheels through the Gamepad API.
-// Produces {throttle, brake, steer(+left), handbrake, clutch, gearUp, gearDown} in physics units.
-const WHEEL_RE = /wheel|g29|g920|g923|t300|t150|tmx|t248|fanatec|csl|moza|simucube|thrustmaster|logitech.*racing|driving force/i;
+// input.js - keyboard, gamepads and steering wheels / pedals through the Gamepad API, same mapping model as the native
+// input.ini: standard-mapped pads use named axes/buttons, everything else (wheels, pedal boxes, shifters) raw axisN/buttonN,
+// optionally prefixed with a device-name substring ("CSL Pedals/axis1").  Mapping is stored in localStorage 'dcs.inputMap'
+// (edit with window.__dcs.inputMap / setInputMap, or ?inputmap=<url-encoded JSON>); F1 or pad Back toggles the overlay.
+// Produces {throttle, brake, steer(+left), handbrake, clutch, gearUp, gearDown, reset, camera} in physics units.
+const PAD_AXES = ['LX', 'LY', 'RX', 'RY', 'LT', 'RT'];
+const PAD_BUTTONS = ['A', 'B', 'X', 'Y', 'LB', 'RB', 'LT2', 'RT2', 'Back', 'Start', 'LS', 'RS', 'DUp', 'DDown', 'DLeft', 'DRight', 'Home']; // W3C standard order
+export const DEFAULT_MAP = {
+  pad: { deadzone: 0.08, steer_linearity: 1.5, trigger_deadzone: 0.03, steer: 'LX', throttle: 'RT', brake: 'LT', clutch: '', gear_up: 'RB', gear_down: 'LB', handbrake: 'X', reset: 'Y', camera: 'B', overlay: 'Back' },
+  wheel: { device: '', steer: 'axis0', steer_invert: 0, steer_deadzone: 0, steer_gain: 1, throttle: 'axis1', throttle_invert: 1, brake: 'axis5', brake_invert: 1, clutch: 'axis6', clutch_invert: 1, pedal_deadzone: 0.02,
+    gear_up: 'button4', gear_down: 'button5', handbrake: '', reset: 'button23', camera: 'button3', overlay: 'button7' },
+};
+function bind(v, pad) {
+  v = String(v ?? '').trim(); if (!v || v === 'none') return null; let dev = null; const k = v.lastIndexOf('/'); if (k >= 0) { dev = v.slice(0, k).trim().toLowerCase(); v = v.slice(k + 1).trim(); }
+  let neg = false; if (v[0] === '-') { neg = true; v = v.slice(1); }
+  if (pad) { const a = PAD_AXES.findIndex(n => n.toLowerCase() === v.toLowerCase()); if (a >= 0) return { dev, axis: a, neg, pad: true }; const b = PAD_BUTTONS.findIndex(n => n.toLowerCase() === v.toLowerCase()); if (b >= 0) return { dev, button: b }; }
+  let m = /^axis(\d+)$/i.exec(v); if (m) return { dev, axis: +m[1], neg }; m = /^button(\d+)$/i.exec(v); if (m) return { dev, button: +m[1] }; console.warn('input map: cannot parse', v); return null;
+}
 export class Input {
   constructor() {
-    this.keys = new Set(); this.kSteer = 0; this.kThr = 0; this.kBrk = 0; this.edges = {};
-    this.mode = 'keyboard'; this.wheelMap = JSON.parse(localStorage.getItem('dcs.wheelMap') || 'null');
-    this.calib = null; this.deadzone = 0.06;
-    addEventListener('keydown', (e) => { if (!this.keys.has(e.code)) this.edges[e.code] = true; this.keys.add(e.code); if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) e.preventDefault(); });
-    addEventListener('keyup', (e) => this.keys.delete(e.code));
-    addEventListener('blur', () => this.keys.clear());
+    this.keys = new Set(); this.kSteer = 0; this.kThr = 0; this.kBrk = 0; this.edges = {}; this.mode = 'keyboard'; this.prev = new Map(); this.overlay = false;
+    const q = new URLSearchParams(location.search); let user = null; try { user = JSON.parse(q.get('inputmap') || localStorage.getItem('dcs.inputMap') || 'null'); } catch (e) { console.warn('bad input map', e); }
+    this.setMap(user);
+    addEventListener('keydown', (e) => { if (!this.keys.has(e.code)) this.edges[e.code] = true; this.keys.add(e.code); if (e.code === 'F1') { this.overlay = !this.overlay; e.preventDefault(); } if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) e.preventDefault(); });
+    addEventListener('keyup', (e) => this.keys.delete(e.code)); addEventListener('blur', () => this.keys.clear());
+    addEventListener('gamepadconnected', (e) => { const p = e.gamepad; console.log(`input: connected #${p.index} "${p.id}" mapping=${p.mapping || 'none'} ${p.axes.length} axes ${p.buttons.length} buttons`); });
+    addEventListener('gamepaddisconnected', (e) => console.log(`input: disconnected #${e.gamepad.index} "${e.gamepad.id}"`));
+    this.el = document.createElement('pre'); Object.assign(this.el.style, { position: 'fixed', left: '12px', top: '64px', margin: 0, padding: '8px 10px', background: 'rgba(10,12,16,.82)', color: '#e8e8e8', font: '12px/1.35 ui-monospace,monospace', zIndex: 20, display: 'none', pointerEvents: 'none', whiteSpace: 'pre' });
+    document.body.appendChild(this.el);
   }
+  setMap(user) { const M = { pad: { ...DEFAULT_MAP.pad, ...(user?.pad || {}) }, wheel: { ...DEFAULT_MAP.wheel, ...(user?.wheel || {}) } }; this.map = M;
+    this.pb = {}; this.wb = {}; for (const a of ['steer', 'throttle', 'brake', 'clutch', 'gear_up', 'gear_down', 'handbrake', 'reset', 'camera', 'overlay']) { this.pb[a] = bind(M.pad[a], true); this.wb[a] = bind(M.wheel[a], false); } }
+  saveMap(user) { localStorage.setItem('dcs.inputMap', JSON.stringify(user)); this.setMap(user); }
   pressed(code) { const v = !!this.edges[code]; delete this.edges[code]; return v; }
-  pad() { const ps = navigator.getGamepads ? [...navigator.getGamepads()].filter(Boolean) : []; return ps.find(p => WHEEL_RE.test(p.id)) || ps[0] || null; }
-  // Wheel calibration: call startCalib(); then follow prompts; axes that move away from rest get assigned.
-  startCalib() { const p = this.pad(); if (!p) return 'no device'; this.calib = { step: 0, rest: [...p.axes], map: { id: p.id } }; return this.calibPrompt(); }
-  calibPrompt() { return ['Turn the wheel fully LEFT', 'Press THROTTLE fully', 'Press BRAKE fully', 'Press CLUTCH (or any button to skip)'][this.calib.step] || 'done'; }
-  calibUpdate(p) {
-    const c = this.calib, key = ['steer', 'throttle', 'brake', 'clutch'][c.step];
-    let best = -1, bd = 0.5; p.axes.forEach((v, i) => { const d = Math.abs(v - c.rest[i]); if (d > bd && !Object.values(c.map).some(m => m && m.axis === i)) { bd = d; best = i; } });
-    if (best >= 0) { c.map[key] = { axis: best, rest: c.rest[best], full: p.axes[best] }; c.step++; c.rest = [...p.axes]; }
-    else if (c.step === 3 && p.buttons.some(b => b.pressed)) c.step++;
-    if (c.step > 3) { this.wheelMap = c.map; localStorage.setItem('dcs.wheelMap', JSON.stringify(c.map)); this.calib = null; return 'done'; }
-    return this.calibPrompt();
-  }
+  pads() { return navigator.getGamepads ? [...navigator.getGamepads()].filter(Boolean) : []; }
+  startCalib() { return 'use the F1 overlay to read raw axis numbers, then window.__dcs.input.saveMap({wheel:{steer:"axis0",throttle:"axis2",...}})'; }
   read(dt) {
-    const k = this.keys, out = { throttle: 0, brake: 0, steer: 0, handbrake: 0, clutch: 0, gearUp: false, gearDown: false, device: 'keyboard' };
-    // keyboard with rate-limited ramps (digital keys would otherwise slam the rack)
+    const k = this.keys, out = { throttle: 0, brake: 0, steer: 0, handbrake: 0, clutch: 0, gearUp: false, gearDown: false, reset: false, camera: false, device: 'keyboard' };
     const left = k.has('ArrowLeft') || k.has('KeyA'), right = k.has('ArrowRight') || k.has('KeyD');
     const tgt = (left ? 1 : 0) - (right ? 1 : 0), rate = tgt === 0 ? 3.5 : (Math.sign(tgt) !== Math.sign(this.kSteer) ? 4.5 : 2.2);
     this.kSteer += Math.max(-rate * dt, Math.min(rate * dt, tgt - this.kSteer));
@@ -33,26 +43,44 @@ export class Input {
     this.kBrk += Math.max(-6 * dt, Math.min(4 * dt, ((k.has('ArrowDown') || k.has('KeyS')) ? 1 : 0) - this.kBrk));
     out.steer = this.kSteer; out.throttle = this.kThr; out.brake = this.kBrk; out.handbrake = k.has('Space') ? 1 : 0;
     out.gearUp = this.pressed('KeyE') || this.pressed('ShiftLeft'); out.gearDown = this.pressed('KeyQ') || this.pressed('ControlLeft');
-    const p = this.pad();
-    if (p) {
-      if (this.calib) { this.calibMsg = this.calibUpdate(p); return out; }
-      const isWheel = WHEEL_RE.test(p.id), dz = (v) => Math.abs(v) < this.deadzone ? 0 : (v - Math.sign(v) * this.deadzone) / (1 - this.deadzone);
-      let used = false;
-      if (isWheel && this.wheelMap && this.wheelMap.id === p.id) {
-        const m = this.wheelMap, ax = (e) => e ? Math.min(1, Math.max(0, (p.axes[e.axis] - e.rest) / (e.full - e.rest))) : 0;
-        const s = m.steer ? p.axes[m.steer.axis] * Math.sign(m.steer.full - m.steer.rest) : 0;
-        out.steer = s; out.throttle = ax(m.throttle); out.brake = ax(m.brake); out.clutch = ax(m.clutch); used = true; out.device = 'wheel';
-      } else if (p.mapping === 'standard') {
-        const st = -dz(p.axes[0]), th = p.buttons[7]?.value || 0, br = p.buttons[6]?.value || 0;
-        if (Math.abs(st) > 0 || th > 0.02 || br > 0.02) { out.steer = Math.sign(st) * Math.pow(Math.abs(st), 1.6); out.throttle = th; out.brake = br; used = true; out.device = 'gamepad'; }
-        if (p.buttons[2]?.pressed) out.handbrake = 1;
-      } else if (isWheel) { out.steer = -p.axes[0]; out.device = 'wheel (uncalibrated: press C)'; used = true; }
-      const btn = (i) => !!p.buttons[i]?.pressed, prev = this.prevBtn || [];
-      if (btn(5) && !prev[5]) out.gearUp = true; if (btn(4) && !prev[4]) out.gearDown = true;
-      if (btn(0) && !prev[0]) out.gearUp = true; if (btn(1) && !prev[1]) out.gearDown = true;
-      this.prevBtn = p.buttons.map(b => b.pressed);
-      if (used) this.mode = out.device;
+    const pads = this.pads(); const P = this.map.pad, W = this.map.wheel; let padSteer = null, wheelSteer = null;
+    const prevOf = (p) => this.prev.get(p.index) || [];
+    for (const p of pads.filter(p => p.mapping === 'standard')) {
+      const v = (b) => !b ? 0 : b.axis != null ? (b.axis === 4 ? p.buttons[6]?.value || 0 : b.axis === 5 ? p.buttons[7]?.value || 0 : (p.axes[b.axis] || 0) * (b.neg ? -1 : 1)) : (p.buttons[b.button]?.value || 0);
+      const edge = (b) => b && b.button != null && p.buttons[b.button]?.pressed && !prevOf(p)[b.button];
+      const sx = v(this.pb.steer), mag = Math.abs(sx), s = mag < P.deadzone ? 0 : Math.pow(Math.min(1, (mag - P.deadzone) / (1 - P.deadzone)), P.steer_linearity) * Math.sign(sx);
+      const trig = (x) => x < P.trigger_deadzone ? 0 : Math.min(1, (x - P.trigger_deadzone) / (1 - P.trigger_deadzone));
+      const th = trig(v(this.pb.throttle)), br = trig(v(this.pb.brake));
+      if (s !== 0 || th > 0 || br > 0) { padSteer = padSteer ?? -s; out.device = 'gamepad'; }
+      out.throttle = Math.max(out.throttle, th); out.brake = Math.max(out.brake, br); out.clutch = Math.max(out.clutch, trig(v(this.pb.clutch)));
+      if (v(this.pb.handbrake) > 0.5) out.handbrake = 1;
+      out.gearUp ||= edge(this.pb.gear_up); out.gearDown ||= edge(this.pb.gear_down); out.reset ||= edge(this.pb.reset); out.camera ||= edge(this.pb.camera); if (edge(this.pb.overlay)) this.overlay = !this.overlay;
     }
+    const raw = pads.filter(p => p.mapping !== 'standard');
+    if (raw.length) {
+      const pick = (dev) => { const key = dev ?? String(W.device || '').toLowerCase(); return key ? raw.find(p => p.id.toLowerCase().includes(key)) : raw[0]; };
+      const val = (a) => { const b = this.wb[a]; if (!b) return null; const p = pick(b.dev); if (!p) return null; let x = b.axis != null ? p.axes[b.axis] : (p.buttons[b.button]?.pressed ? 1 : -1); if (x == null) return null; if (b.neg) x = -x; if (+W[a + '_invert']) x = -x; return x; };
+      const edge = (a) => { const b = this.wb[a]; if (!b || b.button == null) return false; const p = pick(b.dev); return !!(p && p.buttons[b.button]?.pressed && !prevOf(p)[b.button]); };
+      const pedal = (a) => { const x = val(a); if (x == null) return null; const q = Math.min(1, Math.max(0, (x + 1) / 2)); return q < W.pedal_deadzone ? 0 : (q - W.pedal_deadzone) / (1 - W.pedal_deadzone); };
+      let s = val('steer'); if (s != null) { if (Math.abs(s) < W.steer_deadzone) s = 0; s = Math.max(-1, Math.min(1, s * W.steer_gain)); wheelSteer = -s; out.device = 'wheel'; }
+      const t = pedal('throttle'), b = pedal('brake'), c = pedal('clutch'); if (t != null) out.throttle = Math.max(out.throttle, t); if (b != null) out.brake = Math.max(out.brake, b); if (c != null) out.clutch = Math.max(out.clutch, c);
+      if ((val('handbrake') ?? -1) > 0) out.handbrake = 1;
+      out.gearUp ||= edge('gear_up'); out.gearDown ||= edge('gear_down'); out.reset ||= edge('reset'); out.camera ||= edge('camera'); if (edge('overlay')) this.overlay = !this.overlay;
+    }
+    // wheel wins when it is turned; a centred wheel does not mask the pad
+    if (wheelSteer != null && (Math.abs(wheelSteer) > 0.02 || padSteer == null)) out.steer = wheelSteer; else if (padSteer != null) out.steer = padSteer;
+    for (const p of pads) this.prev.set(p.index, p.buttons.map(b => b.pressed));
+    if (out.device !== 'keyboard') this.mode = out.device;
+    if (this.overlay) this.drawOverlay(pads, out); else if (this.el.style.display !== 'none') this.el.style.display = 'none';
     return out;
+  }
+  drawOverlay(pads, o) {
+    const L = ['INPUT  (F1 / pad Back toggles; mapping: localStorage dcs.inputMap, see README)', `mapped: steer ${o.steer >= 0 ? '+' : ''}${o.steer.toFixed(2)} thr ${o.throttle.toFixed(2)} brk ${o.brake.toFixed(2)} clu ${o.clutch.toFixed(2)} hb ${o.handbrake}  [${o.device}]`];
+    if (!pads.length) L.push('no gamepads visible (press any button on the device: browsers hide pads until first input)');
+    for (const p of pads) { const std = p.mapping === 'standard'; L.push(`${p.index} ${p.id.slice(0, 60)} [${std ? 'standard pad' : 'raw'}]`);
+      const ax = p.axes.map((a, i) => `${(std ? PAD_AXES[i] : 'a' + i).padStart(4)} ${a >= 0 ? '+' : ''}${a.toFixed(3)}`); if (std) ax.push(`  LT ${p.buttons[6]?.value.toFixed(3)}`, `  RT ${p.buttons[7]?.value.toFixed(3)}`);
+      for (let i = 0; i < ax.length; i += 4) L.push('   ' + ax.slice(i, i + 4).join('  '));
+      const held = p.buttons.map((b, i) => b.pressed ? (std ? PAD_BUTTONS[i] || i : i) : null).filter(x => x != null); L.push('   buttons held: ' + (held.length ? held.join(' ') : '-')); }
+    this.el.textContent = L.join('\n'); this.el.style.display = 'block';
   }
 }

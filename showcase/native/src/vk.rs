@@ -9,7 +9,7 @@ use std::ffi::CStr;
 pub struct Ctx {
     pub entry: ash::Entry, pub instance: ash::Instance, pub pdev: vk::PhysicalDevice, pub device: ash::Device,
     pub queue: vk::Queue, pub qfam: u32, pub alloc: std::mem::ManuallyDrop<Allocator>, pub pool: vk::CommandPool,
-    pub rt: bool, pub accel: Option<ash::khr::acceleration_structure::Device>, pub ts_period: f32, pub name: String,
+    pub rt: bool, pub accel: Option<ash::khr::acceleration_structure::Device>, pub ts_period: f32, pub name: String, pub driver: String,
     pub surface_i: Option<ash::khr::surface::Instance>,
 }
 pub struct Image { pub image: vk::Image, pub view: vk::ImageView, pub alloc: Option<Allocation>, pub format: vk::Format, pub extent: vk::Extent2D, pub layers: u32 }
@@ -31,6 +31,8 @@ impl Ctx {
         let pdev = *pdevs.iter().max_by_key(|p| score(p)).ok_or_else(|| anyhow!("no Vulkan device"))?;
         let props = unsafe { instance.get_physical_device_properties(pdev) };
         let name = unsafe { CStr::from_ptr(props.device_name.as_ptr()) }.to_string_lossy().into_owned();
+        let dv = props.driver_version; let driver = if props.vendor_id == 0x10DE { format!("NVIDIA {}.{:02} (0x{dv:08x}), Vulkan {}.{}.{}", dv >> 22, (dv >> 14) & 0xff, vk::api_version_major(props.api_version), vk::api_version_minor(props.api_version), vk::api_version_patch(props.api_version)) }
+            else { format!("vendor 0x{:04x} driver 0x{dv:08x}, Vulkan {}.{}.{}", props.vendor_id, vk::api_version_major(props.api_version), vk::api_version_minor(props.api_version), vk::api_version_patch(props.api_version)) };
         let dev_exts = unsafe { instance.enumerate_device_extension_properties(pdev)? };
         let has = |n: &CStr| dev_exts.iter().any(|e| unsafe { CStr::from_ptr(e.extension_name.as_ptr()) } == n);
         let rt = want_rt && has(ash::khr::ray_query::NAME) && has(ash::khr::acceleration_structure::NAME) && has(ash::khr::deferred_host_operations::NAME);
@@ -53,7 +55,7 @@ impl Ctx {
         let pool = unsafe { device.create_command_pool(&vk::CommandPoolCreateInfo::default().queue_family_index(qfam).flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER), None)? };
         let accel = rt.then(|| ash::khr::acceleration_structure::Device::new(&instance, &device));
         let surface_i = (!window_exts.is_empty()).then(|| ash::khr::surface::Instance::new(&entry, &instance));
-        Ok(Ctx { entry, instance, pdev, device, queue, qfam, alloc: std::mem::ManuallyDrop::new(alloc), pool, rt, accel, ts_period: props.limits.timestamp_period, name, surface_i })
+        Ok(Ctx { entry, instance, pdev, device, queue, qfam, alloc: std::mem::ManuallyDrop::new(alloc), pool, rt, accel, ts_period: props.limits.timestamp_period, name, driver, surface_i })
     }
     pub fn image(&mut self, name: &str, w: u32, h: u32, format: vk::Format, usage: vk::ImageUsageFlags, layers: u32) -> Result<Image> {
         let ci = vk::ImageCreateInfo::default().image_type(vk::ImageType::TYPE_2D).format(format).extent(vk::Extent3D { width: w, height: h, depth: 1 })

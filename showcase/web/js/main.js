@@ -8,13 +8,14 @@ import { CarVisual } from './car.js';
 import { Input } from './input.js';
 import { Bot } from './bot.js';
 import { chunkMesh } from './chunks.js';
-import { planTrees, Vegetation } from './trees.js';
+import { loadPlan, Vegetation } from './trees.js';
+import { Grass } from './grass.js';
 import { buildPipeline, TIERS, postParams } from './post.js';
 import { FarImpostors } from './impostor.js';
 
 const Q = new URLSearchParams(location.search);
 const CFG = {
-  world: Q.get('world') ?? 'private/usce/usce.meshopt.glb',      // private, gitignored; falls back to the procedural track
+  world: Q.get('world') ?? 'private/usce/usce_v2.meshopt.glb',      // private, gitignored; falls back to the procedural track
   car: Q.get('carmesh') ?? 'private/miata_mesh/',                  // private OBJ set; falls back to procedural coupe
   carId: +(Q.get('car') ?? 3), tune: +(Q.get('tune') ?? 0), tier: Q.get('tier') ?? 'high',
   webgl: Q.has('webgl'), auto: Q.has('auto'), still: Q.get('still'), spawn: +(Q.get('spawn') ?? 0), sunEl: +(Q.get('sunel') ?? 24), sunAz: +(Q.get('sunaz') ?? 215),
@@ -93,10 +94,16 @@ const MAT = { showcase: makeShowcaseMaterials(), raw: makeRawMaterials() };
 const worldBounds = new THREE.Box3().setFromObject(worldGroup);
 const impostors = new FarImpostors(renderer, scene, entries.map(e => e.mesh).filter(m => m.userData.center), { radius: +(Q.get('farr') ?? 260) });
 let impostorsOn = Q.get('imp') !== '0';
+let grass = null;
 // vegetation: ez-tree near meshes + baked octahedral impostors replace the stand-in foliage blocks (?trees=0 keeps the old blocks)
-let veg = null; const treesOn = Q.get('trees') !== '0';
-if (treesOn) { try { const plan = planTrees(entries, { clearance: +(Q.get('treeclear') ?? 3.5) }); veg = await new Vegetation(renderer, scene, plan, { nearR: +(Q.get('treenear') ?? 70) }).build();
-  log('trees', plan.trees.length, 'from', plan.clusters, 'foliage clusters,', plan.rejected, 'road-clearance rejects, bake', veg.bakeMs.toFixed(0), 'ms'); window.__dcs.trees = { n: plan.trees.length, clusters: plan.clusters, bakeMs: veg.bakeMs }; }
+let veg = null; const flag = (k, d = true) => Q.has(k) ? Q.get(k) !== '0' && Q.get(k) !== 'false' : d;
+const treesOn = flag('trees'), shrubsOn = flag('shrubs'), grassOn = flag('grass');
+if (grassOn) { try { grass = new Grass(scene, entries, { density: +(Q.get('grassdensity') ?? 14), radius: +(Q.get('grassdist') ?? 45), max: +(Q.get('grassmax') ?? 90000) });
+  log('grass', grass.ntri, 'grass tris,', (grass.area / 1e4).toFixed(1), 'ha'); } catch (e) { log('grass failed', e.message); console.error(e); grass = null; } }
+for (const e of entries) if (e.cls === 32 || /foliage/i.test(e.name || '')) e.mesh.visible = false; // old stand-in blocks: never drawn
+if (treesOn || shrubsOn) { try { const planUrl = Q.get('vegplan') ?? CFG.world.replace(/[^/]*$/, 'veg_plan.json'); const plan = await loadPlan(planUrl, entries);
+  veg = await new Vegetation(renderer, scene, plan, { nearR: +(Q.get('impdist') ?? Q.get('treenear') ?? 70), trees: treesOn, shrubs: shrubsOn, shadows: flag('treeshadows') }).build();
+  log('vegetation', plan.trees.length, 'trees', (plan.shrubs || []).length, 'shrubs from', plan.file || 'runtime plan', '| bake', veg.bakeMs.toFixed(0), 'ms'); window.__dcs.trees = { n: plan.trees.length, shrubs: (plan.shrubs || []).length, bakeMs: veg.bakeMs }; }
   catch (e) { log('trees failed', e.message); console.error(e); veg = null; } }
 
 // ---------------------------------------------------------------- car + physics
@@ -155,7 +162,7 @@ function applyTier(name) {
   carShadow.on.value = T.shadows && shadowCache ? 1 : 0;
   if (pipe) pipe.pp.dispose?.(); pipe = buildPipeline(renderer, scene, camera, name, sun);
   impostors.setEnabled(impostorsOn && !!T.impostors);
-  if (veg) veg.setEnabled(T.materials !== 'raw');
+  if (veg) veg.setEnabled(T.materials !== 'raw'); if (grass) grass.setEnabled(T.materials !== 'raw');
   $('tier').textContent = T.label + (impostors.enabled ? ' + far impostors' : ''); lastShadowCentre.set(1e9, 0, 0);
 }
 captureEnv(); { const target = tier; applyTier(CFG.warm ? 'raw' : target); tier = target; }
@@ -209,6 +216,7 @@ async function frameLoop() {
     // gearbox: auto by rpm, or manual (Q/E, paddles)
     const rpm = state ? state[11] : 0, spd = state ? state[10] : 0; shiftCooldown -= fixedDt;
     if (autoBox && shiftCooldown <= 0) { if (rpm > 6200 && gear < 5) { gear++; shiftCooldown = 0.6; } else if (rpm < 2400 && gear > 1) { gear--; shiftCooldown = 0.6; } }
+    if (inp.reset) { worker.postMessage({ type: 'reset', spawn }); gear = 1; } if (inp.camera) camMode = camModes[(camModes.indexOf(camMode) + 1) % camModes.length];
     if (inp.gearUp) gear = Math.min(5, gear + 1); if (inp.gearDown) gear = Math.max(-1, gear - 1);
     if (!autoBox && gear === 0) gear = 1;
     if (autoBox && spd < 1.0 && inp.brake > 0.5 && inp.throttle < 0.05) { /* hold */ }
@@ -231,7 +239,7 @@ async function frameLoop() {
     if (shadowCache && TIERS[tier].shadows) renderCarShadow();
   }
   sky.position.copy(camera.position);
-  impostors.update(car.centre, camera.position); if (veg && veg.enabled) veg.update(camera.position);
+  impostors.update(car.centre, camera.position); if (veg && veg.enabled) veg.update(camera.position); if (grass) grass.update(camera.position, Q.has('freeze') ? 0 : simTime);
   const t0 = performance.now();
   pipe.pp.render();
   timings.cpu = performance.now() - t0;
@@ -239,11 +247,11 @@ async function frameLoop() {
   fpsAcc += dt; fpsN++; if (fpsAcc > 0.5) { fps = fpsN / fpsAcc; fpsAcc = 0; fpsN = 0; }
   if (state) {
     $('spd').textContent = (state[10] * 3.6).toFixed(0); $('gear').textContent = gear < 0 ? 'R' : gear === 0 ? 'N' : String(state[12] | 0); $('rpm').style.width = Math.min(100, state[11] / 72) + '%';
-    $('stats').textContent = `${backend} | ${fps.toFixed(0)} fps | GPU ${gpuMs ? gpuMs.toFixed(2) + ' ms' : 'n/a'} | CPU submit ${timings.cpu.toFixed(1)} ms | physics ${physInfo.usPerTick ? physInfo.usPerTick.toFixed(0) : '-'} us/tick x ${physInfo.ticks} | shadow ${shadowCache ? 'cached' : 'per-frame'} (${window.__dcs.shadowRenders || 0} renders) | tris ${(renderer.info.render.triangles / 1e3).toFixed(0)}k${veg && veg.enabled ? ` | trees ${veg.plan.trees.length} (${veg.nearCount} mesh, ${(veg.tris / 1e3).toFixed(0)}k tris)` : ''}${impostors.enabled ? ` (far ring ${(impostors.farTris / 1e3 || 0).toFixed(0)}k tris cached, ${impostors.captures} captures)` : ''} | ${input.mode}${auto ? ' | AUTOPILOT' : ''}`;
+    $('stats').textContent = `${backend} | ${fps.toFixed(0)} fps | GPU ${gpuMs ? gpuMs.toFixed(2) + ' ms' : 'n/a'} | CPU submit ${timings.cpu.toFixed(1)} ms | physics ${physInfo.usPerTick ? physInfo.usPerTick.toFixed(0) : '-'} us/tick x ${physInfo.ticks} | shadow ${shadowCache ? 'cached' : 'per-frame'} (${window.__dcs.shadowRenders || 0} renders) | tris ${(renderer.info.render.triangles / 1e3).toFixed(0)}k${veg && veg.enabled ? ` | trees ${veg.plan.trees.length} (${veg.nearCount} mesh, ${(veg.tris / 1e3).toFixed(0)}k tris)` : ''}${grass && grass.enabled ? ` | grass ${(grass.count / 1e3).toFixed(0)}k blades` : ''}${impostors.enabled ? ` (far ring ${(impostors.farTris / 1e3 || 0).toFixed(0)}k tris cached, ${impostors.captures} captures)` : ''} | ${input.mode}${auto ? ' | AUTOPILOT' : ''}`;
   }
   window.__dcs.frames = frame; window.__dcs.simTime = simTime; window.__dcs.state = state && Array.from(state.slice(0, 16)); window.__dcs.gpuMs = gpuMs; window.__dcs.backend = backend; window.__dcs.ready = !!state && physReady;
   requestAnimationFrame(frameLoop);
 }
 $('hud').classList.remove('hide'); requestAnimationFrame(frameLoop);
-window.__dcs.applyTier = applyTier; window.__dcs.veg = () => veg; window.__dcs.THREE = THREE; window.__dcs.camera = camera; window.__dcs.scene = scene; window.__dcs.setCam = (m, o) => { camMode = m; if (o) Object.assign(orbit, o); }; window.__dcs.setSun = (e, a) => { setSun(e, a); captureEnv(); lastShadowCentre.set(1e9, 0, 0); };
+window.__dcs.applyTier = applyTier; window.__dcs.input = input; window.__dcs.veg = () => veg; window.__dcs.grass = () => grass; window.__dcs.THREE = THREE; window.__dcs.camera = camera; window.__dcs.scene = scene; window.__dcs.setCam = (m, o) => { camMode = m; if (o) Object.assign(orbit, o); }; window.__dcs.setSun = (e, a) => { setSun(e, a); captureEnv(); lastShadowCentre.set(1e9, 0, 0); };
 window.__dcs.setAuto = (v) => auto = v && !!bot; window.__dcs.cfg = CFG; window.__dcs.worldKind = worldKind; window.__dcs.carKind = () => car.kind; window.__dcs.physVersion = () => physVersion;

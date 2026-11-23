@@ -1,0 +1,27 @@
+<!doctype html><meta charset="utf-8"><title>DriveChain vegetation bake (native assets)</title>
+<script type="importmap">{"imports":{"three":"./vendor/three/lib/three.webgpu.js","three/webgpu":"./vendor/three/lib/three.webgpu.js","three/tsl":"./vendor/three/lib/three.tsl.js","three/addons/":"./vendor/three/addons/"}}</script>
+<body><script type="module">
+// Generates every ez-tree kind used by the showcase (same presets + seeds as js/trees.js) and exposes, per kind:
+// branch + leaf geometry (pos/nrm/uv/index), bark + leaf textures (PNG data URLs), and the 8x8 hemi-octahedral impostor
+// atlases (albedo+alpha, normal) baked by the same bake() the web build uses. tools/bake_vegetation.mjs writes them to disk.
+import * as THREE from 'three';
+import { Tree } from './vendor/ez-tree/ez-tree.es.js';
+import { KINDS, bake, loadPreset, N, CELL } from './js/trees.js';
+try {
+const renderer = new THREE.WebGPURenderer({ forceWebGL: true, antialias: false }); renderer.setSize(64, 64); await renderer.init();
+const png = (img) => { if (!img) return null; const c = document.createElement('canvas'); c.width = img.width; c.height = img.height; c.getContext('2d').drawImage(img, 0, 0); return c.toDataURL('image/png'); };
+const geo = (g) => { const a = (n) => g.attributes[n] ? Array.from(g.attributes[n].array) : null; return { pos: a('position'), nrm: a('normal'), uv: a('uv'), idx: g.index ? Array.from(g.index.array) : null }; };
+const rtPng = async (rt) => { const W = rt.width, H = rt.height; const px = await renderer.readRenderTargetPixelsAsync(rt, 0, 0, W, H); const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const id = c.getContext('2d').createImageData(W, H); for (let y = 0; y < H; y++) id.data.set(px.subarray((H - 1 - y) * W * 4, (H - y) * W * 4), y * W * 4); // GL rows are bottom-up
+  c.getContext('2d').putImageData(id, 0, 0); return c.toDataURL('image/png'); };
+const out = {};
+for (const [name, K] of Object.entries(KINDS)) {
+  const tree = new Tree(); tree.options.copy(await loadPreset(K.file)); tree.options.seed = K.seed; if (K.leaves) Object.assign(tree.options.leaves, K.leaves); tree.generate(); tree.updateMatrixWorld(true);
+  const ib = bake(renderer, tree); const bm = tree.branchesMesh.material, lm = tree.leavesMesh.material;
+  out[name] = { kind: K, R: ib.R, cy: ib.cy, h: ib.h, base: ib.base, N, CELL,
+    branches: geo(tree.branchesMesh.geometry), leaves: geo(tree.leavesMesh.geometry), barkTint: bm.color?.getHex(), leafTint: lm.color?.getHex(), alphaTest: lm.alphaTest,
+    bark: png(bm.map?.image), barkNormal: png(bm.normalMap?.image), leaf: png(lm.map?.image), atlasAlbedo: await rtPng(ib.albedoRT), atlasNormal: await rtPng(ib.normalRT) };
+}
+window.__bake = out;
+} catch (e) { console.error('bake failed', e.message, e.stack); window.__bake = { error: e.message }; }
+</script></body>

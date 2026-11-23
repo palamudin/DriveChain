@@ -52,6 +52,7 @@ pub struct Renderer {
     pool: vk::DescriptorPool, qpool: vk::QueryPool, pub cb: vk::CommandBuffer, pub fence: vk::Fence,
     pub meshes: Vec<GpuMesh>, frame: u32, prev_vp: Mat4, far_centre: Vec3, far_vp: Mat4, pub far_renders: u32, pub settings: Settings,
     pub tlas: Option<crate::accel::Accel>, pub timings: [f32; 9],
+    pub veg: Option<crate::veg::Veg>, pub veg_ms: [f32; 2],
 }
 
 fn gi_dims(w: u32, h: u32, mode: u32) -> (u32, u32) { if mode == 2 { (w, h) } else { ((w + 1) / 2, (h + 1) / 2) } }
@@ -77,26 +78,19 @@ impl Renderer {
         let sm0 = c.image("sm0", 2048, 2048, vk::Format::D32_SFLOAT, dep, 1)?;
         let sm1 = c.image("sm1", 4096, 4096, vk::Format::D32_SFLOAT, dep, 1)?;
         let tw = 1024u32; let n = textures.len().max(1) as u32;
-        let tex_albedo = c.image("texA", tw, tw, vk::Format::R8G8B8A8_SRGB, vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST, n)?;
-        let tex_rough = c.image("texR", tw, tw, vk::Format::R8G8B8A8_UNORM, vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST, n)?;
-        // upload textures (RGBA8 1024^2 per layer)
-        let mut staging_a: Vec<u8> = vec![]; let mut staging_r: Vec<u8> = vec![];
-        for (a, r) in textures { staging_a.extend_from_slice(a); staging_r.extend_from_slice(r); }
-        if staging_a.is_empty() { staging_a = vec![128; (tw * tw * 4) as usize]; staging_r = staging_a.clone(); }
-        let sa = c.upload("stA", &staging_a, vk::BufferUsageFlags::TRANSFER_SRC)?; let sr = c.upload("stR", &staging_r, vk::BufferUsageFlags::TRANSFER_SRC)?;
+        // material arrays with full mip chains (no mips = the main source of asphalt/grass shimmer in motion without TAA)
+        let mut la = vec![]; let mut lr = vec![];
+        for (a, r) in textures { la.push(crate::veg::mips(a, tw, tw, false, 0.5)); lr.push(crate::veg::mips(r, tw, tw, false, 0.5)); }
+        if la.is_empty() { la.push(crate::veg::mips(&vec![128; (tw * tw * 4) as usize], tw, tw, false, 0.5)); lr = la.clone(); }
+        let tex_albedo = crate::veg::texture_array(c, "texA", tw, &la, &vec![true; la.len()])?;
+        let tex_rough = crate::veg::texture_array(c, "texR", tw, &lr, &vec![false; lr.len()])?;
+        let _ = n;
         let d = c.device.clone();
         let all_imgs: Vec<(vk::Image, bool, u32)> = [&depth, &albedo, &normal, &vel, &mask, &direct, &gi, &hdr, &ldr, &out, &sm0, &sm1].iter().map(|i| (i.image, crate::vk::is_depth(i.format), 1)).chain(bloom.iter().map(|i| (i.image, false, 1))).collect();
         c.one_shot(|cb| unsafe {
             for (img, dpt, l) in &all_imgs { barrier(&d, cb, *img, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL, *dpt, *l); }
-            for (img, src) in [(tex_albedo.image, sa.buf), (tex_rough.image, sr.buf)] {
-                barrier(&d, cb, img, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL, false, n);
-                let reg = [vk::BufferImageCopy::default().image_subresource(vk::ImageSubresourceLayers { aspect_mask: vk::ImageAspectFlags::COLOR, mip_level: 0, base_array_layer: 0, layer_count: n }).image_extent(vk::Extent3D { width: tw, height: tw, depth: 1 })];
-                d.cmd_copy_buffer_to_image(cb, src, img, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &reg);
-                barrier(&d, cb, img, vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::GENERAL, false, n);
-            }
         })?;
-        c.free_buffer(sa); c.free_buffer(sr);
-        let mk_s = |addr: vk::SamplerAddressMode, aniso: bool| unsafe { d.create_sampler(&vk::SamplerCreateInfo::default().mag_filter(vk::Filter::LINEAR).min_filter(vk::Filter::LINEAR)
+        let mk_s = |addr: vk::SamplerAddressMode, aniso: bool| unsafe { d.create_sampler(&vk::SamplerCreateInfo::default().mag_filter(vk::Filter::LINEAR).min_filter(vk::Filter::LINEAR).mipmap_mode(vk::SamplerMipmapMode::LINEAR)
             .address_mode_u(addr).address_mode_v(addr).address_mode_w(addr).anisotropy_enable(aniso).max_anisotropy(8.0).max_lod(16.0), None) };
         let lin = mk_s(vk::SamplerAddressMode::REPEAT, true)?; let clamp = mk_s(vk::SamplerAddressMode::CLAMP_TO_EDGE, false)?;
         let shadow_s = unsafe { d.create_sampler(&vk::SamplerCreateInfo::default().mag_filter(vk::Filter::NEAREST).min_filter(vk::Filter::NEAREST).address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE).address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE), None)? };
@@ -132,7 +126,7 @@ impl Renderer {
         let p_fin = Self::compute(&d, pool, spv!("finish.comp"), vec![u(), Res::Tex(ldr.view, clamp), Res::Img(out.view)], 0, false)?;
         Ok(Renderer { w, h, ubo, depth, albedo, normal, vel, mask, direct, gi, hdr, bloom, ldr, out, sm0, sm1, tex_albedo, tex_rough, lin, clamp, shadow_s,
             gbuf_pipe, gbuf_layout, gbuf_dsl, gbuf_set, sh_pipe, sh_layout, p_mask, p_light, p_gi, p_comp, p_post, p_fin, p_down, p_up, pool, qpool, cb, fence,
-            meshes: vec![], frame: 0, prev_vp: Mat4::IDENTITY, far_centre: Vec3::splat(1e9), far_vp: Mat4::IDENTITY, far_renders: 0, settings, tlas: None, timings: [0.0; 9] })
+            meshes: vec![], frame: 0, prev_vp: Mat4::IDENTITY, far_centre: Vec3::splat(1e9), far_vp: Mat4::IDENTITY, far_renders: 0, settings, tlas: None, timings: [0.0; 9], veg: None, veg_ms: [0.0; 2] })
     }
     fn make_set(d: &ash::Device, pool: vk::DescriptorPool, res: &[Res]) -> Result<(vk::DescriptorSetLayout, vk::DescriptorSet)> {
         let ty = |r: &Res| match r { Res::Ubo(..) => vk::DescriptorType::UNIFORM_BUFFER, Res::Tex(..) => vk::DescriptorType::COMBINED_IMAGE_SAMPLER, Res::Img(_) => vk::DescriptorType::STORAGE_IMAGE, Res::Tlas(_) => vk::DescriptorType::ACCELERATION_STRUCTURE_KHR };
@@ -238,6 +232,7 @@ impl Renderer {
                 .src_access_mask(vk::AccessFlags2::MEMORY_WRITE).dst_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE)]; d.cmd_pipeline_barrier2(cb, &vk::DependencyInfo::default().memory_barriers(&mb)); };
             let ts = |i: u32| d.cmd_write_timestamp2(cb, vk::PipelineStageFlags2::ALL_COMMANDS, self.qpool, i);
             ts(0);
+            if let Some(v) = &self.veg { d.cmd_write_timestamp2(cb, vk::PipelineStageFlags2::ALL_COMMANDS, self.qpool, 20); v.record_compute(d, cb); d.cmd_write_timestamp2(cb, vk::PipelineStageFlags2::ALL_COMMANDS, self.qpool, 21); }
             // 0: shadow cascades
             for (img, vpm, size, only_static) in [(&self.sm0, near_vp, 2048u32, false), (&self.sm1, self.far_vp, 4096u32, true)] {
                 if only_static && !far_dirty { continue; }
@@ -251,6 +246,7 @@ impl Renderer {
                     let mvp = vpm * m.model; d.cmd_push_constants(cb, self.sh_layout, vk::ShaderStageFlags::VERTEX, 0, bytemuck::bytes_of(&mvp));
                     d.cmd_bind_vertex_buffers(cb, 0, &[m.vb.buf], &[0]); d.cmd_bind_index_buffer(cb, m.ib.buf, 0, vk::IndexType::UINT32); d.cmd_draw_indexed(cb, m.count, 1, 0, 0, 0);
                 }
+                if let Some(v) = &self.veg { v.draw_shadow(d, cb, vpm); }
                 d.cmd_end_rendering(cb);
             }
             full(); ts(1);
@@ -269,6 +265,7 @@ impl Renderer {
                 d.cmd_push_constants(cb, self.gbuf_layout, vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT, 0, bytemuck::bytes_of(&pc));
                 d.cmd_bind_vertex_buffers(cb, 0, &[m.vb.buf], &[0]); d.cmd_bind_index_buffer(cb, m.ib.buf, 0, vk::IndexType::UINT32); d.cmd_draw_indexed(cb, m.count, 1, 0, 0, 0);
             }
+            if let Some(v) = &self.veg { d.cmd_write_timestamp2(cb, vk::PipelineStageFlags2::ALL_COMMANDS, self.qpool, 22); v.draw_gbuffer(d, cb); d.cmd_write_timestamp2(cb, vk::PipelineStageFlags2::ALL_COMMANDS, self.qpool, 23); }
             d.cmd_end_rendering(cb); full(); ts(2);
             let disp = |p: &Pass, w: u32, h: u32| { d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, p.pipe); d.cmd_bind_descriptor_sets(cb, vk::PipelineBindPoint::COMPUTE, p.layout, 0, &[p.set], &[]); d.cmd_dispatch(cb, (w + 7) / 8, (h + 7) / 8, 1); };
             disp(&self.p_mask, self.w, self.h); full(); ts(3);
@@ -301,6 +298,9 @@ impl Renderer {
         if unsafe { c.device.get_query_pool_results(self.qpool, 0, &mut q, vk::QueryResultFlags::TYPE_64) }.is_ok() {
             for i in 0..9 { self.timings[i] = (q[i + 1].saturating_sub(q[i])) as f32 * c.ts_period * 1e-6; }
         }
+        let mut v = [0u64; 4];
+        if self.veg.is_some() && unsafe { c.device.get_query_pool_results(self.qpool, 20, &mut v, vk::QueryResultFlags::TYPE_64) }.is_ok() {
+            self.veg_ms = [(v[1].saturating_sub(v[0])) as f32 * c.ts_period * 1e-6, (v[3].saturating_sub(v[2])) as f32 * c.ts_period * 1e-6]; }
     }
     /// Copy the final image to host RGBA8 (for stills / CI). Call after render().
     pub fn readback(&self, c: &mut Ctx) -> Result<Vec<u8>> {
@@ -312,4 +312,5 @@ impl Renderer {
         let px = buf.alloc.as_ref().unwrap().mapped_slice().unwrap()[..size as usize].to_vec(); c.free_buffer(buf); Ok(px)
     }
     pub fn out_image(&self) -> vk::Image { self.out.image }
+    pub fn ubo_info(&self) -> (vk::Buffer, u64) { (self.ubo.buf, self.ubo.size) }
 }

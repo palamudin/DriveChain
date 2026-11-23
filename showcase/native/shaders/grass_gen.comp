@@ -1,0 +1,42 @@
+#version 460
+#extension GL_GOOGLE_include_directive : enable
+#include "common.glsl"
+// Grass blade generation (compute, every frame): one workgroup per visible 8 m cell. Jittered-grid candidates are kept only
+// inside a grass collision triangle (so never on tarmac/kerbs), thinned with distance by a per-blade hash (stable: a static
+// camera always gets the same blade set), frustum-culled, then appended to the blade buffer; the count goes straight into
+// the indirect draw args (vertexCount 27, instanceCount = blades).
+layout(local_size_x = 64) in;
+struct Blade { vec4 root; vec4 prm; };
+layout(std430, set = 0, binding = 3) buffer Blades { Blade b[]; } B;
+layout(std430, set = 0, binding = 4) buffer Indirect { uint vertexCount; uint instanceCount; uint firstVertex; uint firstInstance; } I;
+layout(std430, set = 0, binding = 5) readonly buffer Tris { vec4 t[]; } T;        // 3 vec4 per triangle (xyz)
+layout(std430, set = 0, binding = 6) readonly buffer Cells { ivec4 c[]; } C;       // (cell i, cell k, first tri, tri count)
+layout(push_constant) uniform GPC { vec4 p; uint maxBlades; uint cellCount; uint pad0, pad1; } g; // p = (density /m2, radius, cell size, fullDensityRadius)
+float hash(uvec3 v) { v = v * 1664525u + 1013904223u; v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y; v ^= v >> 16u; v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y; return float(v.x & 0xffffffu) / 16777216.0; }
+void main() {
+  uint ci = gl_WorkGroupID.x; if (ci >= g.cellCount) return; ivec4 cell = C.c[ci];
+  float cs = g.p.z; int n = int(ceil(cs * sqrt(g.p.x))); uint N2 = uint(n * n);
+  for (uint k = gl_LocalInvocationID.x; k < N2; k += 64u) {
+    uint u = k / uint(n), v = k % uint(n); uvec3 hk = uvec3(uint(cell.x + 32768), uint(cell.y + 32768), k);
+    float x = (float(cell.x) + (float(u) + hash(hk)) / float(n)) * cs, z = (float(cell.y) + (float(v) + hash(hk + uvec3(0, 0, 7919u))) / float(n)) * cs;
+    float d = distance(vec2(x, z), F.camPos.xz); if (d > g.p.y) continue;
+    float r = hash(hk + uvec3(0, 0, 104729u)); float keep = d < g.p.w ? 1.0 : max(0.12, 1.0 - (d - g.p.w) / (g.p.y - g.p.w)); if (r > keep) continue;
+    bool onRoad = false; float roadY = -1e9; vec3 p = vec3(0); bool found = false;
+    for (int ti = 0; ti < cell.w; ti++) { int base = (cell.z + ti) * 3; vec4 A = T.t[base]; vec3 a = A.xyz, b = T.t[base + 1].xyz, c = T.t[base + 2].xyz;
+      float den = (b.z - c.z) * (a.x - c.x) + (c.x - b.x) * (a.z - c.z); if (abs(den) < 1e-9) continue;
+      float l1 = ((b.z - c.z) * (x - c.x) + (c.x - b.x) * (z - c.z)) / den, l2 = ((c.z - a.z) * (x - c.x) + (a.x - c.x) * (z - c.z)) / den, l3 = 1.0 - l1 - l2;
+      if (l1 < -0.02 || l2 < -0.02 || l3 < -0.02) continue; // small margin: keeps blades off the road edge
+      float y = l1 * a.y + l2 * b.y + l3 * c.y;
+      if (A.w > 0.5) { onRoad = true; roadY = max(roadY, y); continue; }           // road tris come first in each cell
+      if (l1 < 0.0 || l2 < 0.0 || l3 < 0.0) continue;
+      if (onRoad && roadY > y - 0.6) break;                                         // road surface above / at grass level: no blade
+      p = vec3(x, y, z); found = true; break; }
+    if (!found) continue;
+    {
+      vec4 cp = F.viewProj * vec4(p + vec3(0, 0.3, 0), 1); if (cp.w <= -1.0 || (cp.w > 0.0 && (abs(cp.x) > cp.w * 1.15 + 1.0 || abs(cp.y) > cp.w * 1.15 + 1.0))) continue; // frustum (+ margin)
+      uint slot = atomicAdd(I.instanceCount, 1u); if (slot >= g.maxBlades) { atomicMin(I.instanceCount, g.maxBlades); continue; }
+      float h = 0.32 + 0.45 * hash(hk + uvec3(0, 0, 3u)); float w = (0.035 + 0.04 * hash(hk + uvec3(0, 0, 5u))) * (1.0 + (1.0 - keep) * 1.5);
+      B.b[slot].root = vec4(p, hash(hk + uvec3(0, 0, 11u))); B.b[slot].prm = vec4(h, w, hash(hk + uvec3(0, 0, 13u)) * 6.2832, 0.15 + 0.5 * hash(hk + uvec3(0, 0, 17u)));
+    }
+  }
+}

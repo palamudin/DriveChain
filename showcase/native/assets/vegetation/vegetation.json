@@ -1,0 +1,246 @@
+{
+ "generator": "ez-tree (MIT, (c) 2024 Daniel Greenheck) via web/bake_veg.html",
+ "atlas": "8x8 hemi-octahedral, albedo rgb+alpha / normal (1024^2 here: 8x8 cells of 128 px)",
+ "kinds": {
+  "poplar": {
+   "R": 36.38425197601318,
+   "cy": 34.651668548583984,
+   "h": 69.30333709716797,
+   "base": 0,
+   "N": 8,
+   "CELL": 192,
+   "shrub": false,
+   "barkTint": 16777215,
+   "leafTint": 15269848,
+   "alphaTest": 0.5,
+   "branchTris": 5088,
+   "leafTris": 2112,
+   "files": {
+    "bark": "bark_6a2696e8.jpg",
+    "barkNormal": "barkn_333c0440.jpg",
+    "leaf": "leaf_bf93191a.png",
+    "atlasAlbedo": "poplar_impA_027d23a7.png",
+    "atlasNormal": "poplar_impN_fb4415de.jpg"
+   },
+   "preset": {
+    "file": "aspen_medium",
+    "seed": 11,
+    "leaves": {
+     "type": "ash",
+     "tint": 15269848
+    }
+   }
+  },
+  "poplar2": {
+   "R": 35.840871047973636,
+   "cy": 34.13416290283203,
+   "h": 68.26832580566406,
+   "base": 0,
+   "N": 8,
+   "CELL": 192,
+   "shrub": false,
+   "barkTint": 16777215,
+   "leafTint": 14480840,
+   "alphaTest": 0.5,
+   "branchTris": 5088,
+   "leafTris": 2112,
+   "files": {
+    "bark": "bark_6a2696e8.jpg",
+    "barkNormal": "barkn_333c0440.jpg",
+    "leaf": "leaf_bf93191a.png",
+    "atlasAlbedo": "poplar2_impA_18ebc794.png",
+    "atlasNormal": "poplar2_impN_4cef279e.jpg"
+   },
+   "preset": {
+    "file": "aspen_medium",
+    "seed": 4711,
+    "leaves": {
+     "type": "ash",
+     "tint": 14480840
+    }
+   }
+  },
+  "ash": {
+   "R": 44.68020761672716,
+   "cy": 33.22073745727539,
+   "h": 66.44147491455078,
+   "base": 0,
+   "N": 8,
+   "CELL": 192,
+   "shrub": false,
+   "barkTint": 13552830,
+   "leafTint": 16777215,
+   "alphaTest": 0.5,
+   "branchTris": 9120,
+   "leafTris": 10880,
+   "files": {
+    "bark": "bark_660b07aa.jpg",
+    "barkNormal": "barkn_a2ebc4fd.jpg",
+    "leaf": "leaf_bf93191a.png",
+    "atlasAlbedo": "ash_impA_0d35e2ce.png",
+    "atlasNormal": "ash_impN_38e41134.jpg"
+   },
+   "preset": {
+    "file": "ash_medium",
+    "seed": 23
+   }
+  },
+  "ash2": {
+   "R": 45.71558577910591,
+   "cy": 38.59111785888672,
+   "h": 77.18223571777344,
+   "base": 0,
+   "N": 8,
+   "CELL": 192,
+   "shrub": false,
+   "barkTint": 13552830,
+   "leafTint": 16777215,
+   "alphaTest": 0.5,
+   "branchTris": 9120,
+   "leafTris": 10880,
+   "files": {
+    "bark": "bark_660b07aa.jpg",
+    "barkNormal": "barkn_a2ebc4fd.jpg",
+    "leaf": "leaf_bf93191a.png",
+    "atlasAlbedo": "ash2_impA_78391b45.png",
+    "atlasNormal": "ash2_impN_4e1edd4b.jpg"
+   },
+   "preset": {
+    "file": "ash_medium",
+    "seed": 977
+   }
+  },
+  "oak": {
+   "R": 41.288173456856555,
+   "cy": 34.33088684082031,
+   "h": 68.66177368164062,
+   "base": 0,
+   "N": 8,
+   "CELL": 192,
+   "shrub": false,
+   "barkTint": 16774097,
+   "leafTint": 14013901,
+   "alphaTest": 0.5,
+   "branchTris": 3166,
+   "leafTris": 10640,
+   "files": {
+    "bark": "bark_660b07aa.jpg",
+    "barkNormal": "barkn_a2ebc4fd.jpg",
+    "leaf": "leaf_97aa36e3.png",
+    "atlasAlbedo": "oak_impA_cc41b44e.png",
+    "atlasNormal": "oak_impN_e13471d6.jpg"
+   },
+   "preset": {
+    "file": "oak_medium",
+    "seed": 5
+   }
+  },
+  "pine": {
+   "R": 26.86455945968628,
+   "cy": 25.585294723510742,
+   "h": 51.170589447021484,
+   "base": 0,
+   "N": 8,
+   "CELL": 192,
+   "shrub": false,
+   "barkTint": 16777215,
+   "leafTint": 16777215,
+   "alphaTest": 0.3,
+   "branchTris": 10032,
+   "leafTris": 9840,
+   "files": {
+    "bark": "bark_7871c5b4.jpg",
+    "barkNormal": "barkn_509e884d.jpg",
+    "leaf": "leaf_2fa7f28c.png",
+    "atlasAlbedo": "pine_impA_6a4488e1.png",
+    "atlasNormal": "pine_impN_6829ee2e.jpg"
+   },
+   "preset": {
+    "file": "pine_medium",
+    "seed": 31
+   }
+  },
+  "bush1": {
+   "R": 23.17800050434889,
+   "cy": 11.189886569976807,
+   "h": 29.236903190612793,
+   "base": -3.42856502532959,
+   "N": 8,
+   "CELL": 192,
+   "shrub": true,
+   "barkTint": 13552830,
+   "leafTint": 14745557,
+   "alphaTest": 0.5,
+   "branchTris": 8880,
+   "leafTris": 4992,
+   "files": {
+    "bark": "bark_660b07aa.jpg",
+    "barkNormal": "barkn_a2ebc4fd.jpg",
+    "leaf": "leaf_bf93191a.png",
+    "atlasAlbedo": "bush1_impA_461a2b5a.png",
+    "atlasNormal": "bush1_impN_7eca4ef1.jpg"
+   },
+   "preset": {
+    "file": "bush_1",
+    "seed": 101,
+    "shrub": true
+   }
+  },
+  "bush2": {
+   "R": 23.300611094122626,
+   "cy": 14.52362891100347,
+   "h": 29.114794332534075,
+   "base": -0.03376825526356697,
+   "N": 8,
+   "CELL": 192,
+   "shrub": true,
+   "barkTint": 13552830,
+   "leafTint": 14217416,
+   "alphaTest": 0.5,
+   "branchTris": 3352,
+   "leafTris": 1408,
+   "files": {
+    "bark": "bark_660b07aa.jpg",
+    "barkNormal": "barkn_a2ebc4fd.jpg",
+    "leaf": "leaf_bf93191a.png",
+    "atlasAlbedo": "bush2_impA_5219d1bd.png",
+    "atlasNormal": "bush2_impN_b7f9299d.jpg"
+   },
+   "preset": {
+    "file": "bush_2",
+    "seed": 202,
+    "shrub": true,
+    "leaves": {
+     "type": "ash",
+     "tint": 14217416
+    }
+   }
+  },
+  "bush3": {
+   "R": 24.253006315066177,
+   "cy": 8.74263060092926,
+   "h": 20.4204204082489,
+   "base": -1.4675796031951904,
+   "N": 8,
+   "CELL": 192,
+   "shrub": true,
+   "barkTint": 13552830,
+   "leafTint": 10339327,
+   "alphaTest": 0.5,
+   "branchTris": 13674,
+   "leafTris": 2496,
+   "files": {
+    "bark": "bark_660b07aa.jpg",
+    "barkNormal": "barkn_a2ebc4fd.jpg",
+    "leaf": "leaf_2fa7f28c.png",
+    "atlasAlbedo": "bush3_impA_daa00f19.png",
+    "atlasNormal": "bush3_impN_56cf055b.jpg"
+   },
+   "preset": {
+    "file": "bush_3",
+    "seed": 303,
+    "shrub": true
+   }
+  }
+ }
+}

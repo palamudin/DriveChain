@@ -3,7 +3,7 @@ use crate::tms::{Car, Input, State, World as PWorld};
 use crate::world::World;
 use glam::{Mat4, Vec3};
 
-pub struct Sim { pub pw: PWorld, pub car: Car, pub state: State, pub gear: i32, pub shift_cd: f32, pub line: Vec<Vec3>, pub li: usize, pub spawn: crate::world::Spawn }
+pub struct Sim { pub pw: PWorld, pub car: Car, pub state: State, pub gear: i32, pub manual: bool, pub shift_cd: f32, pub line: Vec<Vec3>, pub li: usize, pub spawn: crate::world::Spawn }
 impl Sim {
     pub fn new(w: &World, car_id: i32, spawn_idx: usize) -> anyhow::Result<Sim> {
         let (p, i, s) = w.collision();
@@ -11,7 +11,7 @@ impl Sim {
         eprintln!("physics world: {} tris, built in {:.0} ms", s.len(), t0.elapsed().as_secs_f64() * 1e3);
         let sp = w.spawns[spawn_idx.min(w.spawns.len() - 1)];
         let car = Car::new(&pw, car_id, 0, sp.x, sp.z, sp.yaw)?; let state = car.state();
-        Ok(Sim { pw, car, state, gear: 1, shift_cd: 0.0, line: w.line.clone(), li: 0, spawn: sp })
+        Ok(Sim { pw, car, state, gear: 1, manual: false, shift_cd: 0.0, line: w.line.clone(), li: 0, spawn: sp })
     }
     pub fn basis(&self) -> (Vec3, Vec3, Vec3, Vec3) { // centre, fwd, left, up (from wheel centres; handedness-agnostic)
         let s = &self.state; let w: Vec<Vec3> = (0..4).map(|i| s.wheel(i)).collect();
@@ -37,10 +37,19 @@ impl Sim {
     /// Advance by dt with input (+left steer). Auto gearbox like the web build.
     pub fn step(&mut self, mut i: Input, ticks: i32) -> anyhow::Result<()> {
         self.shift_cd -= ticks as f32 / 240.0; let rpm = self.state.rpm();
-        if self.shift_cd <= 0.0 { if rpm > 6200.0 && self.gear < 5 { self.gear += 1; self.shift_cd = 0.6; } else if rpm < 2400.0 && self.gear > 1 { self.gear -= 1; self.shift_cd = 0.6; } }
+        if !self.manual && self.shift_cd <= 0.0 { if rpm > 6200.0 && self.gear < 5 { self.gear += 1; self.shift_cd = 0.6; } else if rpm < 2400.0 && self.gear > 1 { self.gear -= 1; self.shift_cd = 0.6; } }
         i.steer = -i.steer; // solver frame is left-handed (Unity): + = right
         i.gear = self.gear; i.starter = (!self.state.running()) as i32;
         self.car.step(&i, ticks)?; self.state = self.car.state(); Ok(())
+    }
+    /// Sequential shift (paddles / Q E): switches the gearbox to manual. -1 = reverse, 0 = neutral, 1..5.
+    pub fn shift(&mut self, d: i32) { self.manual = true; self.gear = (self.gear + d).clamp(-1, 5); self.shift_cd = 0.3; }
+    /// 0 chase, 1 far chase, 2 bonnet.
+    pub fn camera(&self, mode: u32, prev: Option<(Vec3, Vec3)>, dt: f32) -> (Vec3, Vec3) {
+        match mode { 1 => { let (c, f, _, _) = self.basis(); let fl = Vec3::new(f.x, 0.0, f.z).normalize_or(Vec3::Z); let want = c - fl * 11.0 + Vec3::Y * 3.6; let tgt = c + fl * 3.0 + Vec3::Y * 0.6;
+                match prev { Some((p, t)) => { let k = 1.0 - (-dt * 4.0).exp(); (p.lerp(want, k), t.lerp(tgt, k)) } None => (want, tgt) } }
+            2 => { let (c, f, _, u) = self.basis(); (c + f * 0.4 + u * 1.05, c + f * 12.0 + u * 0.8) }
+            _ => self.chase_camera(prev, dt) }
     }
     pub fn body_matrix(&self) -> Mat4 { let (c, f, l, u) = self.basis(); Mat4::from_cols(f.extend(0.0), l.extend(0.0), u.extend(0.0), c.extend(1.0)) }
     pub fn wheel_matrix(&self, i: usize) -> Mat4 {
