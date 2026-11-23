@@ -1,0 +1,51 @@
+#version 460
+// HDR composite: direct + albedo * (GI + sky ambient * AO) ; physically based sky for background pixels; height fog with
+// volumetric sun in-scattering (12-step jittered raymarch against the cached far shadow cascade -> god rays).
+#extension GL_GOOGLE_include_directive : enable
+#include "common.glsl"
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 1) uniform sampler2D depthTex;
+layout(set = 0, binding = 2) uniform sampler2D albedoTex;
+layout(set = 0, binding = 3) uniform sampler2D normalTex;
+layout(set = 0, binding = 4) uniform sampler2D directTex;
+layout(set = 0, binding = 5) uniform sampler2D giTex;
+layout(set = 0, binding = 6) uniform sampler2D shadowMap1;
+layout(set = 0, binding = 7, rgba16f) uniform writeonly image2D outHdr;
+vec4 upsampleGI(vec2 uv, float d0, vec3 n0) { // joint bilateral 3x3 (depth + normal weights) from the GI buffer
+  vec2 gs = vec2(textureSize(giTex, 0)); vec2 base = uv * gs - 0.5; vec4 acc = vec4(0); float wsum = 0.0;
+  for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
+    vec2 tuv = (floor(base) + vec2(x, y) + 0.5) / gs; float d = texture(depthTex, tuv).r; vec3 n = texture(normalTex, tuv).xyz;
+    float w = exp(-abs(d - d0) * 4000.0) * pow(max(dot(n, n0), 0.0), 8.0) * (1.0 - 0.15 * float(abs(x) + abs(y)));
+    acc += texture(giTex, tuv) * w; wsum += w; }
+  return wsum > 1e-4 ? acc / wsum : texture(giTex, uv);
+}
+void main() {
+  ivec2 px = ivec2(gl_GlobalInvocationID.xy); if (any(greaterThanEqual(px, ivec2(F.res.xy)))) return;
+  vec2 uv = (vec2(px) + 0.5) * F.res.zw; float d = texture(depthTex, uv).r;
+  vec3 far = worldFromDepth(uv, d >= 1.0 ? 0.9999 : d); vec3 rd = normalize(far - F.camPos.xyz);
+  vec3 col; float dist;
+  if (d >= 1.0) { col = atmosphere(normalize(vec3(rd.x, max(rd.y, 0.002), rd.z)), F.sunDir.xyz); float sd = dot(rd, F.sunDir.xyz); col += F.sunColor.rgb * 20.0 * smoothstep(cos(F.sunDir.w * 1.4), cos(F.sunDir.w), sd); dist = 4000.0; }
+  else {
+    vec4 A = texture(albedoTex, uv); vec3 n = normalize(texture(normalTex, uv).xyz); vec3 direct = texture(directTex, uv).rgb;
+    vec4 gi = F.frameInfo.z != 0u ? upsampleGI(uv, d, n) : vec4(0, 0, 0, 1);
+    float ao = mix(1.0, gi.a, F.gi.y);
+    col = direct + A.rgb * (1.0 - A.a) * (gi.rgb * F.gi.x + skyAmbient(n) * ao);
+    dist = length(far - F.camPos.xyz);
+  }
+  // height fog + volumetric in-scatter
+  float dens = F.fog.x, fall = F.fog.y; float hy = rd.y * dist * fall;
+  float od = dens * dist * exp(-F.camPos.y * fall) * (abs(hy) > 1e-4 ? (1.0 - exp(-hy)) / hy : 1.0);
+  float trans = exp(-od);
+  float g = F.fog.w, mu = dot(rd, F.sunDir.xyz); float phase = (1.0 - g * g) / (4.0 * PI * pow(1.0 + g * g - 2.0 * g * mu, 1.5));
+  float lit = 1.0;
+  if (F.fog.z > 0.0) { // god rays: fraction of the view segment (first 220 m) that sees the sun in the static cascade
+    float steps = 12.0, seg = min(dist, 220.0) / steps, j = ign(vec2(px)); float acc = 0.0;
+    for (float i = 0.0; i < steps; i++) { vec3 q = F.camPos.xyz + rd * seg * (i + j); vec4 c = F.shadowVP[1] * vec4(q, 1); vec3 s = c.xyz / c.w; vec2 suv = s.xy * 0.5 + 0.5;
+      acc += (any(lessThan(suv, vec2(0))) || any(greaterThan(suv, vec2(1)))) ? 1.0 : step(s.z - 0.001, texture(shadowMap1, suv).r); }
+    lit = mix(1.0, acc / steps, F.fog.z);
+  }
+  vec3 amb = atmosphere(normalize(vec3(rd.x, 0.05, rd.z)), F.sunDir.xyz) * 0.5;
+  vec3 inscatter = (amb + F.sunColor.rgb * phase * 4.0 * PI * lit * 0.25) * (1.0 - trans);
+  col = col * trans + inscatter;
+  imageStore(outHdr, px, vec4(col, 1.0));
+}

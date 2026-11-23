@@ -1,0 +1,14 @@
+#version 460
+// 3x3 tent upsample, additive into the next larger level.
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0) uniform sampler2D src;
+layout(set = 0, binding = 1, rgba16f) uniform image2D dst;
+layout(push_constant) uniform PC { vec2 texel; float radius; float pad; } pc;
+void main() {
+  ivec2 px = ivec2(gl_GlobalInvocationID.xy); ivec2 sz = imageSize(dst); if (any(greaterThanEqual(px, sz))) return;
+  vec2 uv = (vec2(px) + 0.5) / vec2(sz); vec2 t = pc.texel * pc.radius; vec3 s = vec3(0);
+  s += texture(src, uv + t * vec2(-1, -1)).rgb + texture(src, uv + t * vec2(1, -1)).rgb + texture(src, uv + t * vec2(-1, 1)).rgb + texture(src, uv + t * vec2(1, 1)).rgb;
+  s += 2.0 * (texture(src, uv + t * vec2(0, -1)).rgb + texture(src, uv + t * vec2(-1, 0)).rgb + texture(src, uv + t * vec2(1, 0)).rgb + texture(src, uv + t * vec2(0, 1)).rgb);
+  s += 4.0 * texture(src, uv).rgb;
+  imageStore(dst, px, vec4(imageLoad(dst, px).rgb + s / 16.0, 1));
+}

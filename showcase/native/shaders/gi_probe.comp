@@ -1,0 +1,57 @@
+#version 460
+// Screen-probe GI after SSRT3 (Unity HDRP, "Screen Space Ray Traced GI"): per half-res probe pixel, trace a few
+// cosine-distributed directions through the depth buffer (linear steps with thickness test), gather the DIRECT lit colour at
+// hits -> one-bounce diffuse irradiance, and visibility -> AO. No temporal accumulation (handbook: no TAA dependence);
+// noise is removed by the depth/normal-aware 3x3 upsample in composite.comp.
+// RAY_QUERY=1 (RTX path): rays that leave the screen or pass behind geometry continue as hardware ray queries (30 m) and
+// hit geometry is shaded with a sun-visibility ray and a flat albedo, misses with sky radiance.
+#extension GL_GOOGLE_include_directive : enable
+#if RAY_QUERY
+#extension GL_EXT_ray_query : enable
+#endif
+#include "common.glsl"
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 1) uniform sampler2D depthTex;
+layout(set = 0, binding = 2) uniform sampler2D normalTex;
+layout(set = 0, binding = 3) uniform sampler2D directTex;
+layout(set = 0, binding = 4, rgba16f) uniform writeonly image2D outGI;
+#if RAY_QUERY
+layout(set = 0, binding = 5) uniform accelerationStructureEXT tlas;
+#endif
+vec3 toScreen(vec3 p) { vec4 c = F.viewProj * vec4(p, 1.0); return vec3(c.xy / c.w * 0.5 + 0.5, c.z / c.w); }
+float linDepth(float d) { vec4 c = inverse(F.proj) * vec4(0, 0, d, 1); return -c.z / c.w; }
+void main() {
+  ivec2 px = ivec2(gl_GlobalInvocationID.xy); vec2 res = F.res.xy * (F.frameInfo.z == 1u ? 0.5 : 1.0);
+  if (any(greaterThanEqual(px, ivec2(res)))) return;
+  vec2 uv = (vec2(px) + 0.5) / res; float d = texture(depthTex, uv).r; if (d >= 1.0) { imageStore(outGI, px, vec4(0, 0, 0, 1)); return; }
+  vec3 p = worldFromDepth(uv, d), n = normalize(texture(normalTex, uv).xyz);
+  vec3 T = normalize(cross(n, abs(n.y) < 0.9 ? vec3(0, 1, 0) : vec3(1, 0, 0))), B = cross(n, T);
+  const int DIRS = 6, STEPS = 12; float noise = ign(vec2(px) + float(F.frameInfo.x % 1u) * 17.0);
+  vec3 sum = vec3(0); float vis = 0.0; float R = F.gi.z;
+  for (int k = 0; k < DIRS; k++) {
+    float u1 = fract(noise + float(k) / float(DIRS)), u2 = fract(noise * 3.7 + float(k) * 0.618);
+    float r = sqrt(u1), phi = 6.2831 * u2; vec3 dir = normalize(T * (r * cos(phi)) + B * (r * sin(phi)) + n * sqrt(max(1.0 - u1, 0.0)));
+    bool hit = false; vec3 rad = vec3(0); float occl = 0.0;
+    for (int s = 1; s <= STEPS; s++) {
+      float t = R * pow((float(s) - 0.5 + noise) / float(STEPS), 2.0); vec3 q = p + n * 0.05 + dir * t; vec3 sq = toScreen(q);
+      if (any(lessThan(sq.xy, vec2(0))) || any(greaterThan(sq.xy, vec2(1)))) break;
+      float sd = texture(depthTex, sq.xy).r; float dz = linDepth(sq.z) - linDepth(sd);
+      if (dz > 0.02 && dz < 0.6 + t * 0.15) { hit = true; occl = 1.0; rad = texture(directTex, sq.xy).rgb; break; }
+    }
+#if RAY_QUERY
+    if (!hit && F.frameInfo.y != 0u) {
+      rayQueryEXT q; rayQueryInitializeEXT(q, tlas, gl_RayFlagsOpaqueEXT, 0xFF, p + n * 0.05, 0.02, dir, 30.0);
+      while (rayQueryProceedEXT(q)) {}
+      if (rayQueryGetIntersectionTypeEXT(q, true) != gl_RayQueryCommittedIntersectionNoneEXT) {
+        float th = rayQueryGetIntersectionTEXT(q, true); vec3 hp = p + dir * th; occl = 1.0 - smoothstep(10.0, 30.0, th);
+        rayQueryEXT s; rayQueryInitializeEXT(s, tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0xFF, hp + F.sunDir.xyz * 0.05, 0.01, F.sunDir.xyz, 1000.0);
+        while (rayQueryProceedEXT(s)) {}
+        float sv = rayQueryGetIntersectionTypeEXT(s, true) == gl_RayQueryCommittedIntersectionNoneEXT ? 1.0 : 0.0;
+        rad = vec3(0.25) / PI * F.sunColor.rgb * sv * 0.5; hit = true;
+      }
+    }
+#endif
+    sum += hit ? rad : vec3(0); vis += 1.0 - occl;
+  }
+  imageStore(outGI, px, vec4(sum / float(DIRS) * PI, vis / float(DIRS)));
+}

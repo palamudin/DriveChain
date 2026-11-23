@@ -1,0 +1,17 @@
+#version 460
+// 13-tap downsample (Jimenez, "Next generation post processing in Call of Duty: AW"); first level applies a soft threshold.
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0) uniform sampler2D src;
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D dst;
+layout(push_constant) uniform PC { vec2 texel; float threshold; float first; } pc;
+void main() {
+  ivec2 px = ivec2(gl_GlobalInvocationID.xy); ivec2 sz = imageSize(dst); if (any(greaterThanEqual(px, sz))) return;
+  vec2 uv = (vec2(px) + 0.5) / vec2(sz); vec2 t = pc.texel;
+  vec3 a = texture(src, uv + t * vec2(-2, -2)).rgb, b = texture(src, uv + t * vec2(0, -2)).rgb, c = texture(src, uv + t * vec2(2, -2)).rgb;
+  vec3 d = texture(src, uv + t * vec2(-2, 0)).rgb, e = texture(src, uv).rgb, f = texture(src, uv + t * vec2(2, 0)).rgb;
+  vec3 g = texture(src, uv + t * vec2(-2, 2)).rgb, h = texture(src, uv + t * vec2(0, 2)).rgb, i = texture(src, uv + t * vec2(2, 2)).rgb;
+  vec3 j = texture(src, uv + t * vec2(-1, -1)).rgb, k = texture(src, uv + t * vec2(1, -1)).rgb, l = texture(src, uv + t * vec2(-1, 1)).rgb, m = texture(src, uv + t * vec2(1, 1)).rgb;
+  vec3 o = e * 0.125 + (a + c + g + i) * 0.03125 + (b + d + f + h) * 0.0625 + (j + k + l + m) * 0.125;
+  if (pc.first > 0.5) { float br = max(o.r, max(o.g, o.b)); float soft = clamp(br - pc.threshold * 0.5, 0.0, pc.threshold); soft = soft * soft / (2.0 * pc.threshold + 1e-4); o *= max(soft, br - pc.threshold) / max(br, 1e-4); o = min(o, vec3(64.0)); }
+  imageStore(dst, px, vec4(o, 1));
+}

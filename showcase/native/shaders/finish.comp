@@ -1,0 +1,27 @@
+#version 460
+// Spatial AA (FXAA-style luma edge filter on the tonemapped image, no history) then display-space lens effects:
+// chromatic aberration, vignette, film grain. Runs after tonemapping so grain/CA are never smeared by AA.
+#extension GL_GOOGLE_include_directive : enable
+#include "common.glsl"
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 1) uniform sampler2D ldrTex;
+layout(set = 0, binding = 2, rgba8) uniform writeonly image2D outImg;
+vec3 fxaa(vec2 uv) {
+  vec2 t = F.res.zw; float lN = texture(ldrTex, uv + vec2(0, -t.y)).a, lS = texture(ldrTex, uv + vec2(0, t.y)).a, lW = texture(ldrTex, uv + vec2(-t.x, 0)).a, lE = texture(ldrTex, uv + vec2(t.x, 0)).a;
+  vec4 M = texture(ldrTex, uv); float lo = min(M.a, min(min(lN, lS), min(lW, lE))), hi = max(M.a, max(max(lN, lS), max(lW, lE)));
+  if (hi - lo < max(0.0312, hi * 0.125)) return M.rgb;
+  vec2 dir = vec2(-((lN + lS) - (lW + lE)), (lN + lS) - (lW + lE)) * 0.0 + vec2((lS - lN), (lW - lE)) * -1.0;
+  dir = vec2(-(lN - lS), (lW - lE)); dir = dir.yx * vec2(1, -1) * -1.0; dir = normalize(dir + 1e-6) * t;
+  vec3 a = 0.5 * (texture(ldrTex, uv + dir * (-1.0 / 6.0)).rgb + texture(ldrTex, uv + dir * (1.0 / 6.0)).rgb);
+  vec3 b = a * 0.5 + 0.25 * (texture(ldrTex, uv - dir * 0.5).rgb + texture(ldrTex, uv + dir * 0.5).rgb);
+  float lb = dot(b, vec3(0.299, 0.587, 0.114)); return (lb < lo || lb > hi) ? a : b;
+}
+void main() {
+  ivec2 px = ivec2(gl_GlobalInvocationID.xy); if (any(greaterThanEqual(px, ivec2(F.res.xy)))) return;
+  vec2 uv = (vec2(px) + 0.5) * F.res.zw; vec2 cc = uv - 0.5; float r2 = dot(cc, cc);
+  vec3 c = fxaa(uv);
+  float ca = 0.0015 * r2 * 4.0; c.r = mix(c.r, fxaa(uv + cc * ca).r, 0.8); c.b = mix(c.b, fxaa(uv - cc * ca).b, 0.8);
+  c *= 1.0 - smoothstep(0.12, 0.9, r2 * 2.0) * F.post.w;
+  float gr = fract(sin(dot(vec2(px) + float(F.frameInfo.x % 64u) * 7.31, vec2(12.9898, 78.233))) * 43758.5453) - 0.5; c += gr * F.post.z * (1.0 - c * 0.6);
+  imageStore(outImg, px, vec4(clamp(c, 0.0, 1.0), 1.0));
+}

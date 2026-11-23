@@ -1,0 +1,14 @@
+# --- private / mod-derived: NEVER commit ---
+private-assets/
+web/private
+tmcore/upstream/
+tmcore/shim/
+web/wasm/
+refs/
+scratch/
+stills/
+# --- generated ---
+tmcore/obj*/
+native/target/
+*.zip
+node_modules/
