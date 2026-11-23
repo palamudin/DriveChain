@@ -23,7 +23,7 @@ void main() {
     int c = second ? int[3](0, 3, 2)[k] : int[3](0, 1, 3)[k]; t = float(seg + (c >> 1)) / float(SEG); side = (c & 1) == 0 ? -0.5 : 0.5; }
   else { t = k == 2 ? 1.0 : float(SEG - 1) / float(SEG); side = k == 0 ? -0.5 : (k == 1 ? 0.5 : 0.0); }
   // keep >= ~1.2 px wide: world width per pixel at this distance
-  float dist = distance(bl.root.xyz, F.camPos.xyz); float pxW = 2.0 * dist / (F.proj[1][1] * F.res.y); bl.prm.y = max(bl.prm.y, 1.2 * pxW);
+  float dist = distance(bl.root.xyz, F.camPos.xyz); float pxW = 2.0 * dist / (F.proj[1][1] * F.res.y); bl.prm.y = max(bl.prm.y, 2.0 * pxW);
   float time = F.camPos.w; vec3 wp = bladePos(bl, t, side, time);
   float cy = cos(bl.prm.z), sy = sin(bl.prm.z); vec3 fwd = vec3(sy, 0, cy);
   vNrm = normalize(mix(-fwd, vec3(0, 1, 0), clamp(t * 0.6 + 0.35, 0.0, 1.0))); vPos = wp; vUv = vec2(t, bl.root.w); vX5 = vec3(0); vUp = vec3(0, 1, 0); vToCam = vec3(0); vCell = vec2(0);

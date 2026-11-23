@@ -24,6 +24,8 @@ void main() {
   } else { // 203 grass: base -> tip gradient, blended to the ground colour at the root
     float t = vUv.x, hv = vUv.y; vec3 base = vec3(0.035, 0.07, 0.018), tip = mix(vec3(0.24, 0.42, 0.08), vec3(0.38, 0.46, 0.12), hv), ground = vec3(0.07, 0.09, 0.035);
     alb = mix(mix(ground, base, smoothstep(0.0, 0.15, t)), tip, pow(t, 1.4)); rough = 0.6;
+    // anti-shimmer without TAA: past ~12 m blades lose contrast (colour -> lawn mean, normal -> up), so sub-pixel motion can't pop
+    float fd = smoothstep(12.0, 45.0, distance(vPos, F.camPos.xyz)); alb = mix(alb, vec3(0.10, 0.16, 0.045), fd * 0.75); n = normalize(mix(n, vec3(0, 1, 0), fd));
   }
   vec2 cur = vCur.xy / vCur.w, prev = vPrev.xy / vPrev.w;
   oAlbedo = vec4(alb, 0.0); oNormal = vec4(n, rough); oVel = (cur - prev) * 0.5;
